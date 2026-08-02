@@ -1,0 +1,43 @@
+# dependencies
+node_modules/
+**/node_modules/
+
+# env & secrets
+.env
+.env.*
+!.env.example
+
+# databases
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+
+# build
+dist/
+build/
+.vite/
+*.tsbuildinfo
+
+# uploads (runtime)
+server/uploads/avatars/*
+!server/uploads/avatars/.gitignore
+
+# logs & OS
+logs/
+*.log
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# misc
+.cache/
+coverage/
+tmp/
+temp/

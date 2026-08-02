@@ -1,0 +1,29 @@
+@import url('https://fonts.googleapis.com/css2?family=Gothic+A1:wght@500;700;800;900&family=Gaegu:wght@400;700&display=swap');
+@import 'tailwindcss';
+
+@keyframes eqBounce {
+  from { transform: scaleY(0.35); }
+  to   { transform: scaleY(1); }
+}
+@keyframes popIn {
+  from { transform: scale(0.75); opacity: 0; }
+  to   { transform: scale(1);    opacity: 1; }
+}
+@keyframes wobble {
+  0%   { transform: rotate(-1.4deg); }
+  50%  { transform: rotate(1.4deg);  }
+  100% { transform: rotate(-1.4deg); }
+}
+@keyframes slideUp {
+  from { transform: translateY(12px); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
+
+* { scrollbar-width: none; box-sizing: border-box; }
+*::-webkit-scrollbar { display: none; }
+
+body {
+  font-family: 'Gothic A1', sans-serif;
+  font-weight: 700;
+  background-color: #EDE7C8;
+}

@@ -1,0 +1,74 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+// 로컬은 SQLite. 배포 시 provider = "postgresql" + DATABASE_URL 변경
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(cuid())
+  username     String   @unique
+  passwordHash String
+  nickname     String
+  avatarUrl    String?  // /uploads/avatars/xxx.webp 등
+  isAdmin      Boolean  @default(false)
+  musicVolume  Int      @default(70) // 0~100 노래 볼륨
+  sfxVolume    Int      @default(55) // 0~100 효과음 볼륨
+  createdAt    DateTime @default(now())
+  scores       Score[]
+}
+
+model Genre {
+  id        String     @id @default(cuid())
+  name      String     @unique
+  questions Question[]
+}
+
+model Question {
+  id         String       @id @default(cuid())
+  youtubeUrl String
+  startSec   Int
+  endSec     Int
+  genreId    String
+  genre      Genre        @relation(fields: [genreId], references: [id])
+  /** JSON string[] 예: ["남돌","10년대"] — 혼성이면 성별 태그 없음 */
+  tags       String       @default("[]")
+  enabled    Boolean      @default(true)
+  slots      AnswerSlot[]
+  createdAt  DateTime     @default(now())
+
+  @@index([genreId, enabled])
+}
+
+model AnswerSlot {
+  id             String   @id @default(cuid())
+  questionId     String
+  question       Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  label          String
+  answer         String
+  acceptAnswers  String   @default("[]") // JSON string array
+  hidden         Boolean  @default(false) // 제목·가수 맞힌 뒤 공개되는 히든 문제
+  sortOrder      Int      @default(0)
+}
+
+model Augment {
+  id          String  @id @default(cuid())
+  name        String  @unique
+  description String
+  effectType  String
+  effectValue String  @default("{}") // JSON
+  tier        String  @default("bronze")
+  imageUrl    String? // /augments/xxx.jpg 등
+  enabled     Boolean @default(true)
+}
+
+model Score {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  points    Int
+  createdAt DateTime @default(now())
+}
