@@ -6,7 +6,7 @@ import { GENRES, emptyGenreCounts, type GenreName } from './genres'
 import { normalizeSongTags } from './tags'
 import { playSfx } from './sfx'
 import { serverNow } from './clockSync'
-import { HiddenYouTube, FlameKimOverlayBgm, ytId, loadYtApi, type YtPlayer } from './youtubePlayer'
+import { HiddenYouTube, FlameKimOverlayBgm, RoomSongPersistentBgm, ytId, loadYtApi, type YtPlayer } from './youtubePlayer'
 
 // ── Types ─────────────────────────────────────────────────────
 type Screen = 'home' | 'login' | 'lobby' | 'waiting' | 'game' | 'augment' | 'result' | 'bank' | 'profile'
@@ -1626,20 +1626,11 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
   const trickOverlay = audioTrick?.mode === 'overlay'
   const trickUrl = audioTrick?.youtubeUrl || null
   const trickStartSec = audioTrick?.startSec ?? 0
-  const roomSongUrl = round?.youtubeUrl || ''
-  const roomSongStartSec = round?.startSec ?? 0
   const baseVol = songPowerOff ? 0 : musicVolume
-  const roomPlayVolume = (deafMode && audioTrick?.source !== 'mud') || trickReplace ? 0 : baseVol
-  // 불꽃남자는 App 루트 FlameKimOverlayBgm이 담당 (여기선 제외)
+  // 방 정답곡은 App 루트 RoomSongPersistentBgm — 여기선 트릭 곡만
   const trickPlayVolume = baseVol
-  const roomYtVolume = inCountdown ? 0 : roomPlayVolume
   const trickYtVolume = inCountdown ? 0 : trickPlayVolume
   const showGenre = !noHintMode && audioTrick?.source !== 'mud'
-  const showRoomYt = !!(
-    round
-    && roomSongUrl
-    && (room.status === 'playing' || room.status === 'duel' || room.status === 'countdown')
-  )
   // 세노·트루먼·진흙탕 등 replace/overlay(불꽃 제외)
   const showTrickYt = !!(
     trickUrl
@@ -1824,23 +1815,9 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
           onDone={() => setCutQueue(q => q.slice(1))}
         />
       )}
-      {showRoomYt && (
-        <HiddenYouTube
-          key={`yt-room-${round!.index}-${ytId(roomSongUrl)}`}
-          url={roomSongUrl}
-          startSec={roomSongStartSec}
-          volume={roomYtVolume}
-          paused={cutQueue.length > 0}
-          playbackRate={songPlaybackRate}
-          audioUnlockAt={inCountdown ? null : (me?.audioDelaySec ? (me.audioDelayUntil ?? null) : null)}
-          cutMute={songPowerOff || trickReplace}
-          roundEndsAt={round?.endsAt ?? null}
-          roundDurationSec={maxTime}
-        />
-      )}
       {showTrickYt && trickUrl && audioTrick && (
         <HiddenYouTube
-          key={`yt-trick-${round?.index ?? 0}-${ytId(trickUrl)}-${audioTrick.source}-${audioTrick.mode}`}
+          key="yt-trick"
           url={trickUrl}
           startSec={trickStartSec}
           volume={trickYtVolume}
@@ -4216,6 +4193,7 @@ export default function App() {
         {render()}
       </div>
       <FlameKimOverlayBgm />
+      <RoomSongPersistentBgm />
     </>
   )
 }
