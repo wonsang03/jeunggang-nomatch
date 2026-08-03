@@ -1,10 +1,10 @@
-# Root Directory 비울 때
+# 반드시 Root Directory 비우기 (저장소 루트)
+# Settings → Root Directory = (empty)
 
 [build]
-builder = "NIXPACKS"
-buildCommand = "cd web && npm install && npm run build && cd ../server && npm install && npx prisma generate && npx tsc && rm -rf public && mkdir -p public && cp -r ../web/dist/. public/"
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
 
 [deploy]
-startCommand = "sh -c 'cd server && export DATABASE_URL=\"${DATABASE_URL:-file:./data.db}\"; npx prisma db push && node dist/index.js'"
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 5
