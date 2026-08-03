@@ -1,0 +1,9 @@
+# 모노레포 루트에서 배포할 때 (Root Directory 비움)
+[build]
+builder = "NIXPACKS"
+buildCommand = "npm install --prefix server && npm run build --prefix server"
+
+[deploy]
+startCommand = "npx --prefix server prisma db push && node server/dist/index.js"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 5
