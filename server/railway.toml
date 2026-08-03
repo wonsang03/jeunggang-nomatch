@@ -1,10 +1,10 @@
-# Railway Settings → Root Directory = server 일 때 이 설정 사용 (권장)
+# Railway Settings → Root Directory = server 일 때 (권장)
 
 [build]
 builder = "NIXPACKS"
 buildCommand = "npm install && npx prisma generate && npx tsc"
 
 [deploy]
-startCommand = "npx prisma db push && node dist/index.js"
+startCommand = "sh -c 'export DATABASE_URL=\"${DATABASE_URL:-file:./data.db}\"; npx prisma db push && node dist/index.js'"
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 5
