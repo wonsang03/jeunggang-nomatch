@@ -56,13 +56,15 @@ model AnswerSlot {
 
 model Augment {
   id          String  @id @default(cuid())
-  name        String  @unique
+  name        String
   description String
   effectType  String
   effectValue String  @default("{}") // JSON
   tier        String  @default("bronze")
   imageUrl    String? // /augments/xxx.jpg 등
   enabled     Boolean @default(true)
+
+  @@unique([name, tier])
 }
 
 model Score {

@@ -4,7 +4,7 @@ import type { Request } from 'express'
 import { prisma } from '../config.js'
 import { adminMiddleware, authMiddleware, type AuthUser } from '../auth.js'
 import { GENRES } from '../genres.js'
-import { extractYoutubeId, normalizeAnswer, parseAcceptList, expandArtistAccepts } from '../answer.js'
+import { extractYoutubeId, normalizeAnswer, parseAcceptList, expandArtistAccepts, splitDuoArtists } from '../answer.js'
 import { normalizeSongTags, parseTagsJson, tagsToJson, SONG_TAGS } from '../tags.js'
 
 export const questionRouter = Router()
@@ -55,7 +55,9 @@ function mapQuestion(q: {
 
 questionRouter.get('/', authMiddleware, async (req, res) => {
   const isAdmin = !!(req as Request & { user: AuthUser }).user?.isAdmin
-  const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 50))
+  const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 10))
+  const page = Math.max(1, Math.floor(Number(req.query.page) || 1))
+  const skip = (page - 1) * limit
   const q = String(req.query.q || '').trim()
   const genreName = String(req.query.genre || '').trim()
   const tag = String(req.query.tag || '').trim()
@@ -90,13 +92,18 @@ questionRouter.get('/', authMiddleware, async (req, res) => {
       where,
       include: { genre: true, slots: { orderBy: { sortOrder: 'asc' } } },
       orderBy: { createdAt: 'desc' },
+      skip,
       take: limit,
     }),
     prisma.question.count({ where }),
   ])
 
+  const pageCount = Math.max(1, Math.ceil(total / limit))
   res.json({
     total,
+    page,
+    limit,
+    pageCount,
     questions: questions.map((item) => mapQuestion(item, isAdmin)),
   })
 })
@@ -140,22 +147,53 @@ function buildSlots(data: z.infer<typeof createSchema>) {
   const hiddenCount = data.slots.filter((s) => s.hidden).length
   if (hiddenCount > 1) throw new Error('히든 문제는 문제당 1개만 넣을 수 있습니다')
 
-  const slots = data.slots.map((s) => {
-    const accepts = new Set<string>()
-    accepts.add(s.answer.trim())
-    for (const a of parseAcceptList(s.acceptAnswers)) accepts.add(a)
-    let acceptAnswers = [...accepts]
-    // 가수 슬롯: 듀오(2명)면 각자 이름도 인정
-    if (s.label.includes('가수')) {
-      acceptAnswers = expandArtistAccepts(s.answer.trim(), acceptAnswers)
+  const slotsRaw = data.slots.map((s) => ({
+    label: s.label.trim(),
+    answer: s.answer.trim(),
+    acceptAnswers: parseAcceptList(s.acceptAnswers),
+    hidden: !!s.hidden,
+  }))
+
+  // 가수 슬롯 답에 공동 표기(쉼표 등)면 슬롯을 여러 개로 분리
+  const slotsExpanded: typeof slotsRaw = []
+  for (const s of slotsRaw) {
+    if (!s.hidden && s.label.includes('가수')) {
+      const parts = splitDuoArtists(s.answer)
+      const isDuo = parts.length >= 2 && /[,，&＆×]| 와 | 과 |\band\b/i.test(s.answer)
+      if (isDuo) {
+        for (const part of parts) {
+          const partAccepts = s.acceptAnswers.filter((a) => {
+            const t = a.trim()
+            if (!t || /[,，&＆]| 와 | 과 /i.test(t)) return false
+            return normalizeAnswer(t) === normalizeAnswer(part) || t.includes(part) || part.includes(t)
+          })
+          slotsExpanded.push({
+            label: '가수',
+            answer: part,
+            acceptAnswers: expandArtistAccepts(part, partAccepts),
+            hidden: false,
+          })
+        }
+        continue
+      }
+      slotsExpanded.push({
+        ...s,
+        acceptAnswers: expandArtistAccepts(s.answer, s.acceptAnswers),
+      })
+      continue
     }
-    return {
-      label: s.label.trim(),
-      answer: s.answer.trim(),
-      acceptAnswers,
-      hidden: !!s.hidden,
-    }
-  })
+    slotsExpanded.push({
+      ...s,
+      acceptAnswers: [...new Set([s.answer, ...s.acceptAnswers].map((x) => x.trim()).filter(Boolean))],
+    })
+  }
+
+  const slots = slotsExpanded.map((s) => ({
+    label: s.label,
+    answer: s.answer,
+    acceptAnswers: s.acceptAnswers,
+    hidden: s.hidden,
+  }))
 
   const seen = new Set<string>()
   for (const s of slots) {

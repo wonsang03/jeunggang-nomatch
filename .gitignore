@@ -36,6 +36,10 @@ Desktop.ini
 *.swp
 *.swo
 
+# one-off question import dumps (이미 DB 반영분 백업)
+data/*.json
+!data/README.md
+
 # misc
 .cache/
 coverage/

@@ -1,12 +1,30 @@
-/** Web Audio로 합성한 짧은 게임 효과음 (외부 파일 없음) — 낮은·부드러운 톤 */
+/** Web Audio로 합성한 짧은 게임 효과음 (외부 파일 없음) */
 
-type SfxName = 'correct' | 'roundStart' | 'reveal' | 'skip' | 'augment' | 'augmentUse' | 'gameEnd' | 'click' | 'countdown'
+type SfxName =
+  | 'correct'
+  | 'allCorrect'
+  | 'roundStart'
+  | 'reveal'
+  | 'skip'
+  | 'augment'
+  | 'augmentUse'
+  | 'gameEnd'
+  | 'click'
+  | 'countdown'
 
 let ctx: AudioContext | null = null
 let masterGain: GainNode | null = null
 let lowpass: BiquadFilterNode | null = null
-let volume = 0.35
+/** 슬라이더 0~1 · 실제 출력은 MASTER_BOOST 배 */
+let volume = 0.85
 let muted = false
+/** 음악(YouTube) 위에 묻히지 않게 마스터 증폭 */
+const MASTER_BOOST = 2.4
+
+function applyMasterGain() {
+  if (!masterGain) return
+  masterGain.gain.value = muted ? 0 : Math.min(1, volume * MASTER_BOOST)
+}
 
 function ensureCtx() {
   if (!ctx) {
@@ -14,10 +32,11 @@ function ensureCtx() {
     ctx = new AC()
     lowpass = ctx.createBiquadFilter()
     lowpass.type = 'lowpass'
-    lowpass.frequency.value = 1800
-    lowpass.Q.value = 0.5
+    // 정답 「띵」 고음이 죽지 않게 (너무 낮으면 음악에 묻힘)
+    lowpass.frequency.value = 5200
+    lowpass.Q.value = 0.45
     masterGain = ctx.createGain()
-    masterGain.gain.value = muted ? 0 : volume
+    applyMasterGain()
     lowpass.connect(masterGain)
     masterGain.connect(ctx.destination)
   }
@@ -31,12 +50,12 @@ export function unlockSfx() {
 
 export function setSfxVolume(v: number) {
   volume = Math.max(0, Math.min(1, v))
-  if (masterGain) masterGain.gain.value = muted ? 0 : volume
+  applyMasterGain()
 }
 
 export function setSfxMuted(m: boolean) {
   muted = m
-  if (masterGain) masterGain.gain.value = muted ? 0 : volume
+  applyMasterGain()
 }
 
 function tone(
@@ -44,7 +63,7 @@ function tone(
   start: number,
   dur: number,
   type: OscillatorType = 'sine',
-  gain = 0.12,
+  gain = 0.22,
   slideTo?: number,
 ) {
   const c = ensureCtx()
@@ -55,7 +74,7 @@ function tone(
   osc.frequency.setValueAtTime(freq, start)
   if (slideTo != null) osc.frequency.exponentialRampToValueAtTime(Math.max(40, slideTo), start + dur)
   g.gain.setValueAtTime(0.0001, start)
-  g.gain.exponentialRampToValueAtTime(gain, start + 0.025)
+  g.gain.exponentialRampToValueAtTime(gain, start + 0.018)
   g.gain.exponentialRampToValueAtTime(0.0001, start + dur)
   osc.connect(g)
   g.connect(lowpass)
@@ -63,18 +82,18 @@ function tone(
   osc.stop(start + dur + 0.02)
 }
 
-function softThump(start: number, dur = 0.12, gain = 0.1) {
+function softThump(start: number, dur = 0.12, gain = 0.18) {
   const c = ensureCtx()
   if (!lowpass) return
   const len = Math.floor(c.sampleRate * dur)
   const buf = c.createBuffer(1, len, c.sampleRate)
   const data = buf.getChannelData(0)
-  for (let i = 0; i < len; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / len) * 0.5
+  for (let i = 0; i < len; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / len) * 0.55
   const src = c.createBufferSource()
   src.buffer = buf
   const filter = c.createBiquadFilter()
   filter.type = 'lowpass'
-  filter.frequency.value = 280
+  filter.frequency.value = 320
   const g = c.createGain()
   g.gain.setValueAtTime(gain, start)
   g.gain.exponentialRampToValueAtTime(0.0001, start + dur)
@@ -88,49 +107,57 @@ function softThump(start: number, dur = 0.12, gain = 0.1) {
 const plays: Record<SfxName, () => void> = {
   click() {
     const t = ensureCtx().currentTime
-    tone(220, t, 0.05, 'sine', 0.07)
+    tone(220, t, 0.05, 'sine', 0.12)
   },
   correct() {
+    // 정답 = allCorrect와 동일 팡파르
+    plays.allCorrect()
+  },
+  /** 정답 / 전부 맞춤 공통 팡파르 */
+  allCorrect() {
     const t = ensureCtx().currentTime
-    tone(261.63, t, 0.12, 'sine', 0.11)
-    tone(329.63, t + 0.09, 0.14, 'triangle', 0.1)
-    tone(392.0, t + 0.18, 0.2, 'sine', 0.11)
+    tone(988, t, 0.22, 'sine', 0.72)
+    tone(1480, t, 0.16, 'triangle', 0.48)
+    tone(1175, t + 0.14, 0.2, 'sine', 0.58)
+    tone(1480, t + 0.26, 0.24, 'triangle', 0.62)
+    tone(1976, t + 0.38, 0.45, 'sine', 0.55)
+    softThump(t + 0.26, 0.14, 0.28)
   },
   roundStart() {
     const t = ensureCtx().currentTime
-    tone(196, t, 0.1, 'sine', 0.09)
-    tone(246.94, t + 0.08, 0.14, 'sine', 0.1)
+    tone(196, t, 0.12, 'sine', 0.4)
+    tone(246.94, t + 0.08, 0.16, 'sine', 0.46)
   },
   reveal() {
     const t = ensureCtx().currentTime
-    tone(174.61, t, 0.18, 'triangle', 0.1)
-    tone(146.83, t + 0.06, 0.24, 'sine', 0.09)
+    tone(174.61, t, 0.2, 'triangle', 0.42)
+    tone(146.83, t + 0.06, 0.26, 'sine', 0.38)
   },
   skip() {
     const t = ensureCtx().currentTime
-    softThump(t, 0.14, 0.09)
-    tone(220, t, 0.16, 'sine', 0.07, 110)
+    softThump(t, 0.16, 0.32)
+    tone(220, t, 0.18, 'sine', 0.34, 110)
   },
   augment() {
     const t = ensureCtx().currentTime
-    ;[196, 246.94, 293.66, 349.23].forEach((f, i) => tone(f, t + i * 0.08, 0.16, 'sine', 0.08))
+    ;[196, 246.94, 293.66, 349.23].forEach((f, i) => tone(f, t + i * 0.08, 0.18, 'sine', 0.38))
   },
   augmentUse() {
     const t = ensureCtx().currentTime
-    tone(220, t, 0.22, 'sine', 0.1, 330)
-    tone(330, t + 0.1, 0.2, 'triangle', 0.08)
+    tone(220, t, 0.24, 'sine', 0.46, 330)
+    tone(330, t + 0.1, 0.22, 'triangle', 0.38)
   },
   gameEnd() {
     const t = ensureCtx().currentTime
     ;[196, 246.94, 293.66, 349.23].forEach((f, i) => {
-      tone(f, t + i * 0.13, 0.3, 'triangle', 0.1)
+      tone(f, t + i * 0.13, 0.32, 'triangle', 0.44)
     })
-    tone(392, t + 0.55, 0.4, 'sine', 0.11)
+    tone(392, t + 0.55, 0.42, 'sine', 0.5)
   },
   countdown() {
     const t = ensureCtx().currentTime
-    tone(392, t, 0.12, 'sine', 0.12)
-    softThump(t, 0.08, 0.07)
+    tone(392, t, 0.14, 'sine', 0.5)
+    softThump(t, 0.09, 0.24)
   },
 }
 

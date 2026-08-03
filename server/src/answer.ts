@@ -7,6 +7,15 @@ export function normalizeAnswer(s: string) {
     .replace(/[."""'''『』「」\[\]()（）{}<>〈〉《》·・…~\-_/\\|:;!?！？。，、]/g, '')
 }
 
+/**
+ * 정답 인정: 정규화(공백·문장부호·대소문자 무시) 후 **완전 일치**만
+ */
+export function isAcceptedAnswer(raw: string, acceptNorms: string[]): boolean {
+  const norm = normalizeAnswer(raw)
+  if (!norm) return false
+  return acceptNorms.some((a) => !!a && a === norm)
+}
+
 /** 인정답안: 쉼표/슬래시/파이프 구분 → 배열 */
 export function parseAcceptList(input: string | string[] | undefined | null): string[] {
   if (input == null) return []
@@ -34,40 +43,53 @@ export function isFeaturingCredit(s: string) {
   return /\b(feat\.?|ft\.?|featuring)\b|피처링/i.test(s)
 }
 
+/** "A, B" / "A & B" / "A 와 B" 식 목록 분리. HUNTR/X 같은 슬래시 그룹명은 유지. */
+function splitArtistList(s: string): string[] {
+  const normalized = s
+    .replace(/\s+와\s+/g, ', ')
+    .replace(/\s+과\s+/g, ', ')
+    .trim()
+  if (!normalized) return []
+  const parts = normalized
+    .split(/\s*(?:&|＆|×|✕|,|，|·|\band\b|\bwith\b)\s*| \/ /i)
+    .map((p) => p.trim().replace(/^[(\[（]+|[)\]）]+$/g, '').trim())
+    .filter(Boolean)
+  return parts.length >= 2 ? parts : [normalized]
+}
+
 /**
- * 공동 가수(듀오) 분리. 피처링은 앞쪽 메인만.
- * 예: "Lady Gaga, Bruno Mars" / "ROSÉ & Bruno Mars"
+ * 공동 가수(듀오) 분리. 피처링은 앞쪽 메인만 (feat 가수는 제외).
+ * 예: "Lady Gaga, Bruno Mars" / "서인국, 정은지"
  */
 export function splitDuoArtists(s: string): string[] {
   const raw = s.trim()
   if (!raw) return []
   if (isFeaturingCredit(raw)) {
-    const main = raw.split(/\b(?:feat\.?|ft\.?|featuring)\b|피처링/i)[0]?.trim()
-    return main ? [main] : [raw]
+    const main = raw.split(/\b(?:feat\.?|ft\.?|featuring)\b|피처링/i)[0]?.replace(/[(\[（]\s*$/, '').trim()
+    return main ? splitArtistList(main) : [raw]
   }
-  const parts = raw
-    .split(/\s*(?:&|＆|×|✕|\/|,|\band\b|\bx\b|\bwith\b)\s*/i)
-    .map((p) => p.trim())
-    .filter(Boolean)
-  return parts.length >= 2 ? parts : [raw]
+  return splitArtistList(raw)
 }
 
-/** 가수 슬롯: 듀오 각 이름을 인정답에 자동 포함 */
+/** 가수 슬롯 인정답(별칭). 공동 가수는 슬롯 분리로 처리하며, 한 슬롯에 상대 이름을 넣지 않음. */
 export function expandArtistAccepts(answer: string, accepts: string[] = []): string[] {
   const set = new Set<string>()
   const add = (x: string) => {
     const t = x.trim()
     if (t) set.add(t)
   }
+  const isJointCredit = (s: string) => {
+    if (isFeaturingCredit(s)) return false
+    return splitDuoArtists(s).length >= 2 && /[,，&＆×]| 와 | 과 |\band\b/i.test(s)
+  }
   add(answer)
-  for (const a of accepts) add(a)
-  for (const src of [answer, ...accepts]) {
-    if (isFeaturingCredit(src)) {
-      const main = src.split(/\b(?:feat\.?|ft\.?|featuring)\b|피처링/i)[0]?.trim()
-      if (main) add(main)
-      continue
-    }
-    for (const p of splitDuoArtists(src)) add(p)
+  for (const a of accepts) {
+    if (isJointCredit(a)) continue
+    add(a)
+  }
+  // 피처링 표기면 메인만 인정답에 추가
+  if (isFeaturingCredit(answer)) {
+    for (const p of splitDuoArtists(answer)) add(p)
   }
   return [...set]
 }
@@ -285,3 +307,45 @@ export function hintChosung(answer: string, accepts: string[] = []): string {
   const pronounced = hasHangul(src) ? src : toKoreanPronunciation(src)
   return chosung(pronounced)
 }
+
+/** 두벌식 한글 → 한영키 안 누른 영타 (정답 → wjdekq) */
+const CHO_TO_QWERTY = [
+  'r', 'R', 's', 'e', 'E', 'f', 'a', 'q', 'Q', 't', 'T', 'd', 'w', 'W', 'c', 'z', 'x', 'v', 'g',
+] as const
+const JUNG_TO_QWERTY = [
+  'k', 'o', 'i', 'O', 'j', 'p', 'u', 'P', 'h', 'hk', 'ho', 'hl', 'y', 'n', 'nj', 'np', 'nl', 'b', 'm', 'ml', 'l',
+] as const
+const JONG_TO_QWERTY = [
+  '', 'r', 'R', 'rt', 's', 'sw', 'sg', 'e', 'f', 'fr', 'fa', 'fq', 'ft', 'fx', 'fv', 'fg', 'a', 'q', 'qt', 't', 'T', 'd', 'w', 'c', 'z', 'x', 'v', 'g',
+] as const
+const JAMO_TO_QWERTY: Record<string, string> = {
+  ㄱ: 'r', ㄲ: 'R', ㄴ: 's', ㄷ: 'e', ㄸ: 'E', ㄹ: 'f', ㅁ: 'a', ㅂ: 'q', ㅃ: 'Q',
+  ㅅ: 't', ㅆ: 'T', ㅇ: 'd', ㅈ: 'w', ㅉ: 'W', ㅊ: 'c', ㅋ: 'z', ㅌ: 'x', ㅍ: 'v', ㅎ: 'g',
+  ㅏ: 'k', ㅐ: 'o', ㅑ: 'i', ㅒ: 'O', ㅓ: 'j', ㅔ: 'p', ㅕ: 'u', ㅖ: 'P',
+  ㅗ: 'h', ㅘ: 'hk', ㅙ: 'ho', ㅚ: 'hl', ㅛ: 'y',
+  ㅜ: 'n', ㅝ: 'nj', ㅞ: 'np', ㅟ: 'nl', ㅠ: 'b',
+  ㅡ: 'm', ㅢ: 'ml', ㅣ: 'l',
+  ㄳ: 'rt', ㄵ: 'sw', ㄶ: 'sg', ㄺ: 'fr', ㄻ: 'fa', ㄼ: 'fq', ㄽ: 'ft', ㄾ: 'fx', ㄿ: 'fv', ㅀ: 'fg', ㅄ: 'qt',
+}
+
+export function hangulToQwertyMistype(text: string): string {
+  let out = ''
+  for (const ch of text.normalize('NFC')) {
+    const code = ch.codePointAt(0)!
+    if (code >= 0xac00 && code <= 0xd7a3) {
+      const syl = code - 0xac00
+      const cho = Math.floor(syl / 588)
+      const jung = Math.floor((syl % 588) / 28)
+      const jong = syl % 28
+      out += CHO_TO_QWERTY[cho] + JUNG_TO_QWERTY[jung] + JONG_TO_QWERTY[jong]
+      continue
+    }
+    if (JAMO_TO_QWERTY[ch]) {
+      out += JAMO_TO_QWERTY[ch]
+      continue
+    }
+    out += ch
+  }
+  return out
+}
+

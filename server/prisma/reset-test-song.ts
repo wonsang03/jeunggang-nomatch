@@ -12,7 +12,7 @@ async function main() {
   await prisma.question.deleteMany()
   console.log('Cleared all questions')
 
-  const genre = await prisma.genre.findUniqueOrThrow({ where: { name: 'K팝' } })
+  const genre = await prisma.genre.findUniqueOrThrow({ where: { name: '한국노래' } })
 
   const q = await prisma.question.create({
     data: {

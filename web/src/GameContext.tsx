@@ -11,6 +11,7 @@ import {
 import { api, clearAuth, getStoredUser, setAuth, updateStoredUser, type AuthUser } from './api'
 import { connectSocket, disconnectSocket, getSocket } from './socket'
 import { playSfx, setSfxVolume as applySfxVolume } from './sfx'
+import { applyClockSample, resetClockSync, serverNow } from './clockSync'
 
 export type PublicRoom = {
   id: string
@@ -29,6 +30,8 @@ export type ActiveBuffPublic = {
   usedByNickname?: string
   mult?: number | null
   rate?: number | null
+  bgmUrl?: string | null
+  bgmStartSec?: number | null
   startIndex: number
   roundsLeft: number
   pending: boolean
@@ -47,6 +50,7 @@ export type RoomMember = {
   heldAugmentDescription?: string | null
   heldAugmentImageUrl?: string | null
   heldAugmentEffectType?: string | null
+  heldAugmentTier?: string | null
   usedAugments: string[]
   activeBuffs?: ActiveBuffPublic[]
   /** 감옥 등 */
@@ -76,16 +80,43 @@ export type RoomMember = {
   /** 나이거 뭔지 알아: 본인만 보는 제목·가수 */
   knowSpoilTitle?: string | null
   knowSpoilArtist?: string | null
+  /** 일론 머스크의 가호: 영타 표기 스포일 */
+  alienQwertyActive?: boolean
   /** 범인은 당신이야: 감시 중 */
   accuseWatchPending?: boolean
   accuseWatchActive?: boolean
   accuseWatchBy?: string | null
+  /** 가불기 */
+  gabukiActive?: boolean
+  gabukiPending?: boolean
+  gabukiRoundsLeft?: number | null
+  gabukiBy?: string | null
+  /** 불꽃남자김상원 */
+  flameKimActive?: boolean
+  flameKimPending?: boolean
+  flameKimRoundsLeft?: number | null
+  flameKimTarget?: string | null
+  flameKimBy?: string | null
   /** 산데비스탄 등: 현재 라운드 재생 배속 */
   playbackRate?: number | null
   /** 슬로우 스타터: 라운드 시작 후 N초 동안 무음 */
   audioDelaySec?: number | null
   audioDelayUntil?: number | null
-  /** 트루먼쇼: 대상만 다른 곡 */
+  /** 전원을 꺼봤습니다: 이 시각까지 노래 음소거 */
+  songMuteUntil?: number | null
+  /**
+   * 방 노래와 분리된 증강 트릭 오디오
+   * - replace: 세노·트루먼·진흙탕 등 (방 곡 음소거 + 트릭만)
+   * - overlay: 불꽃남자 등 (방 곡 + 트릭 동시)
+   */
+  audioTrick?: {
+    mode: 'replace' | 'overlay'
+    youtubeUrl: string
+    startSec: number
+    label: string
+    source: 'mud' | 'sakura' | 'flame'
+  } | null
+  /** @deprecated audioTrick 사용 · 호환용 */
   decoyYoutubeUrl?: string | null
   decoyStartSec?: number | null
   sakuraActive?: boolean
@@ -124,10 +155,21 @@ export type RoomState = {
   status: 'lobby' | 'playing' | 'revealing' | 'augment' | 'countdown' | 'duel' | 'ended'
   maxPlayers: number
   genreCounts: Record<string, number>
+  /** 문제은행 장르별 보유 수 — 대기실 슬라이더 max */
+  genreBankCounts?: Record<string, number>
   /** 앞으로 나올 곡(현재 제외) 장르별 잔량 */
   upcomingGenreCounts?: Record<string, number>
   members: RoomMember[]
   duel?: {
+    challengerId: string
+    opponentId: string
+    challengerNickname: string
+    opponentNickname: string
+    penalty: number
+    byName: string
+  } | null
+  /** 다음 라운드 시작 시 발동 예정인 야차룰 */
+  pendingDuel?: {
     challengerId: string
     opponentId: string
     challengerNickname: string
@@ -153,6 +195,8 @@ export type RoundInfo = {
   endsAt: number
   duration: number
   genre: string
+  /** 히든 슬롯 포함 여부 (장르 색 등) */
+  hasHidden?: boolean
   youtubeUrl: string
   startSec: number
   endSec: number
@@ -178,7 +222,11 @@ export type AugmentItem = {
 export type AugmentOffer = {
   candidates: AugmentItem[]
   timeoutSec: number
+  /** 서버 기준 선택 마감 시각 (ms). 있으면 남은 시간 동기화용 */
+  endsAt?: number
   rerolls: number
+  /** 이번 오퍼 단일 등급: bronze | silver | gold */
+  lockedTier?: string | null
 }
 
 export type GameResult = { nickname: string; score: number; userId: string }
@@ -198,11 +246,17 @@ type GameCtx = {
   round: RoundInfo | null
   /** 증강 선택 후 노래 시작 전 카운트다운 남은 초 (null이면 없음) */
   startCountdown: number | null
+  /** 서버 시각 기준 카운트다운 종료 시각 */
+  countdownEndsAt: number | null
   skip: { votes: number; need: number }
   skipVoted: boolean
   augmentOffer: AugmentOffer | null
   augmentHint: string | null
   results: GameResult[] | null
+  /** 추정 서버 시각 (핑 오프셋 반영) */
+  serverNow: () => number
+  /** 시계 샘플 횟수 (증강 중 싱크 표시용) */
+  clockSamples: number
   login: (username: string, password: string) => Promise<void>
   register: (username: string, password: string, nickname: string) => Promise<void>
   logout: () => void
@@ -218,10 +272,14 @@ type GameCtx = {
   sendChat: (text: string) => void
   submitAnswer: (text: string) => void
   voteSkip: () => void
-  pickAugment: (augmentId: string | null) => void
+  pickAugment: (augmentId: string | null, gahoAugmentId?: string | null) => void
   rerollAugment: () => Promise<void>
   useAugment: (payload?: { targetUserId?: string; gahoAugmentId?: string; genreName?: string }) => void
-  fetchGahoCandidates: () => Promise<Array<AugmentItem & { description?: string }>>
+  fetchGahoCandidates: () => Promise<{
+    candidates: Array<AugmentItem & { description?: string }>
+    endsAt: number | null
+    remainingSec: number | null
+  }>
   clearResults: () => void
 }
 
@@ -239,6 +297,8 @@ export function GameProvider({ children }: { children: ReactNode }) {
   const [chats, setChats] = useState<ChatMsg[]>([])
   const [round, setRound] = useState<RoundInfo | null>(null)
   const [startCountdown, setStartCountdown] = useState<number | null>(null)
+  const [countdownEndsAt, setCountdownEndsAt] = useState<number | null>(null)
+  const [clockSamples, setClockSamples] = useState(0)
   const [skip, setSkip] = useState({ votes: 0, need: 1 })
   const [skipVoted, setSkipVoted] = useState(false)
   const [augmentOffer, setAugmentOffer] = useState<AugmentOffer | null>(null)
@@ -355,18 +415,45 @@ export function GameProvider({ children }: { children: ReactNode }) {
       if (st.status === 'augment') {
         setRound(null)
         setStartCountdown(null)
+        setCountdownEndsAt(null)
       }
       if (st.status === 'playing' || st.status === 'duel' || st.status === 'revealing' || st.status === 'ended' || st.status === 'lobby') {
         setStartCountdown(null)
+        setCountdownEndsAt(null)
       }
+    })
+    s.on('song:power_off', (p: { until?: number; seconds?: number }) => {
+      const until = typeof p?.until === 'number' ? p.until : Date.now() + (Number(p?.seconds) || 10) * 1000
+      setRoom((prev) => {
+        if (!prev) return prev
+        const uid = getStoredUser()?.id
+        if (!uid) return prev
+        return {
+          ...prev,
+          members: prev.members.map((m) =>
+            m.userId === uid ? { ...m, songMuteUntil: until } : m,
+          ),
+        }
+      })
+    })
+    s.on('song:power_off_end', () => {
+      setRoom((prev) => {
+        if (!prev) return prev
+        return {
+          ...prev,
+          members: prev.members.map((m) => ({ ...m, songMuteUntil: null })),
+        }
+      })
     })
     s.on('chat:message', (msg: ChatMsg) => setChats((c) => [...c.slice(-200), msg]))
     s.on('round:countdown', (payload: {
       seconds?: number
+      endsAt?: number
       preview?: {
         index: number
         total: number
         genre: string
+        hasHidden?: boolean
         youtubeUrl: string
         startSec: number
         endSec: number
@@ -375,22 +462,28 @@ export function GameProvider({ children }: { children: ReactNode }) {
       } | null
     }) => {
       const sec = Math.max(1, Math.floor(Number(payload?.seconds) || 3))
+      const endsAt = typeof payload?.endsAt === 'number'
+        ? payload.endsAt
+        : serverNow() + sec * 1000
       setAugmentOffer(null)
-      setStartCountdown(sec)
+      setCountdownEndsAt(endsAt)
+      setStartCountdown(Math.max(1, Math.ceil((endsAt - serverNow()) / 1000)))
       // 이전 라운드 곡이 다시 나오지 않게 지우고, 다음 곡만 뮤트로 프리로드
       const p = payload?.preview
       if (p?.youtubeUrl) {
         setRound({
           index: p.index,
           total: p.total,
-          endsAt: Date.now() + sec * 1000,
+          endsAt,
           duration: sec,
           genre: p.genre,
+          hasHidden: !!p.hasHidden,
           youtubeUrl: p.youtubeUrl,
           startSec: p.startSec,
           endSec: p.endSec,
-          titleChosung: p.titleChosung || '',
-          artistChosung: p.artistChosung || '',
+          // 카운트다운 프리로드용 — 초성은 round:start 때 공개
+          titleChosung: '',
+          artistChosung: '',
           slots: [],
         })
       } else {
@@ -401,6 +494,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
     s.on('round:start', (info: RoundInfo) => {
       clearTypewriter()
       setStartCountdown(null)
+      setCountdownEndsAt(null)
       setRound(info)
       setSkip({ votes: 0, need: 1 })
       setSkipVoted(false)
@@ -408,15 +502,43 @@ export function GameProvider({ children }: { children: ReactNode }) {
       setAugmentHint(null)
       playSfx('roundStart')
     })
+    s.on('round:extend', (payload: { endsAt: number; duration: number; addedSec?: number }) => {
+      setRound((r) => {
+        if (!r) return r
+        return {
+          ...r,
+          endsAt: payload.endsAt,
+          duration: payload.duration,
+        }
+      })
+    })
     // 증강 선택 진입 시 이전 라운드 곡 상태 제거 (잘못 재생·곡 스킵처럼 보이는 버그 방지)
     s.on('augment:offer', (offer: AugmentOffer) => {
       setRound(null)
       setStartCountdown(null)
+      setCountdownEndsAt(null)
       setAugmentOffer(offer)
       playSfx('augment')
+      // 증강 20초 동안 시계 샘플을 빨리 모아 노래 시작 시 seek가 맞도록
+      const burst = () => {
+        const sock = getSocket()
+        if (!sock?.connected) return
+        const t0 = Date.now()
+        sock.timeout(2500).emit('ping:rtt', {}, (err: Error | null, res?: { t?: number }) => {
+          if (err || typeof res?.t !== 'number') return
+          applyClockSample(t0, res.t, Date.now())
+          setClockSamples((n) => n + 1)
+          setPingMs(Date.now() - t0)
+        })
+      }
+      burst()
+      for (let i = 1; i <= 6; i += 1) {
+        window.setTimeout(burst, i * 280)
+      }
     })
-    s.on('answer:correct', (payload: { slotId: string; answer: string; by: string }) => {
-      playSfx('correct')
+    s.on('answer:correct', (payload: { slotId: string; answer: string; by: string; allCleared?: boolean }) => {
+      // 슬롯 하나여도 「둘 다 맞춤」팡파르로 통일
+      playSfx('allCorrect')
       setRound((r) => {
         if (!r) return r
         return {
@@ -443,7 +565,11 @@ export function GameProvider({ children }: { children: ReactNode }) {
       })
     })
     s.on('round:reveal', (payload: { reason?: string; slots: Array<{ id: string; answer: string; by: string | null }> }) => {
-      playSfx(payload.reason === 'skip' ? 'skip' : 'reveal')
+      playSfx(
+        payload.reason === 'skip' ? 'skip'
+          : payload.reason === 'cleared' ? 'allCorrect'
+            : 'reveal',
+      )
       setSkipVoted(true)
       setRound((r) => {
         if (!r) return r
@@ -489,6 +615,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
       setResults(p.results)
       setRound(null)
       setStartCountdown(null)
+      setCountdownEndsAt(null)
       setAugmentOffer(null)
     })
 
@@ -515,18 +642,48 @@ export function GameProvider({ children }: { children: ReactNode }) {
       setPingMs(null)
       return
     }
-    const measure = () => {
+    const measure = (updateClock: boolean) => {
       const s = getSocket()
       if (!s?.connected) return
-      const start = Date.now()
-      s.timeout(4000).emit('ping:rtt', {}, (err: Error | null) => {
-        if (!err) setPingMs(Date.now() - start)
+      const t0 = Date.now()
+      s.timeout(4000).emit('ping:rtt', {}, (err: Error | null, res?: { t?: number }) => {
+        if (err) return
+        const t1 = Date.now()
+        setPingMs(t1 - t0)
+        // 시계 오프셋은 증강 선택 중에만 갱신 (재생 중 계속 맞추면 seek/끊김)
+        if (updateClock && typeof res?.t === 'number') {
+          applyClockSample(t0, res.t, t1)
+          setClockSamples((n) => n + 1)
+        }
       })
     }
-    measure()
-    const id = window.setInterval(measure, 3000)
+    if (augmentOffer) {
+      // 증강 선택 페이즈: 이때만 시계 정렬
+      measure(true)
+      const id = window.setInterval(() => measure(true), 600)
+      return () => window.clearInterval(id)
+    }
+    // 플레이 중: 핑 표시만 (오프셋 고정)
+    measure(false)
+    const id = window.setInterval(() => measure(false), 5000)
     return () => window.clearInterval(id)
-  }, [connected])
+  }, [connected, augmentOffer])
+
+  // 서버 endsAt 기준 카운트다운 (사람마다 로컬 틱 어긋남 완화)
+  useEffect(() => {
+    if (countdownEndsAt == null) return
+    let lastShown: number | null = null
+    const tick = () => {
+      const left = Math.max(0, Math.ceil((countdownEndsAt - serverNow()) / 1000))
+      if (left <= 0) return
+      if (lastShown != null && left < lastShown) playSfx('countdown')
+      lastShown = left
+      setStartCountdown(left)
+    }
+    tick()
+    const id = window.setInterval(tick, 200)
+    return () => window.clearInterval(id)
+  }, [countdownEndsAt])
 
   const login = async (username: string, password: string) => {
     const data = await api<{ token: string; user: AuthUser }>('/api/auth/login', {
@@ -557,9 +714,12 @@ export function GameProvider({ children }: { children: ReactNode }) {
     setChats([])
     setRound(null)
     setStartCountdown(null)
+    setCountdownEndsAt(null)
     setResults(null)
     setConnected(false)
     setPingMs(null)
+    resetClockSync()
+    setClockSamples(0)
     applyVolumes(70, 55)
   }
 
@@ -626,6 +786,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
     setChats([])
     setRound(null)
     setStartCountdown(null)
+    setCountdownEndsAt(null)
     setAugmentOffer(null)
     setResults(null)
   }
@@ -647,14 +808,29 @@ export function GameProvider({ children }: { children: ReactNode }) {
     setSkipVoted(true)
     getSocket()?.emit('round:skip')
   }
-  const pickAugment = (augmentId: string | null) => {
-    getSocket()?.emit('augment:offer_done', { augmentId })
+  const pickAugment = (augmentId: string | null, gahoAugmentId?: string | null) => {
+    getSocket()?.emit('augment:offer_done', {
+      augmentId,
+      ...(gahoAugmentId ? { gahoAugmentId } : {}),
+    })
     setAugmentOffer(null)
   }
   const rerollAugment = async () => {
-    const res = await emitAck<{ ok: boolean; candidates?: AugmentItem[] }>('augment:reroll', {})
+    const res = await emitAck<{ ok: boolean; candidates?: AugmentItem[]; lockedTier?: string | null }>(
+      'augment:reroll',
+      {},
+    )
     if (res.ok && res.candidates) {
-      setAugmentOffer((o) => (o ? { ...o, candidates: res.candidates!, rerolls: Math.max(0, o.rerolls - 1) } : o))
+      setAugmentOffer((o) =>
+        o
+          ? {
+              ...o,
+              candidates: res.candidates!,
+              rerolls: Math.max(0, o.rerolls - 1),
+              lockedTier: res.lockedTier ?? o.lockedTier,
+            }
+          : o,
+      )
     }
   }
   const useAugment = (payload?: { targetUserId?: string; gahoAugmentId?: string; genreName?: string }) =>
@@ -663,23 +839,19 @@ export function GameProvider({ children }: { children: ReactNode }) {
     const res = await emitAck<{
       ok: boolean
       candidates?: Array<AugmentItem & { description?: string }>
+      endsAt?: number | null
+      remainingSec?: number | null
     }>('augment:gaho_candidates', {})
-    return res.ok && res.candidates ? res.candidates : []
+    if (!res.ok || !res.candidates) {
+      return { candidates: [], endsAt: null, remainingSec: null }
+    }
+    return {
+      candidates: res.candidates,
+      endsAt: res.endsAt ?? null,
+      remainingSec: res.remainingSec ?? null,
+    }
   }
   const clearResults = () => setResults(null)
-
-  // 증강 후 3·2·1 로컬 틱
-  useEffect(() => {
-    if (startCountdown == null || startCountdown <= 1) return
-    const t = window.setTimeout(() => {
-      setStartCountdown((n) => {
-        if (n == null || n <= 1) return n
-        playSfx('countdown')
-        return n - 1
-      })
-    }, 1000)
-    return () => window.clearTimeout(t)
-  }, [startCountdown])
 
   const value = useMemo(
     () => ({
@@ -696,11 +868,14 @@ export function GameProvider({ children }: { children: ReactNode }) {
       chats,
       round,
       startCountdown,
+      countdownEndsAt,
       skip,
       skipVoted,
       augmentOffer,
       augmentHint,
       results,
+      serverNow,
+      clockSamples,
       login,
       register,
       logout,
@@ -736,11 +911,13 @@ export function GameProvider({ children }: { children: ReactNode }) {
       chats,
       round,
       startCountdown,
+      countdownEndsAt,
       skip,
       skipVoted,
       augmentOffer,
       augmentHint,
       results,
+      clockSamples,
     ],
   )
 

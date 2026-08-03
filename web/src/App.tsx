@@ -1,9 +1,12 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
+import { createPortal } from 'react-dom'
 import { useGame } from './GameContext'
 import { api, avatarSrc } from './api'
 import { GENRES, emptyGenreCounts, type GenreName } from './genres'
 import { normalizeSongTags } from './tags'
 import { playSfx } from './sfx'
+import { serverNow } from './clockSync'
+import { HiddenYouTube, FlameKimOverlayBgm, ytId, loadYtApi, type YtPlayer } from './youtubePlayer'
 
 // ── Types ─────────────────────────────────────────────────────
 type Screen = 'home' | 'login' | 'lobby' | 'waiting' | 'game' | 'augment' | 'result' | 'bank' | 'profile'
@@ -19,6 +22,7 @@ const C = {
   blueLight:  '#D6E8F7',
   yellow:     '#F5E6A3',
   red:        '#E05252',
+  redLight:   '#F8DADA',
   green:      '#3D9E62',
   greenLight: '#DAEEE5',
   text:       '#1A1A1A',
@@ -26,6 +30,28 @@ const C = {
   muted:      '#5A6570',
   line:       '#C6DCE8',
   margin:     '#C85040',
+  tierBronze: '#B87333',
+  tierSilver: '#6E7F8D',
+  tierGold:   '#C9A227',
+  tierGaho:   '#7B5EA7',
+}
+
+function tierBorderColor(tier?: string | null): string {
+  const t = (tier || '').toLowerCase()
+  if (t === 'bronze' || t === '브론즈') return C.tierBronze
+  if (t === 'silver' || t === '실버') return C.tierSilver
+  if (t === 'gold' || t === '골드') return C.tierGold
+  if (t === '가호' || t === 'gaho') return C.tierGaho
+  return C.graphite
+}
+
+function tierDisplayName(tier?: string | null): string {
+  const t = (tier || '').toLowerCase()
+  if (t === 'bronze' || t === '브론즈') return '브론즈'
+  if (t === 'silver' || t === '실버') return '실버'
+  if (t === 'gold' || t === '골드') return '골드'
+  if (t === '가호' || t === 'gaho') return '가호'
+  return tier || ''
 }
 
 /** 구겨진 종이 사진 배경 */
@@ -40,6 +66,37 @@ const crumpledPaper: React.CSSProperties = {
 }
 
 const notebookLines = crumpledPaper
+
+/** 가호 선택 프리즘 배경 */
+const prismBackdrop: React.CSSProperties = {
+  position: 'fixed',
+  inset: 0,
+  zIndex: 90,
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  padding: 24,
+  background:
+    'linear-gradient(125deg, rgba(255,130,190,0.55) 0%, rgba(120,190,255,0.55) 22%, rgba(190,130,255,0.5) 45%, rgba(110,240,200,0.48) 68%, rgba(255,220,130,0.52) 100%)',
+  backgroundSize: '220% 220%',
+  animation: 'prismShift 7s ease-in-out infinite',
+}
+
+function PrismKeyframes() {
+  return (
+    <style>{`
+      @keyframes prismShift {
+        0% { background-position: 0% 40%; }
+        50% { background-position: 100% 60%; }
+        100% { background-position: 0% 40%; }
+      }
+      @keyframes prismShine {
+        0%, 100% { opacity: 0.35; transform: translateX(-30%) rotate(12deg); }
+        50% { opacity: 0.55; transform: translateX(30%) rotate(12deg); }
+      }
+    `}</style>
+  )
+}
 
 function CrumpleOverlay() {
   // 실 질감 이미지가 배경이므로 추가 CSS 구김 레이어는 쓰지 않음
@@ -77,6 +134,52 @@ function sk(border = C.graphite, small = false): React.CSSProperties {
     boxShadow: a.join(', '),
     filter: 'url(#pencilRough)',
   }
+}
+
+/** overflow에 잘리지 않도록 body에 fixed 팝업 */
+function FloatingHoverPopup({
+  anchor,
+  children,
+  width = 240,
+  borderColor = C.graphite,
+}: {
+  anchor: DOMRect | null
+  children: React.ReactNode
+  width?: number
+  borderColor?: string
+}) {
+  if (!anchor || typeof document === 'undefined') return null
+  const gap = 10
+  const estimatedH = 220
+  const placeAbove = anchor.top > estimatedH + gap + 24
+  const left = Math.min(
+    Math.max(width / 2 + 12, anchor.left + anchor.width / 2),
+    window.innerWidth - width / 2 - 12,
+  )
+  const top = placeAbove ? anchor.top - gap : anchor.bottom + gap
+  return createPortal(
+    <div
+      style={{
+        position: 'fixed',
+        left,
+        top,
+        transform: placeAbove ? 'translate(-50%, -100%)' : 'translate(-50%, 0)',
+        width,
+        maxWidth: 'min(90vw, 280px)',
+        zIndex: 400,
+        ...sk(borderColor, true),
+        backgroundColor: C.card,
+        padding: 12,
+        boxShadow: `0 8px 24px ${C.graphite}35`,
+        pointerEvents: 'none',
+        textAlign: 'left',
+        border: `2.5px solid ${borderColor}`,
+      }}
+    >
+      {children}
+    </div>,
+    document.body,
+  )
 }
 
 // ── SVG Filter Definitions ─────────────────────────────────────
@@ -154,20 +257,21 @@ function FitAnswer({
   hint?: string | null
   revealed: boolean
 }) {
-  const text = revealed && value ? value : (hint || '？？？')
-  const isHint = !revealed && !!hint
+  const shown = revealed ? (value?.trim() || null) : null
+  const text = shown || (!revealed ? (hint?.trim() || null) : null) || '？？？'
+  const isHint = !revealed && !shown && !!hint?.trim()
   const len = text.length
   const size = len > 24 ? 15 : len > 16 ? 18 : len > 10 ? 22 : 26
   return (
-    <div style={{ flex: 1, minWidth: 0, maxWidth: 280, textAlign: 'center' }}>
+    <div style={{ width: '100%', textAlign: 'center', minWidth: 0 }}>
       <div style={{ fontFamily: F.ui, fontSize: 15, fontWeight: 400, color: C.muted, marginBottom: 4 }}>{label}</div>
       <div
-        title={revealed && value ? value : undefined}
+        title={shown || undefined}
         style={{
           fontFamily: F.brand,
           fontSize: size,
           fontWeight: 700,
-          color: revealed ? C.body : isHint ? C.blue : C.line,
+          color: shown ? C.body : isHint ? C.blue : C.line,
           lineHeight: 1.25,
           display: '-webkit-box',
           WebkitLineClamp: 2,
@@ -180,6 +284,95 @@ function FitAnswer({
         {text}
       </div>
     </div>
+  )
+}
+
+/** 라운드 시작: 장르를 크게 보여준 뒤 자리로 축소·페이드 인 */
+function GenreIntroFly({
+  text,
+  targetRef,
+  active,
+  onSettled,
+  color = C.blue,
+}: {
+  text: string
+  targetRef: React.RefObject<HTMLElement | null>
+  active: boolean
+  onSettled: () => void
+  color?: string
+}) {
+  const flyRef = useRef<HTMLDivElement>(null)
+  const [phase, setPhase] = useState<'off' | 'hold' | 'fly'>('off')
+
+  useEffect(() => {
+    if (!active || !text) {
+      setPhase('off')
+      return
+    }
+    setPhase('hold')
+    const holdT = window.setTimeout(() => setPhase('fly'), 850)
+    const doneT = window.setTimeout(() => onSettled(), 850 + 780)
+    return () => {
+      window.clearTimeout(holdT)
+      window.clearTimeout(doneT)
+    }
+  }, [active, text, onSettled])
+
+  useEffect(() => {
+    if (phase !== 'fly' || !flyRef.current) return
+    const el = flyRef.current
+    const dest = targetRef.current?.getBoundingClientRect()
+    if (!dest) return
+    const from = el.getBoundingClientRect()
+    const fromCx = from.left + from.width / 2
+    const fromCy = from.top + from.height / 2
+    const toCx = dest.left + dest.width / 2
+    const toCy = dest.top + dest.height / 2
+    const scale = Math.max(0.22, Math.min(0.4, dest.height / Math.max(from.height, 1)))
+    el.style.transition = 'transform 0.72s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.55s ease 0.15s'
+    el.style.transform = `translate(${toCx - fromCx}px, ${toCy - fromCy}px) scale(${scale})`
+    el.style.opacity = '0'
+  }, [phase, targetRef])
+
+  if (!active || phase === 'off' || !text) return null
+
+  return createPortal(
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        zIndex: 55,
+        pointerEvents: 'none',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}
+    >
+      <div
+        ref={flyRef}
+        style={{
+          fontFamily: F.brand,
+          fontSize: text.length > 8 ? 52 : 72,
+          fontWeight: 700,
+          color,
+          letterSpacing: '0.06em',
+          lineHeight: 1.1,
+          padding: '10px 22px',
+          backgroundColor: 'transparent',
+          border: `3px solid ${color}`,
+          borderRadius: '10px 7px 11px 6px / 7px 11px 7px 10px',
+          boxShadow: 'none',
+          textShadow: 'none',
+          WebkitTextStroke: '0',
+          transform: 'translate(0, 0) scale(1)',
+          opacity: 1,
+          willChange: 'transform, opacity',
+        }}
+      >
+        {text}
+      </div>
+    </div>,
+    document.body,
   )
 }
 
@@ -282,6 +475,109 @@ function Field({ label, type = 'text', placeholder, value, onChange }: {
   )
 }
 
+/** 대기실: 장르별 출제 곡 수 — 슬라이더 + 숫자 입력 */
+function GenreSongCountRow({
+  genre,
+  value,
+  max = 999,
+  disabled,
+  onChange,
+}: {
+  genre: string
+  value: number
+  max?: number
+  disabled?: boolean
+  onChange: (n: number) => void
+}) {
+  const serverN = Math.max(0, Math.min(max, Math.floor(Number(value) || 0)))
+  const [local, setLocal] = useState(serverN)
+  const dragging = useRef(false)
+  // 슬라이더는 은행 max까지만 (0곡이면 0)
+  const sliderMax = Math.max(0, max)
+
+  useEffect(() => {
+    if (!dragging.current) setLocal(serverN)
+  }, [serverN])
+
+  const commit = (n: number) => {
+    const next = Math.max(0, Math.min(max, Math.floor(n)))
+    setLocal(next)
+    onChange(next)
+  }
+
+  return (
+    <div style={{ opacity: disabled ? 0.65 : 1 }}>
+      <div style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        gap: 8, marginBottom: 4,
+      }}>
+        <div style={{ fontFamily: F.ui, fontSize: 13, color: C.body, fontWeight: 800 }}>{genre}</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <input
+            type="number"
+            min={0}
+            max={max}
+            step={1}
+            disabled={disabled}
+            value={local}
+            onChange={(e) => {
+              if (disabled) return
+              const raw = e.target.value
+              if (raw === '') {
+                setLocal(0)
+                return
+              }
+              const next = Math.floor(Number(raw))
+              if (!Number.isFinite(next)) return
+              commit(next)
+            }}
+            onBlur={() => commit(local)}
+            style={{
+              ...sk(C.graphite, true),
+              backgroundColor: C.card,
+              width: 64,
+              fontFamily: F.ui,
+              fontSize: 15,
+              fontWeight: 800,
+              textAlign: 'center',
+              padding: '4px 6px',
+              outline: 'none',
+              color: C.body,
+            }}
+          />
+          <span style={{ fontFamily: F.ui, fontSize: 12, color: C.muted, fontWeight: 700 }}>곡</span>
+        </div>
+      </div>
+      <input
+        type="range"
+        min={0}
+        max={sliderMax}
+        step={1}
+        disabled={disabled}
+        value={Math.min(local, sliderMax)}
+        onPointerDown={() => { dragging.current = true }}
+        onChange={(e) => {
+          if (disabled) return
+          setLocal(Number(e.target.value))
+        }}
+        onPointerUp={(e) => {
+          dragging.current = false
+          if (disabled) return
+          commit(Number((e.target as HTMLInputElement).value))
+          playSfx('click')
+        }}
+        onKeyUp={(e) => {
+          if (disabled) return
+          if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'Home' || e.key === 'End') {
+            commit(Number((e.target as HTMLInputElement).value))
+          }
+        }}
+        style={{ width: '100%', accentColor: C.blue, cursor: disabled ? 'default' : 'pointer' }}
+      />
+    </div>
+  )
+}
+
 function NoteCard({ children, style }: { children: React.ReactNode; style?: React.CSSProperties }) {
   return (
     <div style={{
@@ -335,9 +631,9 @@ function TimerRing({ value, max = 40, size = 68 }: { value: number; max?: number
 
 /** 링만 250ms 갱신 — GameScreen 전체 리렌더 방지 */
 function RoundTimer({ endsAt, max = 40, size = 58 }: { endsAt: number; max?: number; size?: number }) {
-  const [left, setLeft] = useState(() => Math.max(0, Math.ceil((endsAt - Date.now()) / 1000)))
+  const [left, setLeft] = useState(() => Math.max(0, Math.ceil((endsAt - serverNow()) / 1000)))
   useEffect(() => {
-    const tick = () => setLeft(Math.max(0, Math.ceil((endsAt - Date.now()) / 1000)))
+    const tick = () => setLeft(Math.max(0, Math.ceil((endsAt - serverNow()) / 1000)))
     tick()
     const t = setInterval(tick, 250)
     return () => clearInterval(t)
@@ -629,7 +925,7 @@ function LobbyScreen({ nav }: { nav: (s: Screen) => void }) {
   const makeRoom = async () => {
     setBusy(true); setErr('')
     try {
-      await createRoom({ name: `${user?.nickname || '나'}의 방`, genreCounts: emptyGenreCounts('K팝', 20), maxPlayers: 10 })
+      await createRoom({ name: `${user?.nickname || '나'}의 방`, genreCounts: emptyGenreCounts('한국노래', 20), maxPlayers: 10 })
       nav('waiting')
     } catch (e) { setErr(e instanceof Error ? e.message : '실패') }
     finally { setBusy(false) }
@@ -835,8 +1131,10 @@ function WaitingScreen({ nav }: { nav: (s: Screen) => void }) {
 
   const setGenreCount = (genre: GenreName, n: number) => {
     if (!isHost) return
+    const max = room.genreBankCounts?.[genre] ?? 0
+    const clamped = Math.max(0, Math.min(max, Math.floor(n)))
     const next: Record<string, number> = {}
-    for (const g of GENRES) next[g] = g === genre ? n : (room.genreCounts[g] || 0)
+    for (const g of GENRES) next[g] = g === genre ? clamped : (room.genreCounts[g] || 0)
     updateSettings({ genreCounts: next })
   }
 
@@ -904,19 +1202,21 @@ function WaitingScreen({ nav }: { nav: (s: Screen) => void }) {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           <NoteCard>
             <div style={{ fontFamily: F.ui, fontSize: 16, fontWeight: 900, marginBottom: 12 }}>방 설정 {isHost ? '' : '(방장만)'}</div>
-            <div style={{ fontFamily: F.ui, fontSize: 13, color: C.muted, marginBottom: 10 }}>장르별 출제 수 (총 {qCount}곡)</div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 14 }}>
+            <div style={{ fontFamily: F.ui, fontSize: 13, color: C.muted, marginBottom: 10 }}>
+              장르별 출제 수 (총 {qCount}곡) · 문제은행 보유량까지만 설정 가능
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 14 }}>
               {GENRES.map(g => {
-                const n = room.genreCounts[g] || 0
+                const bankMax = room.genreBankCounts?.[g] ?? 0
                 return (
-                  <div key={g}>
-                    <div style={{ fontFamily: F.ui, fontSize: 13, color: C.body, fontWeight: 800, marginBottom: 4 }}>{g}: {n}</div>
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                      {[0, 5, 10, 15, 20].map(v => (
-                        <button key={`${g}-${v}`} type="button" style={selBtn(v, n)} onClick={() => { playSfx('click'); setGenreCount(g, v) }}>{v}</button>
-                      ))}
-                    </div>
-                  </div>
+                  <GenreSongCountRow
+                    key={g}
+                    genre={`${g} (은행 ${bankMax})`}
+                    value={Math.min(room.genreCounts[g] || 0, bankMax)}
+                    max={bankMax}
+                    disabled={!isHost || bankMax === 0}
+                    onChange={(n) => setGenreCount(g, n)}
+                  />
                 )
               })}
             </div>
@@ -1057,361 +1357,15 @@ function AugmentCutscene({
   )
 }
 
-function ytId(url: string) {
-  const m = url.match(/(?:v=|youtu\.be\/|embed\/)([\w-]{11})/)
-  return m?.[1] || ''
-}
-
-declare global {
-  interface Window {
-    YT?: {
-      Player: new (
-        el: HTMLElement | string,
-        opts: {
-          videoId: string
-          width?: number
-          height?: number
-          playerVars?: Record<string, number | string>
-          events?: {
-            onReady?: (e: { target: YtPlayer }) => void
-            onStateChange?: (e: { data: number; target: YtPlayer }) => void
-            onError?: (e: { data: number }) => void
-          }
-        },
-      ) => YtPlayer
-      PlayerState: { PLAYING: number; PAUSED: number; ENDED: number }
-    }
-    onYouTubeIframeAPIReady?: () => void
-  }
-}
-
-type YtPlayer = {
-  playVideo: () => void
-  pauseVideo: () => void
-  seekTo: (sec: number, allowSeekAhead: boolean) => void
-  setVolume: (n: number) => void
-  setPlaybackRate: (rate: number) => void
-  getAvailablePlaybackRates: () => number[]
-  unMute: () => void
-  mute: () => void
-  destroy: () => void
-  getPlayerState: () => number
-}
-
-let ytApiPromise: Promise<void> | null = null
-function loadYtApi() {
-  if (window.YT?.Player) return Promise.resolve()
-  if (ytApiPromise) return ytApiPromise
-  ytApiPromise = new Promise((resolve) => {
-    const prev = window.onYouTubeIframeAPIReady
-    window.onYouTubeIframeAPIReady = () => {
-      prev?.()
-      resolve()
-    }
-    if (!document.querySelector('script[src="https://www.youtube.com/iframe_api"]')) {
-      const s = document.createElement('script')
-      s.src = 'https://www.youtube.com/iframe_api'
-      document.head.appendChild(s)
-    }
-    // 이미 로드된 경우
-    const check = setInterval(() => {
-      if (window.YT?.Player) {
-        clearInterval(check)
-        resolve()
-      }
-    }, 50)
-  })
-  return ytApiPromise
-}
-
-function HiddenYouTube({
-  url,
-  startSec,
-  volume,
-  durationSec,
-  paused = false,
-  playbackRate = 1,
-  playLabel = '🎵 탭해서 노래 재생',
-  audioUnlockAt = null,
-}: {
-  url: string
-  startSec: number
-  volume: number
-  /** 있으면 start부터 이 초만큼만 재생 */
-  durationSec?: number
-  /** true면 일시정지 (컷신 등) */
-  paused?: boolean
-  /** YouTube 재생 배속 (지원 목록에 스냅) */
-  playbackRate?: number
-  playLabel?: string
-  /** 슬로우 스타터: 이 시각 이후에만 들리기 시작 */
-  audioUnlockAt?: number | null
-}) {
-  const id = ytId(url)
-  const hostRef = useRef<HTMLDivElement>(null)
-  const playerRef = useRef<YtPlayer | null>(null)
-  const pausedRef = useRef(paused)
-  pausedRef.current = paused
-  const rateRef = useRef(playbackRate)
-  rateRef.current = playbackRate
-  const volumeRef = useRef(volume)
-  volumeRef.current = volume
-  const unlockAtRef = useRef(audioUnlockAt)
-  unlockAtRef.current = audioUnlockAt
-  const audioLockedRef = useRef(!!(audioUnlockAt && audioUnlockAt > Date.now()))
-  const [blocked, setBlocked] = useState(false)
-  const [ready, setReady] = useState(false)
-  const start = Math.max(0, Math.floor(startSec))
-  const end = durationSec && durationSec > 0 ? start + Math.floor(durationSec) : undefined
-
-  const applyRate = (p: YtPlayer, desired: number) => {
-    try {
-      const available = typeof p.getAvailablePlaybackRates === 'function'
-        ? p.getAvailablePlaybackRates()
-        : [0.25, 0.5, 0.75, 1]
-      let best = available[0] ?? 1
-      let bestDist = Math.abs(best - desired)
-      for (const a of available) {
-        const d = Math.abs(a - desired)
-        if (d < bestDist) {
-          best = a
-          bestDist = d
-        }
-      }
-      p.setPlaybackRate(best)
-    } catch { /* ignore */ }
-  }
-
-  /** 항상 뮤트로 재생 시작(자동재생 허용) → volume>0이면 언뮤트 */
-  const syncPlayback = (p: YtPlayer, opts?: { seek?: boolean }) => {
-    try {
-      if (opts?.seek) p.seekTo(start, true)
-      applyRate(p, rateRef.current)
-      if (pausedRef.current || audioLockedRef.current) {
-        p.pauseVideo()
-        p.mute()
-        return
-      }
-      const vol = Math.max(0, Math.min(100, volumeRef.current))
-      p.setVolume(vol)
-      // 먼저 뮤트 재생으로 확보한 뒤, 볼륨 있으면 언뮤트
-      p.mute()
-      p.playVideo()
-      if (vol > 0) {
-        p.unMute()
-        p.setVolume(vol)
-      }
-    } catch { /* ignore */ }
-  }
-
-  useEffect(() => {
-    if (!id || !hostRef.current) return
-    let cancelled = false
-    let player: YtPlayer | null = null
-    let stopTimer: ReturnType<typeof setTimeout> | null = null
-    let delayTimer: ReturnType<typeof setTimeout> | null = null
-    let checkTimer: ReturnType<typeof setTimeout> | null = null
-
-    ;(async () => {
-      await loadYtApi()
-      if (cancelled || !hostRef.current || !window.YT) return
-      hostRef.current.innerHTML = ''
-      const mount = document.createElement('div')
-      hostRef.current.appendChild(mount)
-
-      player = new window.YT.Player(mount, {
-        videoId: id,
-        width: 320,
-        height: 180,
-        playerVars: {
-          autoplay: 1,
-          mute: 1,
-          start,
-          ...(end != null ? { end } : {}),
-          controls: 0,
-          modestbranding: 1,
-          rel: 0,
-          playsinline: 1,
-          fs: 0,
-          disablekb: 1,
-          iv_load_policy: 3,
-          origin: window.location.origin,
-        },
-        events: {
-          onReady: (e) => {
-            if (cancelled) return
-            playerRef.current = e.target
-            const unlockAt = unlockAtRef.current
-            const waitMs = unlockAt != null ? Math.max(0, unlockAt - Date.now()) : 0
-            const kick = () => {
-              if (cancelled) return
-              syncPlayback(e.target, { seek: true })
-              if (durationSec && durationSec > 0 && !pausedRef.current) {
-                stopTimer = setTimeout(() => {
-                  try { e.target.pauseVideo() } catch { /* ignore */ }
-                }, durationSec * 1000)
-              }
-              checkTimer = setTimeout(() => {
-                if (cancelled || pausedRef.current || audioLockedRef.current) return
-                try {
-                  const st = e.target.getPlayerState()
-                  // 1=playing, 3=buffering
-                  if (st !== 1 && st !== 3) setBlocked(true)
-                  else if (volumeRef.current > 0) {
-                    // 재생 중인데 소리만 막힌 경우 대비
-                    e.target.unMute()
-                    e.target.setVolume(volumeRef.current)
-                  }
-                } catch {
-                  setBlocked(true)
-                }
-              }, 1000)
-            }
-            if (waitMs > 0) {
-              audioLockedRef.current = true
-              try {
-                e.target.mute()
-                e.target.pauseVideo()
-                e.target.seekTo(start, true)
-              } catch { /* ignore */ }
-              delayTimer = setTimeout(() => {
-                audioLockedRef.current = false
-                kick()
-              }, waitMs)
-            } else {
-              kick()
-            }
-            setReady(true)
-          },
-          onStateChange: (e) => {
-            if (e.data === 1) {
-              setBlocked(false)
-              if (!pausedRef.current && !audioLockedRef.current && volumeRef.current > 0) {
-                try {
-                  e.target.unMute()
-                  e.target.setVolume(volumeRef.current)
-                } catch { /* ignore */ }
-              }
-            }
-          },
-          onError: () => setBlocked(true),
-        },
-      })
-      setTimeout(() => {
-        const iframe = hostRef.current?.querySelector('iframe')
-        if (iframe) {
-          iframe.setAttribute('referrerpolicy', 'strict-origin-when-cross-origin')
-          iframe.setAttribute('allow', 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share')
-        }
-      }, 0)
-    })()
-
-    return () => {
-      cancelled = true
-      if (stopTimer) clearTimeout(stopTimer)
-      if (delayTimer) clearTimeout(delayTimer)
-      if (checkTimer) clearTimeout(checkTimer)
-      try { player?.destroy() } catch { /* ignore */ }
-      playerRef.current = null
-      setReady(false)
-    }
-  }, [id, start, end, durationSec, audioUnlockAt])
-
-  useEffect(() => {
-    const p = playerRef.current
-    if (!p || !ready) return
-    applyRate(p, playbackRate)
-  }, [playbackRate, ready])
-
-  useEffect(() => {
-    const p = playerRef.current
-    if (!p || !ready) return
-    syncPlayback(p)
-  }, [paused, ready])
-
-  useEffect(() => {
-    const p = playerRef.current
-    if (!p || !ready || paused || audioLockedRef.current) return
-    try {
-      const vol = Math.max(0, Math.min(100, volume))
-      p.setVolume(vol)
-      if (vol <= 0) p.mute()
-      else {
-        p.unMute()
-        p.playVideo()
-      }
-    } catch { /* ignore */ }
-  }, [volume, ready, paused])
-
-  const forcePlay = () => {
-    const p = playerRef.current
-    if (!p) return
-    audioLockedRef.current = false
-    try {
-      p.seekTo(start, true)
-      applyRate(p, rateRef.current)
-      const vol = Math.max(0, Math.min(100, volume))
-      p.setVolume(vol)
-      if (vol <= 0) p.mute()
-      else p.unMute()
-      p.playVideo()
-      setBlocked(false)
-    } catch { /* ignore */ }
-  }
-
-  if (!id) return null
-
-  return (
-    <>
-      <div
-        aria-hidden
-        style={{
-          position: 'fixed',
-          left: 0,
-          bottom: 0,
-          width: 320,
-          height: 180,
-          opacity: 0.001,
-          pointerEvents: 'none',
-          zIndex: 0,
-          overflow: 'hidden',
-        }}
-      >
-        <div ref={hostRef} />
-      </div>
-      {blocked && (
-        <button
-          type="button"
-          onClick={forcePlay}
-          style={{
-            position: 'fixed',
-            left: '50%',
-            bottom: 24,
-            transform: 'translateX(-50%)',
-            zIndex: 50,
-            ...sk(C.blue),
-            backgroundColor: C.blue,
-            color: '#fff',
-            fontFamily: F.ui,
-            fontSize: 16,
-            fontWeight: 800,
-            padding: '12px 22px',
-            cursor: 'pointer',
-            border: `2.5px solid ${C.graphite}`,
-          }}
-        >
-          {playLabel}
-        </button>
-      )}
-    </>
-  )
-}
 
 function GameScreen({ nav }: { nav: (s: Screen) => void }) {
   const { user, room, chats, round, skip, skipVoted, augmentHint, startCountdown, musicVolume, setMusicVolume, sfxVolume, setSfxVolume, submitAnswer, voteSkip, useAugment, fetchGahoCandidates, leaveRoom } = useGame()
   const [input, setInput] = useState('')
   const [showUsedList, setShowUsedList] = useState(false)
   const [augHover, setAugHover] = useState(false)
+  const [augHoverAnchor, setAugHoverAnchor] = useState<DOMRect | null>(null)
+  const [queueHover, setQueueHover] = useState(false)
+  const [queueHoverAnchor, setQueueHoverAnchor] = useState<DOMRect | null>(null)
   const [leaveOpen, setLeaveOpen] = useState(false)
   const [targetPickOpen, setTargetPickOpen] = useState(false)
   const [genrePickOpen, setGenrePickOpen] = useState(false)
@@ -1425,10 +1379,20 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
   }>>([])
   const [gahoBusy, setGahoBusy] = useState(false)
   const [chatCardHover, setChatCardHover] = useState<number | null>(null)
+  const [chatCardAnchor, setChatCardAnchor] = useState<DOMRect | null>(null)
   const [cutQueue, setCutQueue] = useState<CutsceneItem[]>([])
-  const [now, setNow] = useState(Date.now())
+  const [now, setNow] = useState(() => serverNow())
+  const [genreSettled, setGenreSettled] = useState(true)
+  const [genreIntroActive, setGenreIntroActive] = useState(false)
   const chatRef = useRef<HTMLDivElement>(null)
   const cutShownForRound = useRef<number | null>(null)
+  const genreSlotRef = useRef<HTMLDivElement>(null)
+  const genreIntroRoundRef = useRef<number | null>(null)
+
+  const settleGenreIntro = useCallback(() => {
+    setGenreIntroActive(false)
+    setGenreSettled(true)
+  }, [])
 
   useEffect(() => {
     if (!room) nav('lobby')
@@ -1438,9 +1402,29 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
   }, [room, nav])
 
   useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), 1000)
+    const t = setInterval(() => setNow(serverNow()), 1000)
     return () => clearInterval(t)
   }, [])
+
+  // 노래(라운드) 시작 시 장르 인트로: 크게 → 자리로 축소 페이드
+  useEffect(() => {
+    if (!room || !round) return
+    if (round.duel) {
+      setGenreIntroActive(false)
+      setGenreSettled(true)
+      return
+    }
+    if (room.status === 'countdown') {
+      setGenreIntroActive(false)
+      setGenreSettled(false)
+      return
+    }
+    if (room.status !== 'playing') return
+    if (genreIntroRoundRef.current === round.index) return
+    genreIntroRoundRef.current = round.index
+    setGenreSettled(false)
+    setGenreIntroActive(true)
+  }, [room?.status, round?.index, round?.duel])
 
   useEffect(() => {
     if (chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight
@@ -1518,6 +1502,24 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
       })
     }
 
+    if (self.gabukiActive) {
+      items.push({
+        name: self.gabukiBy || '가불기',
+        description: '정답 시 −1점, 라운드에서 한 번도 못 맞히면 −2점 (시전자에게 이전)',
+        subtitle: `${self.gabukiRoundsLeft ?? '?'}라운드 남음`,
+      })
+    }
+
+    if (self.flameKimActive || self.flameKimPending) {
+      items.push({
+        name: self.flameKimBy || '불꽃남자김상원',
+        description: `방 노래와 「불꽃남자」가 같이 들립니다. 정답 시 ${self.flameKimTarget || '대상'} −1점 (본인 평소 득점)`,
+        subtitle: self.flameKimPending
+          ? '다음 라운드부터'
+          : `${self.flameKimRoundsLeft ?? '?'}라운드 남음`,
+      })
+    }
+
     cutShownForRound.current = round.index
     if (items.length) setCutQueue(items)
   }, [round?.index, room?.status, room?.members, user, round])
@@ -1527,17 +1529,16 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
   const me = room.members.find(m => m.userId === user.id)
   const timer = round ? Math.max(0, Math.ceil((round.endsAt - now) / 1000)) : 0
   const maxTime = round?.duration || 40
-  const titleSlot = round?.slots.find(s => !s.hidden && s.label.includes('제목'))
-  const artistSlot = round?.slots.find(s => !s.hidden && s.label.includes('가수'))
+  const openSlots = (round?.slots || []).filter(s => !s.hidden)
   const hiddenSlot = round?.slots.find(s => s.hidden)
-  const titleRevealed = titleSlot?.revealed
-    ? (titleSlot.answer || null)
-    : (me?.knowSpoilTitle || null)
-  const artistRevealed = artistSlot?.revealed
-    ? (artistSlot.answer || null)
-    : (me?.knowSpoilArtist || null)
+  const genreHidden = !!(hiddenSlot || round?.hasHidden)
+  const genreColor = genreHidden ? C.red : C.blue
+  const spoilArtists = (me?.knowSpoilArtist || '')
+    .split(/\s*,\s*/)
+    .map(s => s.trim())
+    .filter(Boolean)
   const hiddenRevealed = hiddenSlot?.revealed ? (hiddenSlot.answer || null) : null
-  const openAllDone = (round?.slots || []).filter(s => !s.hidden).every(s => s.revealed)
+  const openAllDone = openSlots.length > 0 && openSlots.every(s => s.revealed)
   const showHidden = !!hiddenSlot && (hiddenSlot.unlocked || openAllDone)
   const answerDelayLocked = !!(me?.answerDelayUnlockAt && now < me.answerDelayUnlockAt)
   const answerDelayLeftSec = answerDelayLocked
@@ -1549,9 +1550,15 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
   const duelSpectating = inDuel && !!duel && !isDuelist
   const submitBlocked = !!me?.chatMuted || answerDelayLocked
   const visibleChats = chats.filter((msg) => !(msg.spectator && isDuelist))
+  const hoveredChatCard = chatCardHover != null
+    ? visibleChats.find((c) => c.id === chatCardHover)?.augmentCard
+    : null
   const ranked = [...room.members].sort((a, b) => b.score - a.score)
   const myBuffs = me?.activeBuffs || []
-  const deafMode = myBuffs.some(b => b.active && b.effectType === 'score_mult_hint_only')
+  const deafMode = myBuffs.some(b => b.active && (
+    b.effectType === 'score_mult_hint_only' || b.effectType === 'mud_fight'
+  ))
+  const mudBuff = myBuffs.find(b => b.active && b.effectType === 'mud_fight')
   const inCountdown = room.status === 'countdown'
   const songPlaybackRate = (!inDuel && me?.playbackRate && me.playbackRate > 0 && me.playbackRate !== 1)
     ? me.playbackRate
@@ -1567,10 +1574,15 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
     || me?.heldAugmentEffectType === 'polite_suffix'
     || me?.heldAugmentEffectType === 'answer_block'
     || me?.heldAugmentEffectType === 'rock_throw'
+    || me?.heldAugmentEffectType === 'steal_chain'
     || me?.heldAugmentEffectType === 'score_steal'
     || me?.heldAugmentEffectType === 'pair_average'
     || me?.heldAugmentEffectType === 'accuse_sleep'
+    || me?.heldAugmentEffectType === 'gabuki_mark'
+    || (me?.heldAugmentEffectType === 'flame_kim' && room.members.length >= 2)
+    || me?.heldAugmentEffectType === 'steal_held_augment'
   const isAutoAugment = me?.heldAugmentEffectType === 'water_ghost'
+    || me?.heldAugmentEffectType === 'combo_clear_double'
   const isPassiveHeld = me?.heldAugmentEffectType === 'reflect_debuff'
   const useLocked = isAutoAugment || isPassiveHeld
   const needsGahoPick = me?.heldAugmentEffectType === 'gaho_select'
@@ -1578,30 +1590,113 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
   const upcomingGenreEntries = Object.entries(room.upcomingGenreCounts || {})
     .filter(([, c]) => c > 0)
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'ko'))
+  /** 이번 곡 포함 남은 장르별 잔량 (호버용) */
+  const remainingGenreEntries = (() => {
+    const counts: Record<string, number> = { ...(room.upcomingGenreCounts || {}) }
+    if (round?.genre && (room.status === 'playing' || room.status === 'revealing' || room.status === 'duel')) {
+      counts[round.genre] = (counts[round.genre] || 0) + 1
+    }
+    return Object.entries(counts)
+      .filter(([, c]) => c > 0)
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'ko'))
+  })()
+  const remainingTotal = remainingGenreEntries.reduce((s, [, c]) => s + c, 0)
 
   const openGahoPick = async () => {
     setGahoBusy(true)
     setGahoPickOpen(true)
     try {
-      const list = await fetchGahoCandidates()
-      setGahoCandidates(list)
+      const { candidates } = await fetchGahoCandidates()
+      setGahoCandidates(candidates)
     } finally {
       setGahoBusy(false)
     }
   }
   const noHintMode = myBuffs.some(b => b.active && b.effectType === 'score_mult_no_hint')
-  const playVolume = deafMode ? 0 : musicVolume
-  // 카운트다운 중에는 뮤트로 프리로드(브라우저 자동재생 허용) → 시작 시 같은 플레이어로 언뮤트
-  const ytVolume = inCountdown ? 0 : playVolume
-  const showGenre = !noHintMode
-  const songUrl = (inDuel ? null : me?.decoyYoutubeUrl) || round?.youtubeUrl || ''
-  const songStartSec = (!inDuel && me?.decoyYoutubeUrl != null)
-    ? (me.decoyStartSec ?? round?.startSec ?? 0)
-    : (round?.startSec ?? 0)
-  const showYt = !!(round && songUrl && (room.status === 'playing' || room.status === 'duel' || room.status === 'countdown'))
-  // 초성은 위쪽 제목/가수 칸, 증강 정답 안내는 증강 적용 칸
-  const titleHint = !noHintMode && !titleRevealed && (deafMode || timer <= 10) ? (round?.titleChosung || null) : null
-  const artistHint = !noHintMode && !artistRevealed && (deafMode || timer <= 20) ? (round?.artistChosung || null) : null
+  const songPowerOff = !!(me?.songMuteUntil && now < me.songMuteUntil)
+  const songPowerOffLeft = songPowerOff
+    ? Math.max(0, Math.ceil((me!.songMuteUntil! - now) / 1000))
+    : 0
+  // 방 노래(정답 곡) / 증강 트릭 노래 = HiddenYouTube 2개
+  // audioTrick.mode
+  //   replace  → 세노·트루먼·에라모르겠다·진흙탕 (방 곡 끔, 트릭만)
+  //   overlay  → 불꽃남자김상원 (둘 다)
+  const audioTrick = !inDuel ? (me?.audioTrick ?? null) : null
+  const trickReplace = audioTrick?.mode === 'replace'
+  const trickOverlay = audioTrick?.mode === 'overlay'
+  const trickUrl = audioTrick?.youtubeUrl || null
+  const trickStartSec = audioTrick?.startSec ?? 0
+  const roomSongUrl = round?.youtubeUrl || ''
+  const roomSongStartSec = round?.startSec ?? 0
+  const baseVol = songPowerOff ? 0 : musicVolume
+  const roomPlayVolume = (deafMode && audioTrick?.source !== 'mud') || trickReplace ? 0 : baseVol
+  // 불꽃남자는 App 루트 FlameKimOverlayBgm이 담당 (여기선 제외)
+  const trickPlayVolume = baseVol
+  const roomYtVolume = inCountdown ? 0 : roomPlayVolume
+  const trickYtVolume = inCountdown ? 0 : trickPlayVolume
+  const showGenre = !noHintMode && audioTrick?.source !== 'mud'
+  const showRoomYt = !!(
+    round
+    && roomSongUrl
+    && (room.status === 'playing' || room.status === 'duel' || room.status === 'countdown')
+  )
+  // 세노·트루먼·진흙탕 등 replace/overlay(불꽃 제외)
+  const showTrickYt = !!(
+    trickUrl
+    && (trickReplace || trickOverlay)
+    && audioTrick?.source !== 'flame'
+    && (room.status === 'playing' || room.status === 'countdown')
+  )
+  // 초성은 위쪽 슬롯 칸, 증강 정답 안내는 증강 적용 칸
+  // 같은 라벨 N개 → 한 칸에 「A / B」로 합치고, 종류(칸) 수만큼 동일 비율
+  const artistHintParts = (round?.artistChosung || '').split(/\s*\/\s*/).map(s => s.trim()).filter(Boolean)
+  const slotGroups: Array<{ label: string; slots: typeof openSlots }> = []
+  for (const slot of openSlots) {
+    const g = slotGroups.find((x) => x.label === slot.label)
+    if (g) g.slots.push(slot)
+    else slotGroups.push({ label: slot.label, slots: [slot] })
+  }
+  const slotDisplays = slotGroups.map((group) => {
+    const isArtist = group.label.includes('가수')
+    const isTitleLike = group.label.includes('제목') || group.label.includes('게임')
+    const parts = group.slots.map((slot, i) => {
+      if (slot.revealed && slot.answer) return slot.answer
+      if (isArtist && spoilArtists[i]) return spoilArtists[i]
+      if (isArtist && group.slots.length === 1 && me?.knowSpoilArtist) return me.knowSpoilArtist
+      if (isTitleLike && me?.knowSpoilTitle) return me.knowSpoilTitle
+      return ''
+    })
+    const anyRevealed = group.slots.some((s, i) => s.revealed || !!parts[i])
+    const allRevealed = group.slots.every((s, i) => s.revealed || !!parts[i])
+    const value = anyRevealed
+      ? parts.map((p) => p || '？？？').join(' / ')
+      : null
+    let hint: string | null = null
+    if (!allRevealed && !inCountdown && !noHintMode) {
+      if (isTitleLike && (deafMode || timer <= 10)) hint = round?.titleChosung || null
+      if (isArtist && (deafMode || timer <= 20)) {
+        if (!anyRevealed) {
+          hint = round?.artistChosung?.trim()
+            || artistHintParts.join(' / ')
+            || null
+        } else {
+          hint = parts.map((p, i) => p || artistHintParts[i] || '？？？').join(' / ')
+        }
+      }
+    }
+    // 일부만 맞힌 경우 value에 초성/？？？ 섞어 표시
+    const displayValue = anyRevealed && !allRevealed && isArtist && (deafMode || timer <= 20) && !inCountdown && !noHintMode
+      ? parts.map((p, i) => p || artistHintParts[i] || '？？？').join(' / ')
+      : value
+    return {
+      key: group.label,
+      label: group.label,
+      value: displayValue,
+      hint: !anyRevealed ? hint : null,
+      revealed: anyRevealed,
+    }
+  })
+
   const visibleBuffs = myBuffs.filter(b => b.active || b.pending)
   const scoreMult = Math.max(
     1,
@@ -1615,7 +1710,10 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
       return b.pending ? `${b.name}(대기)${multPart}${ratePart}` : `${b.name} ${b.roundsLeft}R${multPart}${ratePart}`
     }),
     me?.sakuraActive
-      ? `${me.sakuraBy || '다른 곡'}${me.sakuraScoreMult && me.sakuraScoreMult > 1 ? ` · 정답×${me.sakuraScoreMult}` : ''}`
+      ? `${me.sakuraBy || '다른 곡'}${me.sakuraScoreMult && me.sakuraScoreMult > 1 ? ` · 정답×${me.sakuraScoreMult}` : ''} · 트릭곡만`
+      : '',
+    me?.flameKimActive
+      ? `${me.flameKimBy || '불꽃남자김상원'} · 방곡+트릭`
       : '',
     me?.answerDelayPending
       ? '님아 매너좀(대기)'
@@ -1637,6 +1735,16 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
       : (me?.accuseWatchActive
         ? `${me.accuseWatchBy || '범인은 당신이야!'} · 맞히면 다음 R 수면`
         : ''),
+    me?.gabukiPending
+      ? `${me.gabukiBy || '가불기'}(대기)`
+      : (me?.gabukiActive
+        ? `${me.gabukiBy || '가불기'} ${me.gabukiRoundsLeft ?? '?'}R · 정답−1/미득점−2`
+        : ''),
+    me?.flameKimPending
+      ? `${me.flameKimBy || '불꽃남자김상원'}(대기)`
+      : (me?.flameKimActive
+        ? `${me.flameKimBy || '불꽃남자김상원'} ${me.flameKimRoundsLeft ?? '?'}R · ${me.flameKimTarget || '대상'} −1`
+        : ''),
     me?.answerProxyActive
       ? (me.answerProxyPending
         ? `신속정확대리(대기)`
@@ -1654,7 +1762,7 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
 
   const panelBox: React.CSSProperties = {
     ...sk(), backgroundColor: C.panel, padding: '12px 14px',
-    display: 'flex', flexDirection: 'column', gap: 10, minHeight: 0,
+    display: 'flex', flexDirection: 'column', gap: 10, minHeight: 0, minWidth: 0,
   }
   const surf = C.panel
   const chip = (ok: boolean, label: string, value: string | null) => (
@@ -1716,15 +1824,34 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
           onDone={() => setCutQueue(q => q.slice(1))}
         />
       )}
-      {showYt && (
+      {showRoomYt && (
         <HiddenYouTube
-          key={`yt-${round!.index}-${ytId(songUrl)}`}
-          url={songUrl}
-          startSec={songStartSec}
-          volume={ytVolume}
+          key={`yt-room-${round!.index}-${ytId(roomSongUrl)}`}
+          url={roomSongUrl}
+          startSec={roomSongStartSec}
+          volume={roomYtVolume}
           paused={cutQueue.length > 0}
           playbackRate={songPlaybackRate}
           audioUnlockAt={inCountdown ? null : (me?.audioDelaySec ? (me.audioDelayUntil ?? null) : null)}
+          cutMute={songPowerOff || trickReplace}
+          roundEndsAt={round?.endsAt ?? null}
+          roundDurationSec={maxTime}
+        />
+      )}
+      {showTrickYt && trickUrl && audioTrick && (
+        <HiddenYouTube
+          key={`yt-trick-${round?.index ?? 0}-${ytId(trickUrl)}-${audioTrick.source}-${audioTrick.mode}`}
+          url={trickUrl}
+          startSec={trickStartSec}
+          volume={trickYtVolume}
+          paused={cutQueue.length > 0}
+          playbackRate={1}
+          playLabel="🎵 탭해서 증강 노래 재생"
+          audioUnlockAt={null}
+          cutMute={songPowerOff}
+          loop={false}
+          roundEndsAt={round?.endsAt ?? null}
+          roundDurationSec={maxTime}
         />
       )}
       <div style={{
@@ -1734,10 +1861,39 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
         filter: 'url(#pencilRough)',
       }}>
         <RoundTimer endsAt={round?.endsAt ?? now} max={maxTime} size={58} />
-        <div style={{ fontFamily: F.ui, fontSize: 18, fontWeight: 400, color: C.body }}>
+        <div
+          style={{
+            fontFamily: F.ui,
+            fontSize: 18,
+            fontWeight: 400,
+            color: C.body,
+            cursor: 'help',
+            padding: '2px 4px',
+            borderRadius: 4,
+            backgroundColor: queueHover ? C.blueLight : 'transparent',
+          }}
+          onMouseEnter={(e) => {
+            setQueueHover(true)
+            setQueueHoverAnchor(e.currentTarget.getBoundingClientRect())
+          }}
+          onMouseLeave={() => {
+            setQueueHover(false)
+            setQueueHoverAnchor(null)
+          }}
+          title="남은 곡 · 장르별"
+        >
           Q{(round?.index ?? 0) + 1}/{round?.total ?? '?'}
         </div>
-        <div style={{ ...sk(C.blue, true), backgroundColor: C.blueLight, padding: '5px 12px', fontFamily: F.ui, fontSize: 16, color: C.blue }}>
+        <div style={{
+          border: `2.5px solid ${genreColor}`,
+          borderRadius: '7px 5px 8px 4px / 5px 8px 5px 7px',
+          backgroundColor: 'transparent',
+          padding: '5px 12px',
+          fontFamily: F.ui,
+          fontSize: 16,
+          color: genreColor,
+          fontWeight: 700,
+        }}>
           {round?.genre || '-'}
         </div>
         <div style={{ ...sk(C.graphite, true), backgroundColor: C.blueLight, padding: '6px 12px', display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -1745,17 +1901,26 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
           <span style={{ fontFamily: F.ui, fontSize: 16, color: C.blue }}>
             {inDuel
               ? `야차룰 · ${(round?.duelChallenger || duel?.challengerNickname || '?')} vs ${(round?.duelOpponent || duel?.opponentNickname || '?')}`
-              : me?.audioDelayUntil && now < me.audioDelayUntil
+              : room.pendingDuel
+                ? `야차룰 대기 · ${room.pendingDuel.challengerNickname} vs ${room.pendingDuel.opponentNickname}`
+              : songPowerOff
+                ? `전원을 꺼봤습니다 · ${songPowerOffLeft}초`
+                : me?.audioDelayUntil && now < me.audioDelayUntil
                 ? `슬로우 스타터 · ${Math.max(0, Math.ceil((me.audioDelayUntil - now) / 1000))}초 후`
                 : me?.sakuraActive
-                  ? `${me.sakuraBy || '다른 곡'} · 다른 곡`
+                  ? `${me.sakuraBy || '다른 곡'} · 트릭곡만`
+                  : me?.flameKimActive
+                    ? `${me.flameKimBy || '불꽃남자김상원'} · 방곡+트릭`
                   : songPlaybackRate !== 1
                     ? `재생 ×${songPlaybackRate}`
                     : '재생 중'}
           </span>
         </div>
-        {chip(!!titleRevealed, '제목', titleRevealed)}
-        {!inDuel && chip(!!artistRevealed, '가수', artistRevealed)}
+        {!inDuel && slotDisplays.map((col) => (
+          <span key={col.key}>
+            {chip(col.revealed, col.label, col.value)}
+          </span>
+        ))}
         {inDuel && (
           <div style={{
             ...sk(C.blue, true), backgroundColor: C.blueLight, padding: '5px 12px',
@@ -1813,20 +1978,80 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12, minHeight: 0, minWidth: 0 }}>
           <div style={{ ...sk(), backgroundColor: surf, padding: '14px 18px', textAlign: 'center', flexShrink: 0 }}>
-            <div style={{ fontFamily: F.ui, fontSize: 15, color: C.muted, marginBottom: 10 }}>
-              {showGenre ? (round?.genre || '') : '???'} · 이번 문제
-              {activeBuffLabel ? ` · ${activeBuffLabel}` : ''}
-              {deafMode ? ' · 청각 OFF' : ''}
+            <div style={{ marginBottom: 10, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+              <div
+                ref={genreSlotRef}
+                style={{
+                  fontFamily: F.brand,
+                  fontSize: 22,
+                  fontWeight: 700,
+                  color: genreColor,
+                  lineHeight: 1.2,
+                  minHeight: 28,
+                  padding: showGenre ? '4px 14px' : 0,
+                  border: showGenre ? `2.5px solid ${genreColor}` : '2.5px solid transparent',
+                  borderRadius: '8px 5px 9px 5px / 5px 9px 5px 8px',
+                  backgroundColor: 'transparent',
+                  opacity: genreSettled ? 1 : 0,
+                  transition: genreSettled ? 'opacity 0.25s ease' : undefined,
+                }}
+              >
+                {showGenre ? (round?.genre || '') : '???'}
+              </div>
+              {(activeBuffLabel || mudBuff || deafMode || songPowerOff || me?.alienQwertyActive) && (
+                <div style={{ fontFamily: F.ui, fontSize: 13, color: C.muted }}>
+                  {activeBuffLabel ? activeBuffLabel : ''}
+                  {mudBuff ? `${activeBuffLabel ? ' · ' : ''}진흙탕 싸움` : deafMode && !mudBuff ? `${activeBuffLabel ? ' · ' : ''}청각 OFF` : ''}
+                  {songPowerOff ? ` · 전원 OFF ${songPowerOffLeft}초` : ''}
+                  {me?.alienQwertyActive ? ' · 외계인 영타' : ''}
+                </div>
+              )}
             </div>
-            <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' }}>
-              <FitAnswer label="제목" value={titleRevealed} hint={titleHint} revealed={!!titleRevealed} />
-              <div style={{ width: 2, alignSelf: 'stretch', backgroundColor: C.line, flexShrink: 0 }} />
-              <FitAnswer label="가수" value={artistRevealed} hint={artistHint} revealed={!!artistRevealed} />
+            <GenreIntroFly
+              text={showGenre ? (round?.genre || '') : '???'}
+              targetRef={genreSlotRef}
+              active={genreIntroActive && room.status === 'playing' && !inDuel}
+              onSettled={settleGenreIntro}
+              color={genreColor}
+            />
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: `repeat(${Math.max(1, slotDisplays.length)}, minmax(0, 1fr))`,
+                gap: 0,
+                width: '100%',
+                alignItems: 'stretch',
+              }}
+            >
+              {slotDisplays.map((col, i) => (
+                <div
+                  key={col.key}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'stretch',
+                    minWidth: 0,
+                    borderLeft: i > 0 ? `2px solid ${C.line}` : undefined,
+                    paddingLeft: i > 0 ? 12 : 0,
+                    paddingRight: i < slotDisplays.length - 1 ? 12 : 0,
+                  }}
+                >
+                  <FitAnswer
+                    label={col.label}
+                    value={col.value}
+                    hint={col.hint}
+                    revealed={col.revealed}
+                  />
+                </div>
+              ))}
             </div>
             {showHidden && hiddenSlot && (
               <div style={{
                 marginTop: 14, paddingTop: 12,
                 borderTop: `2px dashed ${C.blue}`,
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                textAlign: 'center',
               }}>
                 <div style={{ fontFamily: F.ui, fontSize: 13, fontWeight: 800, color: C.blue, marginBottom: 8 }}>
                   히든 문제
@@ -1846,64 +2071,62 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
             )}
           </div>
 
-          <div style={{ ...panelBox, flex: 1, backgroundColor: surf }}>
-            <div style={{ fontFamily: F.ui, fontSize: 18, color: C.muted, textAlign: 'center' }}>
+          <div style={{ ...panelBox, flex: 1, backgroundColor: surf, minWidth: 0, overflow: 'hidden' }}>
+            <div style={{ fontFamily: F.ui, fontSize: 18, color: C.muted, textAlign: 'center', flexShrink: 0 }}>
               {duelSpectating ? '관전 채팅' : '채팅'}
               {duelSpectating && (
                 <span style={{ fontSize: 13, marginLeft: 6, opacity: 0.7 }}>· 당사자에게 안 보임</span>
               )}
             </div>
-            <div ref={chatRef} style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 10, minHeight: 0, padding: '4px 2px' }}>
+            <div
+              ref={chatRef}
+              onScroll={() => {
+                if (chatCardHover != null) {
+                  setChatCardHover(null)
+                  setChatCardAnchor(null)
+                }
+              }}
+              style={{
+                flex: 1,
+                overflowY: 'auto',
+                overflowX: 'hidden',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 10,
+                minHeight: 0,
+                minWidth: 0,
+                // 스케치 그림자·우측 말풍선이 잘리지 않게
+                padding: '6px 12px 10px 6px',
+                scrollBehavior: 'smooth',
+              }}
+            >
               {visibleChats.map(msg => {
                 if (msg.system) {
                   return (
                     <div
                       key={msg.id}
-                      style={{ display: 'flex', justifyContent: 'center', position: 'relative', opacity: msg.spectator ? 0.55 : 1 }}
-                      onMouseEnter={() => msg.augmentCard && setChatCardHover(msg.id)}
-                      onMouseLeave={() => setChatCardHover(null)}
+                      style={{ display: 'flex', justifyContent: 'center', position: 'relative', opacity: msg.spectator ? 0.55 : 1, minWidth: 0 }}
+                      onMouseEnter={(e) => {
+                        if (!msg.augmentCard) return
+                        setChatCardHover(msg.id)
+                        setChatCardAnchor(e.currentTarget.getBoundingClientRect())
+                      }}
+                      onMouseLeave={() => {
+                        setChatCardHover(null)
+                        setChatCardAnchor(null)
+                      }}
                     >
                       <div style={{
-                        ...sk(msg.augmentCard ? C.blue : C.green, true),
-                        backgroundColor: msg.augmentCard ? C.blueLight : C.greenLight,
+                        ...sk(msg.augmentCard ? C.red : C.green, true),
+                        backgroundColor: msg.augmentCard ? C.redLight : C.greenLight,
                         padding: '8px 16px', fontFamily: F.ui, fontSize: 17,
-                        color: msg.augmentCard ? C.blue : C.green, textAlign: 'center',
+                        color: msg.augmentCard ? C.red : C.green, textAlign: 'center',
                         cursor: msg.augmentCard ? 'help' : undefined,
+                        maxWidth: '100%',
+                        boxSizing: 'border-box',
+                        wordBreak: 'keep-all',
+                        overflowWrap: 'anywhere',
                       }}>{msg.text}</div>
-                      {chatCardHover === msg.id && msg.augmentCard && (
-                        <div style={{
-                          position: 'absolute', left: '50%', bottom: 'calc(100% + 8px)',
-                          transform: 'translateX(-50%)', width: 220, zIndex: 30,
-                          ...sk(C.graphite, true), backgroundColor: C.card, padding: 12,
-                          boxShadow: `0 4px 0 ${C.graphite}30`, pointerEvents: 'none',
-                          textAlign: 'left',
-                        }}>
-                          <div style={{
-                            width: '100%', aspectRatio: '1.4', marginBottom: 8,
-                            ...sk(C.graphite, true), overflow: 'hidden', backgroundColor: '#F2F0EB',
-                          }}>
-                            {msg.augmentCard.imageUrl ? (
-                              <img src={msg.augmentCard.imageUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
-                            ) : (
-                              <div style={{
-                                width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                fontFamily: F.ui, fontSize: 12, color: C.muted, fontWeight: 700,
-                              }}>사진 없음</div>
-                            )}
-                          </div>
-                          <div style={{ fontFamily: F.brand, fontSize: 18, fontWeight: 700, marginBottom: 4 }}>
-                            {msg.augmentCard.name}
-                          </div>
-                          {msg.augmentCard.tier && (
-                            <div style={{ fontFamily: F.ui, fontSize: 12, color: C.blue, fontWeight: 800, marginBottom: 6 }}>
-                              {msg.augmentCard.tier}
-                            </div>
-                          )}
-                          <div style={{ fontFamily: F.ui, fontSize: 13, color: C.body, lineHeight: 1.45 }}>
-                            {msg.augmentCard.description}
-                          </div>
-                        </div>
-                      )}
                     </div>
                   )
                 }
@@ -1918,6 +2141,8 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
                       gap: 8,
                       alignItems: 'flex-end',
                       opacity: spect ? 0.52 : 1,
+                      minWidth: 0,
+                      width: '100%',
                     }}
                   >
                     {!self && (
@@ -1928,7 +2153,7 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
                         fontFamily: F.ui, fontSize: 16, color: C.blue,
                       }}>{msg.nickname?.[0]}</div>
                     )}
-                    <div style={{ maxWidth: '72%' }}>
+                    <div style={{ maxWidth: 'min(72%, 100%)', minWidth: 0, boxSizing: 'border-box' }}>
                       {!self && (
                         <div style={{ fontFamily: F.ui, fontSize: 14, color: C.muted, marginBottom: 3 }}>
                           {msg.nickname}{spect ? ' · 관전' : ''}
@@ -1946,6 +2171,10 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
                         color: C.body,
                         lineHeight: 1.45,
                         backdropFilter: spect ? 'blur(2px)' : undefined,
+                        boxSizing: 'border-box',
+                        maxWidth: '100%',
+                        wordBreak: 'keep-all',
+                        overflowWrap: 'anywhere',
                       }}>{msg.text}</div>
                     </div>
                   </div>
@@ -1962,14 +2191,19 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
               <Btn size="sm" onClick={() => setShowUsedList(true)}>사용 목록</Btn>
             </div>
             <div style={{
-              flex: 1, ...sk(), backgroundColor: C.card, padding: '14px 12px',
+              flex: 1, ...sk(me?.heldAugmentTier ? tierBorderColor(me.heldAugmentTier) : C.graphite),
+              backgroundColor: C.card, padding: '14px 12px',
               display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
               textAlign: 'center', gap: 10, minHeight: 160, position: 'relative',
+              border: me?.heldAugmentTier
+                ? `2.5px solid ${tierBorderColor(me.heldAugmentTier)}`
+                : undefined,
             }}>
               {me?.heldAugmentId ? (
                 <>
                   <div style={{
-                    width: 88, height: 88, flexShrink: 0, ...sk(C.graphite, true),
+                    width: 88, height: 88, flexShrink: 0,
+                    ...sk(tierBorderColor(me.heldAugmentTier), true),
                     overflow: 'hidden', backgroundColor: '#F2F0EB',
                   }}>
                     {me.heldAugmentImageUrl ? (
@@ -1986,13 +2220,27 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
                       }}>사진 없음</div>
                     )}
                   </div>
+                  {me.heldAugmentTier && (
+                    <div style={{
+                      fontFamily: F.ui, fontSize: 12, fontWeight: 800,
+                      color: tierBorderColor(me.heldAugmentTier),
+                    }}>
+                      {tierDisplayName(me.heldAugmentTier)}
+                    </div>
+                  )}
                   <div style={{ fontFamily: F.brand, fontSize: 20, fontWeight: 700, lineHeight: 1.2 }}>
                     {me.heldAugmentName || '보유 중'}
                   </div>
                   <div
                     style={{ width: '100%', position: 'relative' }}
-                    onMouseEnter={() => setAugHover(true)}
-                    onMouseLeave={() => setAugHover(false)}
+                    onMouseEnter={(e) => {
+                      setAugHover(true)
+                      setAugHoverAnchor(e.currentTarget.getBoundingClientRect())
+                    }}
+                    onMouseLeave={() => {
+                      setAugHover(false)
+                      setAugHoverAnchor(null)
+                    }}
                   >
                     <Btn
                       variant="primary"
@@ -2018,23 +2266,6 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
                                 ? '장르 선택'
                                 : '사용'}
                     </Btn>
-                    {augHover && me.heldAugmentDescription && (
-                      <div style={{
-                        position: 'absolute', left: '50%', bottom: 'calc(100% + 8px)',
-                        transform: 'translateX(-50%)', width: 'min(220px, 90vw)',
-                        ...sk(C.graphite, true), backgroundColor: C.card,
-                        padding: '12px 14px', textAlign: 'left', zIndex: 20,
-                        boxShadow: `0 4px 0 ${C.graphite}30`,
-                        pointerEvents: 'none',
-                      }}>
-                        <div style={{ fontFamily: F.ui, fontSize: 12, fontWeight: 800, color: C.blue, marginBottom: 6 }}>
-                          증강 설명
-                        </div>
-                        <div style={{ fontFamily: F.ui, fontSize: 14, color: C.body, lineHeight: 1.45 }}>
-                          {me.heldAugmentDescription}
-                        </div>
-                      </div>
-                    )}
                   </div>
                   <div style={{ fontFamily: F.ui, fontSize: 12, color: C.muted }}>
                     {isPassiveHeld
@@ -2046,7 +2277,7 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
                           : needsTargetPick
                             ? '대상을 골라 사용'
                             : needsGenrePick
-                              ? '밴할 장르를 골라 사용'
+                              ? '밴픽 장르를 골라 사용'
                               : '사용 버튼에 올리면 설명'}
                   </div>
                 </>
@@ -2064,7 +2295,7 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
               display: 'flex', flexDirection: 'column', gap: 10, minHeight: 0, overflowY: 'auto',
               textAlign: 'left',
             }}>
-              {visibleBuffs.length === 0 && !me?.answerProxyActive && !me?.sakuraActive && !me?.answerDelayRoundsLeft && !me?.answerDelayPending && !augmentHint ? (
+              {visibleBuffs.length === 0 && !me?.answerProxyActive && !me?.sakuraActive && !me?.flameKimActive && !me?.answerDelayRoundsLeft && !me?.answerDelayPending && !augmentHint ? (
                 <div style={{
                   flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
                   fontFamily: F.ui, fontSize: 15, color: C.muted, textAlign: 'center',
@@ -2139,9 +2370,35 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
                       </div>
                     </div>
                   )}
+                  {(me?.gabukiPending || me?.gabukiActive) && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      <div style={{ fontFamily: F.ui, fontSize: 14, fontWeight: 800, color: C.blue }}>
+                        {me.gabukiBy || '가불기'}
+                        {me.gabukiPending
+                          ? ' · 다음 라운드부터'
+                          : ` · ${me.gabukiRoundsLeft ?? '?'}R`}
+                      </div>
+                      <div style={{ fontFamily: F.ui, fontSize: 14, color: C.body, lineHeight: 1.45 }}>
+                        정답 시 −1점, 라운드에서 한 번도 못 맞히면 −2점. 깎인 점수는 시전자에게 갑니다.
+                      </div>
+                    </div>
+                  )}
+                  {(me?.flameKimPending || me?.flameKimActive) && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      <div style={{ fontFamily: F.ui, fontSize: 14, fontWeight: 800, color: C.blue }}>
+                        {me.flameKimBy || '불꽃남자김상원'}
+                        {me.flameKimPending
+                          ? ' · 다음 라운드부터'
+                          : ` · ${me.flameKimRoundsLeft ?? '?'}R · ${me.flameKimTarget || '대상'}`}
+                      </div>
+                      <div style={{ fontFamily: F.ui, fontSize: 14, color: C.body, lineHeight: 1.45 }}>
+                        방 노래와 「불꽃남자」가 같이 들립니다. 본인은 평소처럼 득점하고, 맞힐 때마다 대상 −1점입니다.
+                      </div>
+                    </div>
+                  )}
                   {augmentHint && (
                     <div style={{
-                      marginTop: (visibleBuffs.length || me?.answerProxyActive || me?.sakuraActive || me?.answerDelayRoundsLeft || me?.answerDelayPending) ? 4 : 0,
+                      marginTop: (visibleBuffs.length || me?.answerProxyActive || me?.sakuraActive || me?.flameKimActive || me?.answerDelayRoundsLeft || me?.answerDelayPending) ? 4 : 0,
                       paddingTop: (visibleBuffs.length || me?.answerProxyActive || me?.sakuraActive || me?.answerDelayRoundsLeft || me?.answerDelayPending) ? 10 : 0,
                       borderTop: (visibleBuffs.length || me?.answerProxyActive || me?.sakuraActive || me?.answerDelayRoundsLeft || me?.answerDelayPending) ? `2px solid ${C.line}` : undefined,
                       fontFamily: F.ui, fontSize: 16, color: C.body, lineHeight: 1.5,
@@ -2225,6 +2482,7 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
                           : me?.heldAugmentEffectType === 'answer_block'
                             ? '쉬게 할 플레이어를 선택하세요'
                             : me?.heldAugmentEffectType === 'rock_throw'
+                              || me?.heldAugmentEffectType === 'steal_chain'
                               ? '돌을 던질 플레이어를 선택하세요'
                               : me?.heldAugmentEffectType === 'score_steal'
                                 ? '점수를 뜯을 플레이어를 선택하세요'
@@ -2232,7 +2490,13 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
                                   ? '점수를 맞출 플레이어를 선택하세요'
                                   : me?.heldAugmentEffectType === 'accuse_sleep'
                                     ? '범인으로 지목할 플레이어를 선택하세요'
-                                    : me?.heldAugmentEffectType === 'mute_chat'
+                                    : me?.heldAugmentEffectType === 'gabuki_mark'
+                                      ? '가불기를 걸 플레이어를 선택하세요'
+                                      : me?.heldAugmentEffectType === 'flame_kim'
+                                        ? '불태울 플레이어를 선택하세요'
+                                      : me?.heldAugmentEffectType === 'steal_held_augment'
+                                        ? '증강을 뺏을 플레이어를 선택하세요'
+                                        : me?.heldAugmentEffectType === 'mute_chat'
                                     ? '채팅·제출을 막을 플레이어를 선택하세요'
                                     : '대상을 선택하세요'}
             </div>
@@ -2266,10 +2530,10 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
         }}>
           <div style={{ ...sk(), backgroundColor: C.card, padding: '28px 32px', maxWidth: 400, width: '100%', textAlign: 'center' }}>
             <div style={{ fontFamily: F.brand, fontSize: 28, fontWeight: 700, marginBottom: 8 }}>
-              {me?.heldAugmentName || '장르 밴'}
+              {me?.heldAugmentName || '밴픽'}
             </div>
             <div style={{ fontFamily: F.ui, fontSize: 15, color: C.muted, marginBottom: 18 }}>
-              밴할 장르를 선택하세요 (남은 곡은 다른 장르로 랜덤 배분)
+              밴할 장르를 선택하세요 (50% 성공 · 실패 시 미안하다 함 지자)
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 18 }}>
               {upcomingGenreEntries.map(([g, c]) => (
@@ -2295,68 +2559,99 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
       )}
 
       {gahoPickOpen && (
-        <div style={{
-          position: 'fixed', inset: 0, zIndex: 80, backgroundColor: 'rgba(30,40,50,0.4)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24,
-        }}>
-          <div style={{ ...sk(), backgroundColor: C.card, padding: '28px 32px', maxWidth: 520, width: '100%', textAlign: 'center' }}>
-            <div style={{ fontFamily: F.brand, fontSize: 28, fontWeight: 700, marginBottom: 8 }}>
+        <div style={prismBackdrop}>
+          <PrismKeyframes />
+          <div
+            aria-hidden
+            style={{
+              position: 'absolute', inset: '-20%',
+              background: 'linear-gradient(105deg, transparent 35%, rgba(255,255,255,0.35) 50%, transparent 65%)',
+              animation: 'prismShine 4.5s ease-in-out infinite',
+              pointerEvents: 'none',
+            }}
+          />
+          <div style={{
+            ...sk(C.tierGaho),
+            position: 'relative',
+            backgroundColor: 'rgba(247,250,252,0.92)',
+            padding: '28px 32px',
+            maxWidth: 720,
+            width: '100%',
+            textAlign: 'center',
+            boxShadow: `0 0 0 1px ${C.tierGaho}55, 0 12px 40px rgba(80,40,120,0.25)`,
+          }}>
+            <div style={{ fontFamily: F.brand, fontSize: 28, fontWeight: 700, marginBottom: 8, color: C.tierGaho }}>
               가호 선택
             </div>
-            <div style={{ fontFamily: F.ui, fontSize: 15, color: C.muted, marginBottom: 18 }}>
-              적용할 가호를 고르세요
+            <div style={{ fontFamily: F.ui, fontSize: 14, color: C.muted, marginBottom: 22 }}>
+              3장 중 1개 · 리롤 없음 · 효과는 선택 후 알 수 있습니다
             </div>
             {gahoBusy ? (
               <div style={{ fontFamily: F.ui, fontSize: 15, color: C.muted, marginBottom: 18 }}>불러오는 중…</div>
             ) : (
               <div style={{
                 display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))',
-                gap: 10,
-                marginBottom: 18,
-                maxHeight: '50vh',
-                overflowY: 'auto',
-                textAlign: 'left',
+                gridTemplateColumns: 'repeat(3, 1fr)',
+                gap: 14,
+                marginBottom: 22,
               }}>
-                {gahoCandidates.map((g) => (
-                  <button
-                    key={g.id}
-                    type="button"
-                    onClick={() => {
-                      useAugment({ gahoAugmentId: g.id })
-                      setGahoPickOpen(false)
-                      setGahoCandidates([])
-                    }}
-                    style={{
-                      ...sk(C.graphite, true),
-                      backgroundColor: C.card,
-                      padding: 10,
-                      cursor: 'pointer',
-                      border: `2.5px solid ${C.graphite}`,
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: 8,
-                    }}
-                  >
-                    <div style={{
-                      width: '100%', aspectRatio: '1', ...sk(C.graphite, true),
-                      overflow: 'hidden', backgroundColor: '#F2F0EB',
-                    }}>
-                      {g.imageUrl ? (
-                        <img src={g.imageUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
-                      ) : (
-                        <div style={{
-                          width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                          fontFamily: F.ui, fontSize: 12, color: C.muted, fontWeight: 700,
-                        }}>가호</div>
-                      )}
-                    </div>
-                    <div style={{ fontFamily: F.brand, fontSize: 16, fontWeight: 700, lineHeight: 1.2 }}>{g.name}</div>
-                    {g.description && (
-                      <div style={{ fontFamily: F.ui, fontSize: 12, color: C.body, lineHeight: 1.4 }}>{g.description}</div>
-                    )}
-                  </button>
-                ))}
+                {gahoCandidates.map((g) => {
+                  const tierC = C.tierGaho
+                  return (
+                    <button
+                      key={g.id}
+                      type="button"
+                      onClick={() => {
+                        useAugment({ gahoAugmentId: g.id })
+                        setGahoPickOpen(false)
+                        setGahoCandidates([])
+                      }}
+                      style={{
+                        ...sk(tierC),
+                        backgroundColor: C.card,
+                        padding: 12,
+                        cursor: 'pointer',
+                        border: `2.5px solid ${tierC}`,
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        gap: 10,
+                      }}
+                    >
+                      <div style={{
+                        width: '100%',
+                        aspectRatio: '1',
+                        ...sk(tierC, true),
+                        overflow: 'hidden',
+                        backgroundColor: '#F2F0EB',
+                      }}>
+                        {g.imageUrl ? (
+                          <img src={g.imageUrl} alt={g.name} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                        ) : (
+                          <div style={{
+                            width: '100%', height: '100%',
+                            display: 'flex', flexDirection: 'column',
+                            alignItems: 'center', justifyContent: 'center', gap: 6,
+                            border: `2px dashed ${tierC}55`,
+                            boxSizing: 'border-box',
+                            background:
+                              'repeating-linear-gradient(45deg, transparent, transparent 8px, rgba(60,55,50,0.04) 8px, rgba(60,55,50,0.04) 16px)',
+                          }}>
+                            <div style={{
+                              width: '42%', height: '42%',
+                              border: `2px solid ${tierC}`,
+                              borderRadius: 4,
+                              opacity: 0.45,
+                            }} />
+                            <div style={{ fontFamily: F.ui, fontSize: 12, fontWeight: 700, color: C.muted }}>사진 없음</div>
+                          </div>
+                        )}
+                      </div>
+                      <div style={{ fontFamily: F.ui, fontSize: 12, fontWeight: 800, color: tierC }}>가호</div>
+                      <div style={{ fontFamily: F.brand, fontSize: 20, fontWeight: 700, lineHeight: 1.2 }}>{g.name}</div>
+                    </button>
+                  )
+                })}
                 {gahoCandidates.length === 0 && (
                   <div style={{ fontFamily: F.ui, fontSize: 15, color: C.muted, gridColumn: '1 / -1', textAlign: 'center' }}>
                     선택 가능한 가호가 없습니다
@@ -2406,6 +2701,98 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
         />
         <Btn variant="primary" disabled={submitBlocked} onClick={send}>제출</Btn>
       </div>
+
+      {queueHover && (
+        <FloatingHoverPopup
+          anchor={queueHoverAnchor}
+          borderColor={C.blue}
+          width={220}
+        >
+          <div style={{ fontFamily: F.ui, fontSize: 12, fontWeight: 800, color: C.blue, marginBottom: 8 }}>
+            남은 곡 {remainingTotal} · 장르별
+          </div>
+          {remainingGenreEntries.length === 0 ? (
+            <div style={{ fontFamily: F.ui, fontSize: 14, color: C.muted }}>남은 곡 없음</div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {remainingGenreEntries.map(([g, c]) => (
+                <div
+                  key={g}
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    gap: 12,
+                    fontFamily: F.ui,
+                    fontSize: 14,
+                    color: C.body,
+                  }}
+                >
+                  <span>{g}</span>
+                  <span style={{ fontWeight: 800, color: C.blue }}>{c}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </FloatingHoverPopup>
+      )}
+
+      {augHover && me?.heldAugmentDescription && (
+        <FloatingHoverPopup
+          anchor={augHoverAnchor}
+          borderColor={tierBorderColor(me.heldAugmentTier)}
+          width={260}
+        >
+          <div style={{ fontFamily: F.ui, fontSize: 12, fontWeight: 800, color: C.blue, marginBottom: 6 }}>
+            증강 설명
+          </div>
+          {me.heldAugmentName && (
+            <div style={{ fontFamily: F.brand, fontSize: 18, fontWeight: 700, marginBottom: 6 }}>
+              {me.heldAugmentName}
+            </div>
+          )}
+          <div style={{ fontFamily: F.ui, fontSize: 14, color: C.body, lineHeight: 1.45 }}>
+            {me.heldAugmentDescription}
+          </div>
+        </FloatingHoverPopup>
+      )}
+
+      {hoveredChatCard && (
+        <FloatingHoverPopup
+          anchor={chatCardAnchor}
+          borderColor={tierBorderColor(hoveredChatCard.tier)}
+          width={240}
+        >
+          <div style={{
+            width: '100%', aspectRatio: '1.4', marginBottom: 8,
+            ...sk(tierBorderColor(hoveredChatCard.tier), true),
+            overflow: 'hidden', backgroundColor: '#F2F0EB',
+          }}>
+            {hoveredChatCard.imageUrl ? (
+              <img src={hoveredChatCard.imageUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+            ) : (
+              <div style={{
+                width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontFamily: F.ui, fontSize: 12, color: C.muted, fontWeight: 700,
+              }}>사진 없음</div>
+            )}
+          </div>
+          <div style={{ fontFamily: F.brand, fontSize: 18, fontWeight: 700, marginBottom: 4 }}>
+            {hoveredChatCard.name}
+          </div>
+          {hoveredChatCard.tier && (
+            <div style={{
+              fontFamily: F.ui, fontSize: 12,
+              color: tierBorderColor(hoveredChatCard.tier),
+              fontWeight: 800, marginBottom: 6,
+            }}>
+              {tierDisplayName(hoveredChatCard.tier)}
+            </div>
+          )}
+          <div style={{ fontFamily: F.ui, fontSize: 13, color: C.body, lineHeight: 1.45 }}>
+            {hoveredChatCard.description}
+          </div>
+        </FloatingHoverPopup>
+      )}
     </div>
   )
 }
@@ -2416,11 +2803,21 @@ const AUGMENT_BGM_URL = 'https://www.youtube.com/watch?v=L422Qs3K6_I'
 const AUGMENT_BGM_SEC = 20
 
 function AugmentScreen({ nav }: { nav: (s: Screen) => void }) {
-  const { room, augmentOffer, pickAugment, rerollAugment, musicVolume } = useGame()
+  const { user, room, augmentOffer, pickAugment, rerollAugment, musicVolume, fetchGahoCandidates, pingMs, clockSamples } = useGame()
+  const flameKimPlaying = !!room?.members.find((m) => m.userId === user?.id)?.flameKimActive
   const [timer, setTimer] = useState(20)
   const [selected, setSelected] = useState<string | null>(null)
   const [rerollsLeft, setRerollsLeft] = useState(1)
   const [candidates, setCandidates] = useState(augmentOffer?.candidates || [])
+  const [gahoOpen, setGahoOpen] = useState(false)
+  const [gahoBusy, setGahoBusy] = useState(false)
+  const [gahoCandidates, setGahoCandidates] = useState<Array<{
+    id: string
+    name: string
+    description?: string
+    tier: string
+    imageUrl?: string | null
+  }>>([])
   const selectedRef = useRef(selected)
   const doneRef = useRef(false)
   selectedRef.current = selected
@@ -2435,8 +2832,14 @@ function AugmentScreen({ nav }: { nav: (s: Screen) => void }) {
     if (augmentOffer) {
       setCandidates(augmentOffer.candidates)
       setRerollsLeft(augmentOffer.rerolls)
-      setTimer(augmentOffer.timeoutSec)
+      if (augmentOffer.endsAt) {
+        setTimer(Math.max(0, Math.ceil((augmentOffer.endsAt - serverNow()) / 1000)))
+      } else {
+        setTimer(augmentOffer.timeoutSec)
+      }
       doneRef.current = false
+      setGahoOpen(false)
+      setGahoCandidates([])
     }
   }, [augmentOffer])
 
@@ -2445,32 +2848,70 @@ function AugmentScreen({ nav }: { nav: (s: Screen) => void }) {
   }, [augmentOffer?.candidates])
 
   useEffect(() => {
-    const t = setInterval(() => {
-      setTimer(v => {
+    const endsAt = augmentOffer?.endsAt
+    const finalize = () => {
+      if (doneRef.current) return
+      doneRef.current = true
+      // 가호 고르는 중이었으면 id 없이 보내 서버가 랜덤 가호 배정
+      pickAugment(selectedRef.current)
+      setGahoOpen(false)
+    }
+    const tick = () => {
+      if (endsAt) {
+        const left = Math.max(0, Math.ceil((endsAt - serverNow()) / 1000))
+        setTimer(left)
+        if (left <= 0) finalize()
+        return
+      }
+      setTimer((v) => {
         if (v <= 1) {
-          if (!doneRef.current) {
-            doneRef.current = true
-            pickAugment(selectedRef.current)
-          }
+          finalize()
           return 0
         }
         return v - 1
       })
-    }, 1000)
+    }
+    tick()
+    const t = setInterval(tick, endsAt ? 250 : 1000)
     return () => clearInterval(t)
-  }, [pickAugment])
+  }, [augmentOffer?.endsAt, pickAugment])
 
   const onReroll = async () => {
-    if (rerollsLeft <= 0) return
+    if (rerollsLeft <= 0 || gahoOpen) return
     await rerollAugment()
     setRerollsLeft(r => r - 1)
     setSelected(null)
   }
 
+  const openGahoFromOffer = async (augmentId: string) => {
+    setGahoBusy(true)
+    setGahoOpen(true)
+    try {
+      const { candidates: list } = await fetchGahoCandidates()
+      setGahoCandidates(list)
+    } finally {
+      setGahoBusy(false)
+    }
+    // augmentId는 selected로 유지
+    setSelected(augmentId)
+  }
+
   const confirm = () => {
-    if (!selected || doneRef.current) return
+    if (!selected || doneRef.current || gahoOpen) return
+    const card = candidates.find((c) => c.id === selected)
+    if (card?.effectType === 'gaho_select') {
+      void openGahoFromOffer(selected)
+      return
+    }
     doneRef.current = true
     pickAugment(selected)
+  }
+
+  const confirmGaho = (gahoId: string) => {
+    if (!selected || doneRef.current) return
+    doneRef.current = true
+    pickAugment(selected, gahoId)
+    setGahoOpen(false)
   }
 
   return (
@@ -2479,12 +2920,38 @@ function AugmentScreen({ nav }: { nav: (s: Screen) => void }) {
         url={AUGMENT_BGM_URL}
         startSec={0}
         durationSec={AUGMENT_BGM_SEC}
-        volume={musicVolume}
+        volume={flameKimPlaying ? 0 : musicVolume}
         playLabel="🎵 탭해서 증강 BGM 재생"
       />
       <div style={{ ...sk(), backgroundColor: C.card, padding: '36px 32px', maxWidth: 720, width: '100%', textAlign: 'center' }}>
         <div style={{ fontFamily: F.brand, fontSize: 42, fontWeight: 700, marginBottom: 8 }}>증강 선택</div>
         <div style={{ fontFamily: F.ui, fontSize: 18, color: C.muted, marginBottom: 8 }}>남은 시간 {timer}초 · 1개 보관</div>
+        <div style={{
+          fontFamily: F.ui,
+          fontSize: 13,
+          color: clockSamples >= 4 ? C.green : C.muted,
+          marginBottom: 10,
+        }}>
+          {clockSamples >= 4
+            ? `재생 싱크 맞춤 · ${pingMs == null ? '…' : `${pingMs}ms`}`
+            : `재생 싱크 맞추는 중… (${clockSamples}/4)`}
+        </div>
+        {augmentOffer?.lockedTier && (
+          <div style={{
+            display: 'inline-block',
+            fontFamily: F.ui,
+            fontSize: 15,
+            fontWeight: 800,
+            color: tierBorderColor(augmentOffer.lockedTier),
+            border: `2px solid ${tierBorderColor(augmentOffer.lockedTier)}`,
+            borderRadius: 6,
+            padding: '4px 12px',
+            marginBottom: 12,
+            backgroundColor: C.card,
+          }}>
+            이번 등급 · {tierDisplayName(augmentOffer.lockedTier)}만
+          </div>
+        )}
         <div style={{ fontFamily: F.ui, fontSize: 14, color: C.muted, marginBottom: 22 }}>
           효과는 선택 시 알 수 없습니다 · 게임에서 사용 버튼에 올리면 설명
         </div>
@@ -2496,27 +2963,30 @@ function AugmentScreen({ nav }: { nav: (s: Screen) => void }) {
         }}>
           {candidates.map(a => {
             const on = selected === a.id
+            const tierC = tierBorderColor(a.tier)
+            const borderC = on ? C.blue : tierC
             return (
               <button
                 key={a.id}
                 type="button"
-                onClick={() => setSelected(a.id)}
+                onClick={() => !gahoOpen && setSelected(a.id)}
                 style={{
-                  ...sk(on ? C.blue : C.graphite),
+                  ...sk(borderC),
                   backgroundColor: on ? C.blueLight : C.card,
                   padding: 12,
-                  cursor: 'pointer',
-                  border: `2.5px solid ${on ? C.blue : C.graphite}`,
+                  cursor: gahoOpen ? 'default' : 'pointer',
+                  border: `2.5px solid ${borderC}`,
                   display: 'flex',
                   flexDirection: 'column',
                   alignItems: 'center',
                   gap: 10,
+                  opacity: gahoOpen && !on ? 0.55 : 1,
                 }}
               >
                 <div style={{
                   width: '100%',
                   aspectRatio: '1',
-                  ...sk(C.graphite, true),
+                  ...sk(tierC, true),
                   overflow: 'hidden',
                   backgroundColor: '#F2F0EB',
                   position: 'relative',
@@ -2532,7 +3002,7 @@ function AugmentScreen({ nav }: { nav: (s: Screen) => void }) {
                       width: '100%', height: '100%',
                       display: 'flex', flexDirection: 'column',
                       alignItems: 'center', justifyContent: 'center', gap: 6,
-                      border: `2px dashed ${C.line}`,
+                      border: `2px dashed ${tierC}55`,
                       boxSizing: 'border-box',
                       margin: 0,
                       background:
@@ -2540,7 +3010,7 @@ function AugmentScreen({ nav }: { nav: (s: Screen) => void }) {
                     }}>
                       <div style={{
                         width: '42%', height: '42%',
-                        border: `2px solid ${C.muted}`,
+                        border: `2px solid ${tierC}`,
                         borderRadius: 4,
                         opacity: 0.45,
                       }} />
@@ -2550,16 +3020,125 @@ function AugmentScreen({ nav }: { nav: (s: Screen) => void }) {
                     </div>
                   )}
                 </div>
+                <div style={{
+                  fontFamily: F.ui, fontSize: 12, fontWeight: 800,
+                  color: tierC, letterSpacing: 0.3,
+                }}>
+                  {tierDisplayName(a.tier)}
+                </div>
                 <div style={{ fontFamily: F.brand, fontSize: 20, fontWeight: 700, lineHeight: 1.2 }}>{a.name}</div>
               </button>
             )
           })}
         </div>
         <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
-          <Btn disabled={rerollsLeft <= 0} onClick={onReroll}>{rerollsLeft <= 0 ? '리롤 사용함' : `리롤 (${rerollsLeft}회)`}</Btn>
-          <Btn variant="primary" size="lg" disabled={!selected} onClick={confirm}>보관하기</Btn>
+          <Btn disabled={rerollsLeft <= 0 || gahoOpen} onClick={onReroll}>{rerollsLeft <= 0 ? '리롤 사용함' : `리롤 (${rerollsLeft}회)`}</Btn>
+          <Btn variant="primary" size="lg" disabled={!selected || gahoOpen} onClick={confirm}>보관하기</Btn>
         </div>
       </div>
+
+      {gahoOpen && (
+        <div style={prismBackdrop}>
+          <PrismKeyframes />
+          <div
+            aria-hidden
+            style={{
+              position: 'absolute', inset: '-20%',
+              background: 'linear-gradient(105deg, transparent 35%, rgba(255,255,255,0.35) 50%, transparent 65%)',
+              animation: 'prismShine 4.5s ease-in-out infinite',
+              pointerEvents: 'none',
+            }}
+          />
+          <div style={{
+            ...sk(C.tierGaho),
+            position: 'relative',
+            backgroundColor: 'rgba(247,250,252,0.92)',
+            padding: '28px 32px',
+            maxWidth: 720,
+            width: '100%',
+            textAlign: 'center',
+            boxShadow: `0 0 0 1px ${C.tierGaho}55, 0 12px 40px rgba(80,40,120,0.25)`,
+          }}>
+            <div style={{ fontFamily: F.brand, fontSize: 28, fontWeight: 700, marginBottom: 8, color: C.tierGaho }}>
+              가호 선택
+            </div>
+            <div style={{ fontFamily: F.ui, fontSize: 16, color: C.body, marginBottom: 6, fontWeight: 700 }}>
+              남은 시간 {timer}초
+            </div>
+            <div style={{ fontFamily: F.ui, fontSize: 14, color: C.muted, marginBottom: 22 }}>
+              3장 중 1개 · 리롤 없음 · 효과는 선택 후 알 수 있습니다 · 시간 종료 시 랜덤
+            </div>
+            {gahoBusy ? (
+              <div style={{ fontFamily: F.ui, fontSize: 15, color: C.muted }}>불러오는 중…</div>
+            ) : (
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(3, 1fr)',
+                gap: 14,
+              }}>
+                {gahoCandidates.map((g) => {
+                  const tierC = C.tierGaho
+                  return (
+                    <button
+                      key={g.id}
+                      type="button"
+                      onClick={() => confirmGaho(g.id)}
+                      style={{
+                        ...sk(tierC),
+                        backgroundColor: C.card,
+                        padding: 12,
+                        cursor: 'pointer',
+                        border: `2.5px solid ${tierC}`,
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        gap: 10,
+                      }}
+                    >
+                      <div style={{
+                        width: '100%',
+                        aspectRatio: '1',
+                        ...sk(tierC, true),
+                        overflow: 'hidden',
+                        backgroundColor: '#F2F0EB',
+                      }}>
+                        {g.imageUrl ? (
+                          <img src={g.imageUrl} alt={g.name} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                        ) : (
+                          <div style={{
+                            width: '100%', height: '100%',
+                            display: 'flex', flexDirection: 'column',
+                            alignItems: 'center', justifyContent: 'center', gap: 6,
+                            border: `2px dashed ${tierC}55`,
+                            boxSizing: 'border-box',
+                            background:
+                              'repeating-linear-gradient(45deg, transparent, transparent 8px, rgba(60,55,50,0.04) 8px, rgba(60,55,50,0.04) 16px)',
+                          }}>
+                            <div style={{
+                              width: '42%', height: '42%',
+                              border: `2px solid ${tierC}`,
+                              borderRadius: 4,
+                              opacity: 0.45,
+                            }} />
+                            <div style={{ fontFamily: F.ui, fontSize: 12, fontWeight: 700, color: C.muted }}>사진 없음</div>
+                          </div>
+                        )}
+                      </div>
+                      <div style={{ fontFamily: F.ui, fontSize: 12, fontWeight: 800, color: tierC }}>가호</div>
+                      <div style={{ fontFamily: F.brand, fontSize: 20, fontWeight: 700, lineHeight: 1.2 }}>{g.name}</div>
+                    </button>
+                  )
+                })}
+                {gahoCandidates.length === 0 && (
+                  <div style={{ fontFamily: F.ui, fontSize: 15, color: C.muted, gridColumn: '1 / -1', textAlign: 'center' }}>
+                    선택 가능한 가호가 없습니다
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -2784,15 +3363,141 @@ type BankQuestion = {
   slots: Array<{ id: string; label: string; answer?: string; acceptAnswers?: string[]; hidden?: boolean }>
 }
 
+function BankSegmentPreview({
+  url,
+  startSec,
+  endSec,
+  volume = 70,
+  onClose,
+  title,
+}: {
+  url: string
+  startSec: number
+  endSec: number
+  volume?: number
+  onClose: () => void
+  title?: string
+}) {
+  const id = ytId(url)
+  const hostRef = useRef<HTMLDivElement>(null)
+  const playerRef = useRef<YtPlayer | null>(null)
+  const start = Math.max(0, Math.floor(startSec))
+  const end = Math.max(start + 1, Math.floor(endSec))
+  const [err, setErr] = useState('')
+
+  useEffect(() => {
+    if (!id || !hostRef.current) return
+    let cancelled = false
+    let player: YtPlayer | null = null
+    let poll: ReturnType<typeof setInterval> | null = null
+
+    ;(async () => {
+      await loadYtApi()
+      if (cancelled || !hostRef.current || !window.YT) return
+      hostRef.current.innerHTML = ''
+      const mount = document.createElement('div')
+      hostRef.current.appendChild(mount)
+      player = new window.YT.Player(mount, {
+        videoId: id,
+        width: 276,
+        height: 155,
+        playerVars: {
+          autoplay: 1,
+          mute: 0,
+          start,
+          end,
+          controls: 1,
+          modestbranding: 1,
+          rel: 0,
+          playsinline: 1,
+          origin: window.location.origin,
+        },
+        events: {
+          onReady: (e) => {
+            if (cancelled) return
+            playerRef.current = e.target
+            try {
+              e.target.seekTo(start, true)
+              e.target.setVolume(Math.max(0, Math.min(100, volume)))
+              e.target.unMute()
+              e.target.playVideo()
+            } catch { /* ignore */ }
+            poll = setInterval(() => {
+              try {
+                const t = e.target.getCurrentTime?.() ?? 0
+                if (t >= end - 0.15) {
+                  e.target.pauseVideo()
+                  if (poll) clearInterval(poll)
+                }
+              } catch { /* ignore */ }
+            }, 200)
+          },
+          onError: () => {
+            if (!cancelled) setErr('미리듣기를 재생할 수 없습니다')
+          },
+        },
+      })
+    })()
+
+    return () => {
+      cancelled = true
+      if (poll) clearInterval(poll)
+      try { player?.destroy() } catch { /* ignore */ }
+      playerRef.current = null
+    }
+  }, [id, start, end, volume])
+
+  if (!id) {
+    return (
+      <div style={{
+        position: 'fixed', right: 16, bottom: 16, zIndex: 90,
+        ...sk(C.red, true), backgroundColor: C.card, padding: 12, maxWidth: 320,
+      }}>
+        <div style={{ fontFamily: F.ui, color: C.red }}>유효한 유튜브 URL이 아닙니다</div>
+        <div style={{ marginTop: 8 }}>
+          <Btn size="sm" onClick={onClose}>닫기</Btn>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div style={{
+      position: 'fixed',
+      right: 16,
+      bottom: 16,
+      zIndex: 90,
+      ...sk(C.blue, true),
+      backgroundColor: C.card,
+      padding: 12,
+      width: 300,
+      boxShadow: `0 8px 0 ${C.graphite}40`,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+        <div style={{ fontFamily: F.ui, fontWeight: 900, fontSize: 13, color: C.blue, flex: 1, lineHeight: 1.35 }}>
+          미리듣기 {title ? `· ${title}` : ''}
+          <div style={{ fontWeight: 700, color: C.muted, fontSize: 12 }}>{start}s ~ {end}s</div>
+        </div>
+        <Btn size="sm" onClick={onClose}>정지</Btn>
+      </div>
+      {err && <div style={{ fontFamily: F.ui, color: C.red, marginBottom: 8, fontSize: 13 }}>{err}</div>}
+      <div ref={hostRef} style={{ borderRadius: 8, overflow: 'hidden', width: 276, height: 155 }} />
+    </div>
+  )
+}
+
 function BankScreen({ nav }: { nav: (s: Screen) => void }) {
   const { user } = useGame()
+  const PAGE_SIZE = 10
   const [list, setList] = useState<BankQuestion[]>([])
   const [total, setTotal] = useState(0)
+  const [page, setPage] = useState(1)
+  const [pageCount, setPageCount] = useState(1)
   const [genres, setGenres] = useState<Array<{ name: string; count: number }>>([])
   const [youtubeUrl, setYoutubeUrl] = useState('')
   const [startSec, setStartSec] = useState('30')
   const [endSec, setEndSec] = useState('70')
-  const [genreName, setGenreName] = useState<GenreName>('K팝')
+  const [genreName, setGenreName] = useState<GenreName>('한국노래')
   const [formTags, setFormTags] = useState<string[]>([])
   const [tagInput, setTagInput] = useState('')
   const [slots, setSlots] = useState<BankSlotDraft[]>([
@@ -2809,8 +3514,10 @@ function BankScreen({ nav }: { nav: (s: Screen) => void }) {
   const [err, setErr] = useState('')
   const [okMsg, setOkMsg] = useState('')
   const [busy, setBusy] = useState(false)
+  const [clipPreview, setClipPreview] = useState<{ url: string; startSec: number; endSec: number; title?: string } | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const formRef = useRef<HTMLDivElement>(null)
+  const listTopRef = useRef<HTMLDivElement>(null)
 
   const parseAccepts = (raw: string) =>
     [...new Set(raw.split(/[,，、/|]+/).map(x => x.trim()).filter(Boolean))]
@@ -2825,7 +3532,7 @@ function BankScreen({ nav }: { nav: (s: Screen) => void }) {
     setYoutubeUrl('')
     setStartSec('30')
     setEndSec('70')
-    setGenreName('K팝')
+    setGenreName('한국노래')
     setFormTags([])
     setTagInput('')
     setSlots(emptySlots())
@@ -2833,26 +3540,62 @@ function BankScreen({ nav }: { nav: (s: Screen) => void }) {
 
   const load = useCallback(async () => {
     try {
-      const params = new URLSearchParams({ limit: '100' })
+      const params = new URLSearchParams({
+        limit: String(PAGE_SIZE),
+        page: String(page),
+      })
       if (searchQ.trim()) params.set('q', searchQ.trim())
       if (filterGenre) params.set('genre', filterGenre)
       if (filterTag) params.set('tag', filterTag)
       const [q, g] = await Promise.all([
-        api<{ questions: BankQuestion[]; total: number }>(`/api/questions?${params}`),
+        api<{ questions: BankQuestion[]; total: number; page: number; pageCount: number }>(`/api/questions?${params}`),
         api<{ genres: Array<{ name: string; count: number }> }>('/api/questions/genres'),
       ])
       setList(q.questions)
       setTotal(q.total)
+      const pc = Math.max(1, q.pageCount || 1)
+      setPageCount(pc)
+      if (page > pc) setPage(pc)
       setGenres(g.genres)
     } catch (e) {
       setErr(e instanceof Error ? e.message : '목록 불러오기 실패')
     }
-  }, [searchQ, filterGenre, filterTag])
+  }, [searchQ, filterGenre, filterTag, page])
 
   useEffect(() => {
     if (!user?.isAdmin) { nav('lobby'); return }
     load()
   }, [user, nav, load])
+
+  useEffect(() => {
+    setPage(1)
+  }, [searchQ, filterGenre, filterTag])
+
+  const goPage = (p: number) => {
+    const next = Math.max(1, Math.min(pageCount, p))
+    setPage(next)
+    setTimeout(() => listTopRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 40)
+  }
+
+  const pageItems = (() => {
+    const totalPages = pageCount
+    if (totalPages <= 9) return Array.from({ length: totalPages }, (_, i) => i + 1)
+    const items: Array<number | '…'> = []
+    const push = (x: number | '…') => {
+      if (items[items.length - 1] !== x) items.push(x)
+    }
+    push(1)
+    const start = Math.max(2, page - 2)
+    const end = Math.min(totalPages - 1, page + 2)
+    if (start > 2) push('…')
+    for (let i = start; i <= end; i += 1) push(i)
+    if (end < totalPages - 1) push('…')
+    push(totalPages)
+    return items
+  })()
+
+  const rangeFrom = total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1
+  const rangeTo = Math.min(total, page * PAGE_SIZE)
 
   const addSlot = (label = `슬롯${slots.length + 1}`, hidden = false) => {
     if (slots.length >= 8) {
@@ -3068,6 +3811,30 @@ function BankScreen({ nav }: { nav: (s: Screen) => void }) {
             <Field label="시작(초)" value={startSec} onChange={setStartSec} placeholder="30" />
             <Field label="종료(초)" value={endSec} onChange={setEndSec} placeholder="70" />
           </div>
+          <div style={{ marginBottom: 14 }}>
+            <Btn
+              size="sm"
+              variant="primary"
+              disabled={!youtubeUrl.trim()}
+              onClick={() => {
+                const start = Number(startSec)
+                const end = Number(endSec)
+                if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+                  setErr('구간(초)을 확인하세요')
+                  return
+                }
+                setErr('')
+                setClipPreview({
+                  url: youtubeUrl.trim(),
+                  startSec: start,
+                  endSec: end,
+                  title: slots[0]?.answer || '폼 구간',
+                })
+              }}
+            >
+              미리듣기
+            </Btn>
+          </div>
           <div style={{ fontFamily: F.ui, fontSize: 13, fontWeight: 700, color: C.muted, marginBottom: 8 }}>장르</div>
           <div style={{ display: 'flex', gap: 6, marginBottom: 16, flexWrap: 'wrap' }}>
             {GENRES.map(g => (
@@ -3079,7 +3846,7 @@ function BankScreen({ nav }: { nav: (s: Screen) => void }) {
             <SketchInput
               value={tagInput}
               onChange={setTagInput}
-              placeholder="예: 남돌, 10년대, 발라드…"
+              placeholder="예: 남돌, 10년대, 드라마…"
               style={{ flex: 1, minWidth: 160 }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
@@ -3208,8 +3975,8 @@ function BankScreen({ nav }: { nav: (s: Screen) => void }) {
         </NoteCard>
 
         <NoteCard>
-          <div style={{ fontFamily: F.ui, fontSize: 18, fontWeight: 900, marginBottom: 12 }}>
-            등록 목록 ({list.length}/{total})
+          <div ref={listTopRef} style={{ fontFamily: F.ui, fontSize: 18, fontWeight: 900, marginBottom: 12 }}>
+            등록 목록 ({rangeFrom}-{rangeTo} / 총 {total}곡)
           </div>
           <div style={{ display: 'flex', gap: 8, marginBottom: 10, flexWrap: 'wrap', alignItems: 'center' }}>
             <SketchInput
@@ -3241,7 +4008,7 @@ function BankScreen({ nav }: { nav: (s: Screen) => void }) {
           <div style={{ display: 'flex', gap: 6, marginBottom: 8, flexWrap: 'wrap' }}>
             <button
               type="button"
-              style={genreBtn('K팝', filterGenre === '')}
+              style={genreBtn('한국노래', filterGenre === '')}
               onClick={() => setFilterGenre('')}
             >
               전체 장르
@@ -3306,6 +4073,22 @@ function BankScreen({ nav }: { nav: (s: Screen) => void }) {
                   <div style={{ flex: 1, fontFamily: F.ui, fontSize: 13, color: C.muted }}>
                     {q.startSec}s ~ {q.endSec}s
                   </div>
+                  <Btn
+                    size="sm"
+                    variant="primary"
+                    onClick={() => {
+                      const title = q.slots.find(s => s.label === '제목')?.answer || q.slots[0]?.answer
+                      setClipPreview({
+                        url: q.youtubeUrl,
+                        startSec: q.startSec,
+                        endSec: q.endSec,
+                        title,
+                      })
+                    }}
+                    disabled={busy}
+                  >
+                    미리듣기
+                  </Btn>
                   <Btn size="sm" onClick={() => startEdit(q)} disabled={busy}>수정</Btn>
                   <Btn size="sm" variant="danger" onClick={() => remove(q.id)} disabled={busy}>삭제</Btn>
                 </div>
@@ -3330,8 +4113,58 @@ function BankScreen({ nav }: { nav: (s: Screen) => void }) {
               </div>
             ))}
           </div>
+
+          {pageCount > 1 && (
+            <div style={{
+              display: 'flex', flexWrap: 'wrap', gap: 6, justifyContent: 'center',
+              alignItems: 'center', marginTop: 16, paddingTop: 12,
+              borderTop: `2px dashed ${C.line}`,
+            }}>
+              <Btn size="sm" disabled={page <= 1 || busy} onClick={() => goPage(page - 1)}>이전</Btn>
+              {pageItems.map((item, idx) => (
+                item === '…' ? (
+                  <span key={`e-${idx}`} style={{ fontFamily: F.ui, fontSize: 14, color: C.muted, padding: '0 4px' }}>…</span>
+                ) : (
+                  <button
+                    key={item}
+                    type="button"
+                    disabled={busy}
+                    onClick={() => goPage(item)}
+                    style={{
+                      ...sk(item === page ? C.blue : C.graphite, true),
+                      backgroundColor: item === page ? C.blueLight : C.card,
+                      color: item === page ? C.blue : C.body,
+                      fontFamily: F.ui,
+                      fontSize: 14,
+                      fontWeight: 800,
+                      minWidth: 34,
+                      padding: '6px 10px',
+                      cursor: 'pointer',
+                      outline: 'none',
+                    }}
+                  >
+                    {item}
+                  </button>
+                )
+              ))}
+              <Btn size="sm" disabled={page >= pageCount || busy} onClick={() => goPage(page + 1)}>다음</Btn>
+              <span style={{ fontFamily: F.ui, fontSize: 13, color: C.muted, marginLeft: 6 }}>
+                {page} / {pageCount} 페이지
+              </span>
+            </div>
+          )}
         </NoteCard>
       </div>
+      {clipPreview && (
+        <BankSegmentPreview
+          url={clipPreview.url}
+          startSec={clipPreview.startSec}
+          endSec={clipPreview.endSec}
+          title={clipPreview.title}
+          volume={user?.musicVolume ?? 70}
+          onClose={() => setClipPreview(null)}
+        />
+      )}
     </div>
   )
 }
@@ -3382,6 +4215,7 @@ export default function App() {
       <div style={{ position: 'relative', zIndex: 1, minHeight: '100vh' }}>
         {render()}
       </div>
+      <FlameKimOverlayBgm />
     </>
   )
 }
