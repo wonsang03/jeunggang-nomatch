@@ -1270,6 +1270,13 @@ function shuffleArray<T>(arr: T[]): T[] {
 function pickRandomOfferTier(
   list: Array<{ tier: string }>,
 ): OfferTier {
+  const forceName = process.env.FORCE_AUGMENT_NAME?.trim()
+  if (
+    (forceName === '트루먼쇼' || forceName === 'sakura_decoy')
+    && list.some((a) => a.tier === 'gold')
+  ) {
+    return 'gold'
+  }
   const available = (['bronze', 'silver', 'gold'] as const).filter((t) =>
     list.some((a) => a.tier === t),
   )
@@ -1347,6 +1354,20 @@ function pickOfferCandidates(
   const picked: typeof pool = []
   const seenIds = new Set<string>()
   const seenNames = new Set<string>()
+
+  // 로컬 테스트: FORCE_AUGMENT_NAME=트루먼쇼 → 오퍼 맨 앞에 고정
+  const forceName = process.env.FORCE_AUGMENT_NAME?.trim()
+  if (forceName) {
+    const excluded = new Set(opts?.excludeNames || [])
+    const forced = list.find((a) =>
+      (a.name === forceName || a.effectType === forceName) && !excluded.has(a.name),
+    )
+    if (forced) {
+      seenIds.add(forced.id)
+      seenNames.add(forced.name)
+      picked.push(forced)
+    }
+  }
 
   for (const a of shuffleArray(pool)) {
     if (seenIds.has(a.id) || seenNames.has(a.name)) continue
