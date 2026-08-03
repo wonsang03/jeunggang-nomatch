@@ -2776,12 +2776,8 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
 
 // ── Augment ────────────────────────────────────────────────────
 
-const AUGMENT_BGM_URL = 'https://www.youtube.com/watch?v=L422Qs3K6_I'
-const AUGMENT_BGM_SEC = 20
-
 function AugmentScreen({ nav }: { nav: (s: Screen) => void }) {
-  const { user, room, augmentOffer, pickAugment, rerollAugment, musicVolume, fetchGahoCandidates, pingMs, clockSamples } = useGame()
-  const flameKimPlaying = !!room?.members.find((m) => m.userId === user?.id)?.flameKimActive
+  const { user, room, augmentOffer, pickAugment, rerollAugment, fetchGahoCandidates, pingMs, clockSamples } = useGame()
   const [timer, setTimer] = useState(20)
   const [selected, setSelected] = useState<string | null>(null)
   const [rerollsLeft, setRerollsLeft] = useState(1)
@@ -2893,13 +2889,7 @@ function AugmentScreen({ nav }: { nav: (s: Screen) => void }) {
 
   return (
     <div style={{ minHeight: '100vh', ...crumpledPaper, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
-      <HiddenYouTube
-        url={AUGMENT_BGM_URL}
-        startSec={0}
-        durationSec={AUGMENT_BGM_SEC}
-        volume={flameKimPlaying ? 0 : musicVolume}
-        playLabel="🎵 탭해서 증강 BGM 재생"
-      />
+      {/* 증강 BGM YouTube 제거: 방 노래 플레이어와 동시에 뜨면 다음 라운드 자동재생이 번갈아 깨짐 */}
       <div style={{ ...sk(), backgroundColor: C.card, padding: '36px 32px', maxWidth: 720, width: '100%', textAlign: 'center' }}>
         <div style={{ fontFamily: F.brand, fontSize: 42, fontWeight: 700, marginBottom: 8 }}>증강 선택</div>
         <div style={{ fontFamily: F.ui, fontSize: 18, color: C.muted, marginBottom: 8 }}>남은 시간 {timer}초 · 1개 보관</div>
