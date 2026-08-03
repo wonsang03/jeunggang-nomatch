@@ -1623,21 +1623,9 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
   //   overlay  → 불꽃남자김상원 (둘 다)
   const audioTrick = !inDuel ? (me?.audioTrick ?? null) : null
   const trickReplace = audioTrick?.mode === 'replace'
-  const trickOverlay = audioTrick?.mode === 'overlay'
-  const trickUrl = audioTrick?.youtubeUrl || null
-  const trickStartSec = audioTrick?.startSec ?? 0
   const baseVol = songPowerOff ? 0 : musicVolume
-  // 방 정답곡은 App 루트 RoomSongPersistentBgm — 여기선 트릭 곡만
-  const trickPlayVolume = baseVol
-  const trickYtVolume = inCountdown ? 0 : trickPlayVolume
+  // 방/트릭/증강 BGM 은 App 루트 RoomSongPersistentBgm
   const showGenre = !noHintMode && audioTrick?.source !== 'mud'
-  // 세노·트루먼·진흙탕 등 replace/overlay(불꽃 제외)
-  const showTrickYt = !!(
-    trickUrl
-    && (trickReplace || trickOverlay)
-    && audioTrick?.source !== 'flame'
-    && (room.status === 'playing' || room.status === 'countdown')
-  )
   // 초성은 위쪽 슬롯 칸, 증강 정답 안내는 증강 적용 칸
   // 같은 라벨 N개 → 한 칸에 「A / B」로 합치고, 종류(칸) 수만큼 동일 비율
   const artistHintParts = (round?.artistChosung || '').split(/\s*\/\s*/).map(s => s.trim()).filter(Boolean)
@@ -1815,22 +1803,7 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
           onDone={() => setCutQueue(q => q.slice(1))}
         />
       )}
-      {showTrickYt && trickUrl && audioTrick && (
-        <HiddenYouTube
-          key="yt-trick"
-          url={trickUrl}
-          startSec={trickStartSec}
-          volume={trickYtVolume}
-          paused={cutQueue.length > 0}
-          playbackRate={1}
-          playLabel="🎵 탭해서 증강 노래 재생"
-          audioUnlockAt={null}
-          cutMute={songPowerOff}
-          loop={false}
-          roundEndsAt={round?.endsAt ?? null}
-          roundDurationSec={maxTime}
-        />
-      )}
+      {/* 트릭/진흙탕/증강 BGM 은 App 루트 RoomSongPersistentBgm 이 담당 */}
       <div style={{
         position: 'relative', zIndex: 2, backgroundColor: C.card,
         borderBottom: `2.5px solid ${C.graphite}`, boxShadow: `0 3px 0 ${C.graphite}40`,

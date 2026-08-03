@@ -573,11 +573,14 @@ export function HiddenYouTube({
 }
 
 const FLAME_KIM_FALLBACK_URL = 'https://www.youtube.com/watch?v=x1PTr27NYds'
+/** 증강 선택 화면 BGM */
+const AUGMENT_SELECT_BGM_URL = 'https://www.youtube.com/watch?v=L422Qs3K6_I'
+/** 진흙탕 싸움 기본 BGM (사과게임) */
+const MUD_FIGHT_BGM_FALLBACK = 'https://www.youtube.com/watch?v=ZzHYbM0l4ec'
 
 /**
- * 방 정답곡: App 루트에 유지.
- * 증강 선택으로 GameScreen이 언마운트돼도 플레이어를 안 죽여
- * 다음 라운드 재생 실패(http IP / 자동재생)를 줄임.
+ * 방 정답곡 + 트릭(진흙탕/세노 등) + 증강선택 BGM 을 한 플레이어로 유지.
+ * (여러 YouTube iframe 이 동시에 뜨면 http IP 에서 재생이 깨짐)
  */
 export function RoomSongPersistentBgm() {
   const { user, room, round, musicVolume } = useGame()
@@ -624,8 +627,7 @@ export function RoomSongPersistentBgm() {
     round?.duration,
   ])
 
-  if (!user || !room || !session) return null
-  if (room.status === 'lobby' || room.status === 'ended') return null
+  if (!user || !room || room.status === 'lobby' || room.status === 'ended') return null
 
   const me = room.members.find((m) => m.userId === user.id)
   const inDuel = room.status === 'duel'
@@ -635,17 +637,62 @@ export function RoomSongPersistentBgm() {
   ))
   const audioTrick = !inDuel ? (me?.audioTrick ?? null) : null
   const trickReplace = audioTrick?.mode === 'replace'
+  const trickUrl = (audioTrick?.youtubeUrl || '').trim()
+    || (trickReplace && audioTrick?.source === 'mud' ? MUD_FIGHT_BGM_FALLBACK : '')
+  const trickStartSec = audioTrick?.startSec ?? 0
   const songPowerOff = !!(me?.songMuteUntil && now < me.songMuteUntil)
   const baseVol = songPowerOff ? 0 : musicVolume
-  const roomPlayVolume = (deafMode && audioTrick?.source !== 'mud') || trickReplace ? 0 : baseVol
   const inCountdown = room.status === 'countdown'
-  const audible = room.status === 'playing' || room.status === 'duel'
-  const vol = audible ? roomPlayVolume : 0
+  const audibleRound = room.status === 'playing' || room.status === 'duel'
   const songPlaybackRate = (!inDuel && me?.playbackRate && me.playbackRate > 0 && me.playbackRate !== 1)
     ? me.playbackRate
     : 1
-  // 카운트다운 endsAt으로 seek 하면 위치가 꼬임 → playing/duel 만 싱크
-  const syncEndsAt = audible ? session.endsAt : null
+
+  // ── 증강 선택 화면: 같은 플레이어로 선택 BGM ─────────────────
+  if (room.status === 'augment') {
+    return (
+      <HiddenYouTube
+        key="yt-room-persistent"
+        url={AUGMENT_SELECT_BGM_URL}
+        startSec={0}
+        volume={baseVol}
+        durationSec={20}
+        paused={false}
+        playbackRate={1}
+        playLabel="🎵 탭해서 증강 BGM 재생"
+        cutMute={false}
+        loop={false}
+        playEpoch={`augment-${room.id || 'x'}`}
+      />
+    )
+  }
+
+  if (!session) return null
+
+  // ── 진흙탕/세노/트루먼 등: 방곡 대신 트릭 URL ────────────────
+  if (trickReplace && trickUrl && (audibleRound || inCountdown)) {
+    const vol = audibleRound ? baseVol : 0
+    return (
+      <HiddenYouTube
+        key="yt-room-persistent"
+        url={trickUrl}
+        startSec={trickStartSec}
+        volume={vol}
+        paused={false}
+        playbackRate={1}
+        playLabel="🎵 탭해서 증강 노래 재생"
+        audioUnlockAt={null}
+        cutMute={songPowerOff}
+        roundEndsAt={audibleRound ? session.endsAt : null}
+        roundDurationSec={session.duration}
+        playEpoch={`trick-${audioTrick?.source}-${ytId(trickUrl)}-${session.index}-${room.status}`}
+      />
+    )
+  }
+
+  // ── 일반 방 정답곡 ───────────────────────────────────────────
+  const roomPlayVolume = (deafMode && audioTrick?.source !== 'mud') ? 0 : baseVol
+  const vol = audibleRound ? roomPlayVolume : 0
 
   return (
     <HiddenYouTube
@@ -655,11 +702,11 @@ export function RoomSongPersistentBgm() {
       volume={vol}
       paused={false}
       playbackRate={songPlaybackRate}
-      audioUnlockAt={audible && !inCountdown && me?.audioDelaySec ? (me.audioDelayUntil ?? null) : null}
-      cutMute={songPowerOff || trickReplace}
-      roundEndsAt={syncEndsAt}
+      audioUnlockAt={audibleRound && !inCountdown && me?.audioDelaySec ? (me.audioDelayUntil ?? null) : null}
+      cutMute={songPowerOff}
+      roundEndsAt={audibleRound ? session.endsAt : null}
       roundDurationSec={session.duration}
-      playEpoch={`${session.index}-${room.status}-${audible ? 'on' : 'off'}`}
+      playEpoch={`${session.index}-${room.status}-${audibleRound ? 'on' : 'off'}`}
     />
   )
 }
