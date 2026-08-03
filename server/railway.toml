@@ -1,8 +1,9 @@
-# Railway Settings → Root Directory = server 일 때 (권장)
+# 권장: Root Directory = server
+# (전체 저장소는 그대로 있고, 작업 폴더만 server)
 
 [build]
 builder = "NIXPACKS"
-buildCommand = "npm install && npx prisma generate && npx tsc"
+buildCommand = "cd ../web && npm install && npm run build && cd ../server && npm install && npx prisma generate && npx tsc && rm -rf public && mkdir -p public && cp -r ../web/dist/. public/"
 
 [deploy]
 startCommand = "sh -c 'export DATABASE_URL=\"${DATABASE_URL:-file:./data.db}\"; npx prisma db push && node dist/index.js'"

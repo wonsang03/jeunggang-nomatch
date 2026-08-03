@@ -18,6 +18,8 @@ dist/
 build/
 .vite/
 *.tsbuildinfo
+server/public/
+web/dist/
 
 # uploads (runtime)
 server/uploads/avatars/*

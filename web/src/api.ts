@@ -1,4 +1,11 @@
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:4000'
+const rawApi = import.meta.env.VITE_API_URL as string | undefined
+/** 배포(프로덕션)는 같은 출처, 로컬 개발은 :4000 */
+const API_BASE =
+  rawApi !== undefined && rawApi !== ''
+    ? rawApi
+    : import.meta.env.DEV
+      ? 'http://localhost:4000'
+      : ''
 
 export type AuthUser = {
   id: string
