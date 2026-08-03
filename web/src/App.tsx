@@ -1687,7 +1687,9 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
       return b.pending ? `${b.name}(대기)${multPart}${ratePart}` : `${b.name} ${b.roundsLeft}R${multPart}${ratePart}`
     }),
     me?.sakuraActive
-      ? `${me.sakuraBy || '다른 곡'}${me.sakuraScoreMult && me.sakuraScoreMult > 1 ? ` · 정답×${me.sakuraScoreMult}` : ''} · 트릭곡만`
+      ? (me.sakuraTruman || me.trumanIllusion)
+        ? `${me.sakuraBy || '트루먼쇼'} · 환상곡 · 점수 조작 중`
+        : `${me.sakuraBy || '다른 곡'}${me.sakuraScoreMult && me.sakuraScoreMult > 1 ? ` · 정답×${me.sakuraScoreMult}` : ''} · 트릭곡만`
       : '',
     me?.flameKimActive
       ? `${me.flameKimBy || '불꽃남자김상원'} · 방곡+트릭`
@@ -1856,7 +1858,9 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
                 : me?.audioDelayUntil && now < me.audioDelayUntil
                 ? `슬로우 스타터 · ${Math.max(0, Math.ceil((me.audioDelayUntil - now) / 1000))}초 후`
                 : me?.sakuraActive
-                  ? `${me.sakuraBy || '다른 곡'} · 트릭곡만`
+                  ? (me.sakuraTruman || me.trumanIllusion)
+                    ? `${me.sakuraBy || '트루먼쇼'} · 환상`
+                    : `${me.sakuraBy || '다른 곡'} · 트릭곡만`
                   : me?.flameKimActive
                     ? `${me.flameKimBy || '불꽃남자김상원'} · 방곡+트릭`
                   : songPlaybackRate !== 1
@@ -2270,14 +2274,18 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                       <div style={{ fontFamily: F.ui, fontSize: 14, fontWeight: 800, color: C.blue }}>
                         {me.sakuraBy || '다른 곡'}
-                        {me.sakuraScoreMult && me.sakuraScoreMult > 1
-                          ? ` · 다른 곡 · 정답 ×${me.sakuraScoreMult}`
-                          : ' · 다른 곡'}
+                        {(me.sakuraTruman || me.trumanIllusion)
+                          ? ' · 환상 쇼'
+                          : me.sakuraScoreMult && me.sakuraScoreMult > 1
+                            ? ` · 다른 곡 · 정답 ×${me.sakuraScoreMult}`
+                            : ' · 다른 곡'}
                       </div>
                       <div style={{ fontFamily: F.ui, fontSize: 14, color: C.body, lineHeight: 1.45 }}>
-                        {me.sakuraScoreMult && me.sakuraScoreMult > 1
-                          ? '지금 들리는 곡은 실제 문제와 다릅니다. 그래도 맞히면 점수가 배율 적용됩니다.'
-                          : '지금 들리는 곡은 실제 문제와 다릅니다. 정답은 원래 문제 기준입니다.'}
+                        {(me.sakuraTruman || me.trumanIllusion)
+                          ? '들리는 곡·맞히는 정답은 가짜입니다. 점수가 오르는 것처럼 보이지만 실제론 카운트되지 않습니다.'
+                          : me.sakuraScoreMult && me.sakuraScoreMult > 1
+                            ? '지금 들리는 곡은 실제 문제와 다릅니다. 그래도 맞히면 점수가 배율 적용됩니다.'
+                            : '지금 들리는 곡은 실제 문제와 다릅니다. 정답은 원래 문제 기준입니다.'}
                       </div>
                     </div>
                   )}
@@ -4110,7 +4118,7 @@ function BankScreen({ nav }: { nav: (s: Screen) => void }) {
 // ── App Root ──────────────────────────────────────────────────
 
 export default function App() {
-  const { user, room, results } = useGame()
+  const { user, room, results, trumanReveal, clearTrumanReveal } = useGame()
   const [screen, setScreen] = useState<Screen>('home')
   const [manual, setManual] = useState(false)
 
@@ -4155,6 +4163,52 @@ export default function App() {
       </div>
       <FlameKimOverlayBgm />
       <RoomSongPersistentBgm />
+      {trumanReveal && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 200,
+            backgroundColor: 'rgba(30,40,50,0.72)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 24,
+          }}
+          onClick={clearTrumanReveal}
+        >
+          <div
+            style={{
+              ...sk(),
+              backgroundColor: C.card,
+              padding: '36px 28px',
+              maxWidth: 420,
+              width: '100%',
+              textAlign: 'center',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ fontFamily: F.brand, fontSize: 36, fontWeight: 700, marginBottom: 10 }}>
+              짜잔!
+            </div>
+            <div style={{ fontFamily: F.ui, fontSize: 20, fontWeight: 800, color: C.blue, marginBottom: 12 }}>
+              당신은 트루먼이었습니다
+            </div>
+            <div style={{ fontFamily: F.ui, fontSize: 16, color: C.body, lineHeight: 1.5, marginBottom: 18 }}>
+              {trumanReveal.fakeScore > 0 ? (
+                <>
+                  가짜 +{trumanReveal.fakeScore}점은 무효입니다.
+                  <br />
+                  실제 점수 {trumanReveal.realScore}점
+                </>
+              ) : (
+                <>실제 점수 {trumanReveal.realScore}점</>
+              )}
+            </div>
+            <Btn onClick={clearTrumanReveal}>확인</Btn>
+          </div>
+        </div>
+      )}
     </>
   )
 }

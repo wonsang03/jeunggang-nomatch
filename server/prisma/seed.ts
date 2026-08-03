@@ -262,9 +262,9 @@ async function main() {
     {
       name: '트루먼쇼',
       description:
-        '플레이어를 선택해 다음 2라운드 동안 지금 곡과 다른 노래를 들려줍니다. 그래도 그 플레이어가 정답을 맞히면 점수가 ×3입니다.',
+        '플레이어를 선택해 다음 2라운드 동안 다른 노래와 그 곡의 정답을 들려줍니다. 맞히면 점수가 오르는 것처럼 보이지만 실제로는 카운트되지 않고, 끝나면 「당신은 트루먼이었습니다」가 공개됩니다.',
       effectType: 'sakura_decoy',
-      effectValue: JSON.stringify({ rounds: 2, scoreMult: 3 }),
+      effectValue: JSON.stringify({ rounds: 2 }),
       tier: 'gold',
       imageUrl: null,
     },

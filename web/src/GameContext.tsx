@@ -122,6 +122,11 @@ export type RoomMember = {
   sakuraActive?: boolean
   sakuraScoreMult?: number | null
   sakuraBy?: string | null
+  /** 트루먼쇼 환상 모드 (가짜 점수) */
+  sakuraTruman?: boolean
+  trumanIllusion?: boolean
+  trumanFakeScore?: number
+  scoreReal?: number
   /** 신속정확대리 진행 중(대상 비공개) */
   answerProxyActive?: boolean
   answerProxyPending?: boolean
@@ -257,6 +262,9 @@ type GameCtx = {
   serverNow: () => number
   /** 시계 샘플 횟수 (증강 중 싱크 표시용) */
   clockSamples: number
+  /** 트루먼쇼 폭로 연출 */
+  trumanReveal: { name: string; fakeScore: number; realScore: number } | null
+  clearTrumanReveal: () => void
   login: (username: string, password: string) => Promise<void>
   register: (username: string, password: string, nickname: string) => Promise<void>
   logout: () => void
@@ -303,6 +311,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
   const [skipVoted, setSkipVoted] = useState(false)
   const [augmentOffer, setAugmentOffer] = useState<AugmentOffer | null>(null)
   const [augmentHint, setAugmentHint] = useState<string | null>(null)
+  const [trumanReveal, setTrumanReveal] = useState<{ name: string; fakeScore: number; realScore: number } | null>(null)
   const [results, setResults] = useState<GameResult[] | null>(null)
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const typewriterTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -552,6 +561,17 @@ export function GameProvider({ children }: { children: ReactNode }) {
           ),
         }
       })
+    })
+    s.on('truman:reveal', (payload: { name?: string; fakeScore?: number; realScore?: number }) => {
+      playSfx('augment')
+      setTrumanReveal({
+        name: payload.name || '트루먼쇼',
+        fakeScore: typeof payload.fakeScore === 'number' ? payload.fakeScore : 0,
+        realScore: typeof payload.realScore === 'number' ? payload.realScore : 0,
+      })
+    })
+    s.on('truman:fake_correct', () => {
+      playSfx('allCorrect')
     })
     s.on('hidden:unlock', (payload: { slots: Array<{ id: string; label: string }> }) => {
       playSfx('augment')
@@ -854,6 +874,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
     }
   }
   const clearResults = () => setResults(null)
+  const clearTrumanReveal = () => setTrumanReveal(null)
 
   const value = useMemo(
     () => ({
@@ -876,6 +897,8 @@ export function GameProvider({ children }: { children: ReactNode }) {
       augmentOffer,
       augmentHint,
       results,
+      trumanReveal,
+      clearTrumanReveal,
       serverNow,
       clockSamples,
       login,
@@ -898,6 +921,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
       useAugment,
       fetchGahoCandidates,
       clearResults,
+      clearTrumanReveal,
     }),
     [
       user,
@@ -919,6 +943,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
       augmentOffer,
       augmentHint,
       results,
+      trumanReveal,
       clockSamples,
     ],
   )

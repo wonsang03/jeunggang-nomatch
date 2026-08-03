@@ -116,15 +116,20 @@ type Member = {
     pendingScore: number
     byName: string
   } | null
-  /** 트루먼쇼: 다른 곡 재생 + 정답 시 배율 */
+  /** 트루먼쇼(환상) / 세노 등: 다른 곡 재생 · truman은 가짜 점수 */
   sakuraDecoy: {
     youtubeUrl: string
     startSec: number
+    endSec: number
     startIndex: number
     roundsLeft: number
     scoreMult: number
     byName: string
     byNickname: string
+    mode: 'truman' | 'classic'
+    slots: Array<{ id: string; label: string; answer: string; accepts: string[]; acceptNorms: string[]; hidden: boolean }>
+    fakeRevealed: Record<string, true>
+    fakeScore: number
   } | null
   /** 불꽃남자김상원: 본인 고정곡 청취 · 정답 시 대상 점수 감소 */
   flameKim: {
@@ -227,7 +232,7 @@ function activeBuffsAt(m: Member, roundIndex: number) {
   return m.activeBuffs.filter((b) => buffApplies(b, roundIndex))
 }
 
-function tickBuffsAfterRound(m: Member, endedIndex: number) {
+function tickBuffsAfterRound(io: Server, room: Room, m: Member, endedIndex: number) {
   for (const b of m.activeBuffs) {
     if (endedIndex >= b.startIndex && b.roundsLeft > 0) b.roundsLeft -= 1
   }
@@ -260,7 +265,10 @@ function tickBuffsAfterRound(m: Member, endedIndex: number) {
   }
   if (m.sakuraDecoy && endedIndex >= m.sakuraDecoy.startIndex && m.sakuraDecoy.roundsLeft > 0) {
     m.sakuraDecoy.roundsLeft -= 1
-    if (m.sakuraDecoy.roundsLeft <= 0) m.sakuraDecoy = null
+    if (m.sakuraDecoy.roundsLeft <= 0) {
+      if (m.sakuraDecoy.mode === 'truman') settleTrumanIllusion(io, room, m)
+      else m.sakuraDecoy = null
+    }
   }
   if (m.flameKim && endedIndex >= m.flameKim.startIndex && m.flameKim.roundsLeft > 0) {
     m.flameKim.roundsLeft -= 1
@@ -662,7 +670,7 @@ function answerScoreFor(m: Member, roundIndex: number) {
       if (Number.isFinite(n) && n > mult) mult = n
     }
   }
-  if (isSakuraDecoyActive(m, roundIndex)) {
+  if (isSakuraDecoyActive(m, roundIndex) && m.sakuraDecoy!.mode !== 'truman') {
     const n = m.sakuraDecoy!.scoreMult
     if (Number.isFinite(n) && n > mult) mult = n
   }
@@ -737,6 +745,64 @@ function isSakuraDecoyActive(m: Member, roundIndex: number) {
   return !!(m.sakuraDecoy && roundIndex >= m.sakuraDecoy.startIndex && m.sakuraDecoy.roundsLeft > 0)
 }
 
+/** 트루먼쇼 환상 모드 (가짜 곡 채점 · 가짜 점수 표시) */
+function isTrumanIllusion(m: Member, roundIndex: number) {
+  return !!(
+    m.sakuraDecoy
+    && m.sakuraDecoy.mode === 'truman'
+    && roundIndex >= m.sakuraDecoy.startIndex
+    && m.sakuraDecoy.roundsLeft > 0
+  )
+}
+
+function displayScoreOf(m: Member, roundIndex: number) {
+  if (isTrumanIllusion(m, roundIndex) && m.sakuraDecoy) {
+    return m.score + m.sakuraDecoy.fakeScore
+  }
+  return m.score
+}
+
+/** 트루먼쇼 종료: 가짜 점수 무효 공개 · 실제 점수는 그대로 */
+function settleTrumanIllusion(io: Server, room: Room, m: Member) {
+  if (!m.sakuraDecoy || m.sakuraDecoy.mode !== 'truman') {
+    m.sakuraDecoy = null
+    return
+  }
+  const fake = m.sakuraDecoy.fakeScore
+  const name = m.sakuraDecoy.byName
+  m.sakuraDecoy = null
+  const text = fake > 0
+    ? `짜잔! ${m.nickname}님은 트루먼이었습니다! (가짜 +${fake}점은 무효 · 실제 ${m.score}점)`
+    : `짜잔! ${m.nickname}님은 트루먼이었습니다!`
+  io.to(room.id).emit('chat:message', {
+    id: Date.now(),
+    userId: '',
+    nickname: '시스템',
+    text,
+    system: true,
+    at: Date.now(),
+  })
+  io.to(m.socketId).emit('truman:reveal', {
+    name,
+    fakeScore: fake,
+    realScore: m.score,
+  })
+  io.to(m.socketId).emit('augment:hint', {
+    name,
+    hint: fake > 0
+      ? `짜잔! 당신은 트루먼이었습니다 · 가짜 +${fake}점 무효 (실제 ${m.score}점)`
+      : '짜잔! 당신은 트루먼이었습니다!',
+    durationMs: 0,
+  })
+}
+
+function forceSettleTrumanIllusions(io: Server, room: Room) {
+  for (const m of room.members.values()) {
+    if (!m.sakuraDecoy || m.sakuraDecoy.mode !== 'truman') continue
+    settleTrumanIllusion(io, room, m)
+  }
+}
+
 function isFlameKimActive(m: Member, roundIndex: number) {
   return !!(m.flameKim && roundIndex >= m.flameKim.startIndex && m.flameKim.roundsLeft > 0)
 }
@@ -809,7 +875,12 @@ function applyFlameKimOnCorrect(io: Server, room: Room, caster: Member) {
   })
 }
 
-async function pickDecoyTrack(room: Room): Promise<{ youtubeUrl: string; startSec: number } | null> {
+async function pickDecoyTrack(room: Room): Promise<{
+  youtubeUrl: string
+  startSec: number
+  endSec: number
+  slots: QuestionRuntime['slots']
+} | null> {
   // 트루먼쇼: 이번 판 큐에 없는 문제은행 곡만 (이미 나온/나올 곡 반복 방지)
   const usedIds = new Set(room.queue.map((q) => q.id))
   const usedYt = new Set(
@@ -817,7 +888,10 @@ async function pickDecoyTrack(room: Room): Promise<{ youtubeUrl: string; startSe
       .map((q) => extractYoutubeId(q.youtubeUrl))
       .filter((id): id is string => !!id),
   )
-  const list = await prisma.question.findMany({ where: { enabled: true } })
+  const list = await prisma.question.findMany({
+    where: { enabled: true },
+    include: { slots: { orderBy: { sortOrder: 'asc' } }, genre: true },
+  })
   const unused = list.filter((q) => {
     if (usedIds.has(q.id)) return false
     const yt = extractYoutubeId(q.youtubeUrl)
@@ -834,7 +908,13 @@ async function pickDecoyTrack(room: Room): Promise<{ youtubeUrl: string; startSe
       })
   if (!pool.length) return null
   const q = pool[Math.floor(Math.random() * pool.length)]
-  return { youtubeUrl: q.youtubeUrl, startSec: q.startSec }
+  const rt = toQuestionRuntime(q)
+  return {
+    youtubeUrl: rt.youtubeUrl,
+    startSec: rt.startSec,
+    endSec: rt.endSec,
+    slots: rt.slots.filter((s) => !s.hidden),
+  }
 }
 
 /** 제목 슬롯에 특정 문자열이 포함된 곡 (세노 등) · effectValue에 youtubeUrl 있으면 고정 재생 */
@@ -1455,7 +1535,8 @@ function roomState(room: Room) {
       nickname: m.nickname,
       avatarUrl: m.avatarUrl,
       ready: m.ready,
-      score: m.score,
+      score: displayScoreOf(m, room.index),
+      scoreReal: m.score,
       isHost: m.userId === room.hostId,
       heldAugmentId: m.heldAugmentId,
       heldAugmentName: m.heldAugmentName,
@@ -1527,8 +1608,15 @@ function roomState(room: Room) {
         return null
       })(),
       sakuraActive: room.status === 'duel' ? false : isSakuraDecoyActive(m, room.index),
-      sakuraScoreMult: room.status === 'duel' ? null : (isSakuraDecoyActive(m, room.index) ? m.sakuraDecoy!.scoreMult : null),
+      sakuraScoreMult: room.status === 'duel'
+        ? null
+        : (isSakuraDecoyActive(m, room.index) && m.sakuraDecoy!.mode !== 'truman'
+          ? m.sakuraDecoy!.scoreMult
+          : null),
       sakuraBy: room.status === 'duel' ? null : (isSakuraDecoyActive(m, room.index) ? m.sakuraDecoy!.byName : null),
+      sakuraTruman: room.status === 'duel' ? false : isTrumanIllusion(m, room.index),
+      trumanIllusion: room.status === 'duel' ? false : isTrumanIllusion(m, room.index),
+      trumanFakeScore: isTrumanIllusion(m, room.index) ? (m.sakuraDecoy?.fakeScore ?? 0) : 0,
       flameKimActive: room.status === 'duel' ? false : isFlameKimActive(m, room.index),
       flameKimPending: !!(m.flameKim && room.index < m.flameKim.startIndex),
       flameKimRoundsLeft: m.flameKim?.roundsLeft ?? null,
@@ -2527,48 +2615,66 @@ async function applyAugmentEffect(
   if (aug.effectType === 'sakura_decoy' || aug.effectType === 'named_decoy') {
     const intended = targetUserId ? room.members.get(targetUserId) : null
     if (!intended || intended.userId === m.userId) return { ok: false, hint: null, chatText: null }
+    const isTruman = aug.effectType === 'sakura_decoy'
     const titleKey = String(value.titleIncludes || '').trim() || '연애서큘레이션'
-    const decoy = aug.effectType === 'named_decoy'
-      ? await pickNamedTrack(room, titleKey, {
-          youtubeUrl: String(value.youtubeUrl || ''),
-          startSec: Number(value.startSec),
-        })
-      : await pickDecoyTrack(room)
-    if (!decoy) {
-      return {
-        ok: false,
-        hint: aug.effectType === 'named_decoy'
-          ? `[${aug.name}] 문제은행에 「${titleKey}」이(가) 없습니다`
-          : null,
-        chatText: null,
+    let youtubeUrl = ''
+    let startSec = 0
+    let endSec = 0
+    let decoySlots: QuestionRuntime['slots'] = []
+    if (isTruman) {
+      const decoy = await pickDecoyTrack(room)
+      if (!decoy) return { ok: false, hint: null, chatText: null }
+      youtubeUrl = decoy.youtubeUrl
+      startSec = decoy.startSec
+      endSec = decoy.endSec
+      decoySlots = decoy.slots
+    } else {
+      const decoy = await pickNamedTrack(room, titleKey, {
+        youtubeUrl: String(value.youtubeUrl || ''),
+        startSec: Number(value.startSec),
+      })
+      if (!decoy) {
+        return {
+          ok: false,
+          hint: `[${aug.name}] 문제은행에 「${titleKey}」이(가) 없습니다`,
+          chatText: null,
+        }
       }
+      youtubeUrl = decoy.youtubeUrl
+      startSec = decoy.startSec
     }
     const shield = takeReflectShield(intended, room.index)
     const victim = shield ? m : intended
     const reflected = !!shield
-    const multDefault = aug.effectType === 'named_decoy' ? 1 : 3
+    const multDefault = 1
     const multRaw = Number(value.scoreMult)
     const mult = Number.isFinite(multRaw) && multRaw > 0 ? Math.floor(multRaw) : multDefault
-    const sakuraRounds = rounds > 0 ? rounds : (aug.effectType === 'named_decoy' ? 1 : 2)
+    const sakuraRounds = rounds > 0 ? rounds : (isTruman ? 2 : 1)
     // 상대 지정 디코이: 다음 라운드부터
     const startIndex = room.index + 1
-    const songLabel = aug.effectType === 'named_decoy' ? titleKey : '다른 곡'
-    const multHint = mult > 1 ? ` · 정답 시 ×${mult}` : ''
+    const songLabel = isTruman ? '다른 곡' : titleKey
+    const multHint = !isTruman && mult > 1 ? ` · 정답 시 ×${mult}` : ''
+    const illusionHint = isTruman ? ' · 맞혀도 점수는 환상' : ''
     const whenHint = `다음 ${sakuraRounds}R `
     victim.sakuraDecoy = {
-      youtubeUrl: decoy.youtubeUrl,
-      startSec: decoy.startSec,
+      youtubeUrl,
+      startSec,
+      endSec: isTruman ? endSec : 0,
       startIndex,
       roundsLeft: sakuraRounds,
       scoreMult: mult,
       byName: reflected ? shield!.name : aug.name,
       byNickname: reflected ? intended.nickname : user.nickname,
+      mode: isTruman ? 'truman' : 'classic',
+      slots: isTruman ? decoySlots : [],
+      fakeRevealed: {},
+      fakeScore: 0,
     }
     io.to(victim.socketId).emit('augment:hint', {
       name: aug.name,
       hint: reflected
-        ? `[무지개 반사] ${whenHint}「${songLabel}」이(가) 재생됩니다${multHint}`
-        : `[${aug.name}] ${whenHint}「${songLabel}」이(가) 재생됩니다${multHint}`,
+        ? `[무지개 반사] ${whenHint}「${songLabel}」이(가) 재생됩니다${multHint}${illusionHint}`
+        : `[${aug.name}] ${whenHint}「${songLabel}」이(가) 재생됩니다${multHint}${illusionHint}`,
       durationMs: 0,
     })
     if (reflected) {
@@ -2579,14 +2685,14 @@ async function applyAugmentEffect(
       })
       return {
         ok: true,
-        hint: `[무지개 반사] ${intended.nickname}님에게 튕겨 ${whenHint}「${songLabel}」 재생${multHint}`,
+        hint: `[무지개 반사] ${intended.nickname}님에게 튕겨 ${whenHint}「${songLabel}」 재생${multHint}${illusionHint}`,
         chatText: `${intended.nickname}님의 [무지개 반사]! ${user.nickname}님의 [${aug.name}]이(가) 되돌아갔습니다!`,
       }
     }
     return {
       ok: true,
-      hint: `[${aug.name}] ${victim.nickname} → ${whenHint}「${songLabel}」${multHint}`,
-      chatText: `${user.nickname}님이 [${aug.name}]으로 ${victim.nickname}님에게 ${whenHint}「${songLabel}」을(를) 틀었습니다!${multHint}`,
+      hint: `[${aug.name}] ${victim.nickname} → ${whenHint}「${songLabel}」${multHint}${illusionHint}`,
+      chatText: `${user.nickname}님이 [${aug.name}]으로 ${victim.nickname}님에게 ${whenHint}「${songLabel}」을(를) 틀었습니다!${multHint}${illusionHint}`,
     }
   }
 
@@ -2612,11 +2718,16 @@ async function applyAugmentEffect(
       other.sakuraDecoy = {
         youtubeUrl: decoy.youtubeUrl,
         startSec: decoy.startSec,
+        endSec: 0,
         startIndex,
         roundsLeft: sakuraRounds,
         scoreMult: mult,
         byName: aug.name,
         byNickname: user.nickname,
+        mode: 'classic',
+        slots: [],
+        fakeRevealed: {},
+        fakeScore: 0,
       }
       io.to(other.socketId).emit('augment:hint', {
         name: aug.name,
@@ -3424,6 +3535,9 @@ function applyRoundStartBuffs(io: Server, room: Room) {
   const q = room.queue[room.index]
   if (!q) return
   for (const m of room.members.values()) {
+    if (isTrumanIllusion(m, room.index) && m.sakuraDecoy) {
+      m.sakuraDecoy.fakeRevealed = {}
+    }
     for (const b of activeBuffsAt(m, room.index)) {
       if (b.effectType === 'flash_answer') {
         const delaySec = Number(b.effectValue.delaySec) || 0
@@ -3836,6 +3950,30 @@ export function registerSocket(io: Server) {
           return
         }
         scoreText = text.trim().slice(0, -suffix.length).trim()
+      }
+
+      // 트루먼쇼 환상: 가짜 곡 슬롯만 채점 · 실제 점수/공개 미반영
+      if (memberSelf && isTrumanIllusion(memberSelf, room.index) && memberSelf.sakuraDecoy) {
+        const decoy = memberSelf.sakuraDecoy
+        for (const slot of decoy.slots) {
+          if (slot.hidden) continue
+          if (decoy.fakeRevealed[slot.id]) continue
+          if (!isAcceptedAnswer(scoreText, slot.acceptNorms)) continue
+          decoy.fakeRevealed[slot.id] = true
+          decoy.fakeScore += 1
+          io.to(room.id).emit('chat:message', {
+            id: Date.now() + 1,
+            userId: '',
+            nickname: '시스템',
+            text: `${user.nickname}님이 ${slot.label}을(를) 맞혔습니다! +1점`,
+            system: true,
+            at: Date.now(),
+          })
+          io.to(memberSelf.socketId).emit('truman:fake_correct')
+          io.to(room.id).emit('room:state', roomState(room))
+          return
+        }
+        return
       }
 
       const openDone = q.slots
@@ -4498,6 +4636,7 @@ function resumeMainRoundAfterDuel(
 ) {
   clearTimer(room)
   if (room.index >= room.queue.length) {
+    forceSettleTrumanIllusions(io, room)
     forceSettleAnswerProxies(io, room)
     room.status = 'ended'
     io.to(room.id).emit('game:end', {
@@ -4579,6 +4718,7 @@ function resumeMainRoundAfterDuel(
 function startRound(io: Server, room: Room) {
   clearTimer(room)
   if (room.index >= room.queue.length) {
+    forceSettleTrumanIllusions(io, room)
     forceSettleAnswerProxies(io, room)
     room.status = 'ended'
     io.to(room.id).emit('game:end', {
@@ -4696,6 +4836,7 @@ function startRound(io: Server, room: Room) {
   }
   const q = room.queue[room.index]
   if (!q) {
+    forceSettleTrumanIllusions(io, room)
     forceSettleAnswerProxies(io, room)
     room.status = 'ended'
     io.to(room.id).emit('game:end', {
@@ -4749,6 +4890,7 @@ function endRound(io: Server, room: Room, reason: 'cleared' | 'skip' | 'timeout'
   const q = room.queue[room.index]
   if (!q) {
     room.status = 'ended'
+    forceSettleTrumanIllusions(io, room)
     forceSettleAnswerProxies(io, room)
     io.to(room.id).emit('game:end', {
       results: [...room.members.values()]
@@ -4762,7 +4904,7 @@ function endRound(io: Server, room: Room, reason: 'cleared' | 'skip' | 'timeout'
   settleComboClear(io, room)
   settleGabukiMiss(io, room)
   for (const m of room.members.values()) {
-    tickBuffsAfterRound(m, room.index)
+    tickBuffsAfterRound(io, room, m, room.index)
   }
   settleAllAnswerProxies(io, room)
 
