@@ -526,23 +526,22 @@ export function HiddenYouTube({
 
   return (
     <>
-      {/* YouTube는 완전 숨김(opacity≈0)이면 http/모바일에서 재생이 자주 막힘 → 구석에 아주 작게 유지 */}
+      {/* YouTube는 display:none / opacity≈0 이면 재생이 자주 막혀서, 화면 밖 1px로만 유지 */}
       <div
         aria-hidden
         style={{
           position: 'fixed',
-          right: 8,
-          bottom: 8,
-          width: 160,
-          height: 90,
-          opacity: 0.12,
+          left: -2,
+          bottom: -2,
+          width: 1,
+          height: 1,
+          opacity: 1,
           pointerEvents: 'none',
-          zIndex: 3,
+          zIndex: -1,
           overflow: 'hidden',
-          borderRadius: 4,
         }}
       >
-        <div ref={hostRef} />
+        <div ref={hostRef} style={{ width: 200, height: 112 }} />
       </div>
       {blocked && (
         <button
