@@ -102,6 +102,8 @@ export function HiddenYouTube({
   roundEndsAt = null,
   roundDurationSec = null,
   loop = false,
+  /** 값이 바뀔 때마다 강제 재킥 (라운드 시작 등) */
+  playEpoch = 0,
 }: {
   url: string
   startSec: number
@@ -121,6 +123,7 @@ export function HiddenYouTube({
   roundDurationSec?: number | null
   /** true면 끝나면 startSec부터 다시 재생 (불꽃남자 BGM) */
   loop?: boolean
+  playEpoch?: number | string
 }) {
   const id = ytId(url)
   const hostRef = useRef<HTMLDivElement>(null)
@@ -345,9 +348,8 @@ export function HiddenYouTube({
       const https = window.location.protocol === 'https:'
       player = new window.YT.Player(mount, {
         videoId: initialId,
-        width: 320,
-        height: 180,
-        host: 'https://www.youtube-nocookie.com',
+        width: 200,
+        height: 112,
         playerVars: {
           autoplay: 1,
           mute: 1,
@@ -359,7 +361,6 @@ export function HiddenYouTube({
           disablekb: 1,
           iv_load_policy: 3,
           enablejsapi: 1,
-          // http://IP 에선 origin 지정이 오히려 임베드를 깨뜨리는 경우가 많음
           ...(https ? { origin: window.location.origin } : {}),
         },
         events: {
@@ -457,6 +458,16 @@ export function HiddenYouTube({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, start, end, durationSec, audioUnlockAt, ready])
 
+  // 라운드 시작 등: 같은 영상이어도 강제 재생 킥
+  useEffect(() => {
+    if (!ready) return
+    const p = playerRef.current
+    if (!p || !id) return
+    const t = setTimeout(() => kickPlayback(p), 80)
+    retryTimersRef.current.push(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playEpoch, ready])
+
   useEffect(() => {
     const p = playerRef.current
     if (!p || !ready) return
@@ -515,18 +526,20 @@ export function HiddenYouTube({
 
   return (
     <>
+      {/* YouTube는 완전 숨김(opacity≈0)이면 http/모바일에서 재생이 자주 막힘 → 구석에 아주 작게 유지 */}
       <div
         aria-hidden
         style={{
           position: 'fixed',
-          left: 0,
-          bottom: 0,
-          width: 320,
-          height: 180,
-          opacity: 0.001,
+          right: 8,
+          bottom: 8,
+          width: 160,
+          height: 90,
+          opacity: 0.12,
           pointerEvents: 'none',
-          zIndex: 0,
+          zIndex: 3,
           overflow: 'hidden',
+          borderRadius: 4,
         }}
       >
         <div ref={hostRef} />
@@ -574,6 +587,7 @@ export function RoomSongPersistentBgm() {
     startSec: number
     endsAt: number | null
     duration: number
+    index: number
   } | null>(null)
 
   useEffect(() => {
@@ -587,11 +601,16 @@ export function RoomSongPersistentBgm() {
       return
     }
     if (round?.youtubeUrl) {
+      const clipDur = Math.max(
+        10,
+        Math.floor(round.duration || ((round.endSec ?? 0) - (round.startSec ?? 0)) || 40),
+      )
       setSession({
         url: round.youtubeUrl,
         startSec: round.startSec ?? 0,
         endsAt: round.endsAt ?? null,
-        duration: round.duration || 40,
+        duration: clipDur,
+        index: round.index,
       })
     }
   }, [
@@ -600,6 +619,7 @@ export function RoomSongPersistentBgm() {
     round?.index,
     round?.youtubeUrl,
     round?.startSec,
+    round?.endSec,
     round?.endsAt,
     round?.duration,
   ])
@@ -618,12 +638,14 @@ export function RoomSongPersistentBgm() {
   const songPowerOff = !!(me?.songMuteUntil && now < me.songMuteUntil)
   const baseVol = songPowerOff ? 0 : musicVolume
   const roomPlayVolume = (deafMode && audioTrick?.source !== 'mud') || trickReplace ? 0 : baseVol
-  const active = room.status === 'playing' || room.status === 'duel' || room.status === 'countdown'
   const inCountdown = room.status === 'countdown'
-  const vol = active && !inCountdown ? roomPlayVolume : 0
+  const audible = room.status === 'playing' || room.status === 'duel'
+  const vol = audible ? roomPlayVolume : 0
   const songPlaybackRate = (!inDuel && me?.playbackRate && me.playbackRate > 0 && me.playbackRate !== 1)
     ? me.playbackRate
     : 1
+  // 카운트다운 endsAt으로 seek 하면 위치가 꼬임 → playing/duel 만 싱크
+  const syncEndsAt = audible ? session.endsAt : null
 
   return (
     <HiddenYouTube
@@ -631,13 +653,13 @@ export function RoomSongPersistentBgm() {
       url={session.url}
       startSec={session.startSec}
       volume={vol}
-      // 증강/공개 중에도 pause 하지 않음 — volume 0 으로만 조용히 (다음 곡 자동재생 유지)
       paused={false}
       playbackRate={songPlaybackRate}
-      audioUnlockAt={inCountdown || !active ? null : (me?.audioDelaySec ? (me.audioDelayUntil ?? null) : null)}
+      audioUnlockAt={audible && !inCountdown && me?.audioDelaySec ? (me.audioDelayUntil ?? null) : null}
       cutMute={songPowerOff || trickReplace}
-      roundEndsAt={active ? session.endsAt : null}
+      roundEndsAt={syncEndsAt}
       roundDurationSec={session.duration}
+      playEpoch={`${session.index}-${room.status}-${audible ? 'on' : 'off'}`}
     />
   )
 }

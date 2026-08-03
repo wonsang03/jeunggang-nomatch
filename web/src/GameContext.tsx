@@ -471,11 +471,13 @@ export function GameProvider({ children }: { children: ReactNode }) {
       // 이전 라운드 곡이 다시 나오지 않게 지우고, 다음 곡만 뮤트로 프리로드
       const p = payload?.preview
       if (p?.youtubeUrl) {
+        const clipDur = Math.max(10, Math.floor((p.endSec ?? 0) - (p.startSec ?? 0)) || 40)
         setRound({
           index: p.index,
           total: p.total,
+          // 카운트다운 종료 시각(endsAt)과 별개로, 곡 길이는 클립 길이로 둔다
           endsAt,
-          duration: sec,
+          duration: clipDur,
           genre: p.genre,
           hasHidden: !!p.hasHidden,
           youtubeUrl: p.youtubeUrl,
