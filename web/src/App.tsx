@@ -1622,8 +1622,6 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
   //   replace  → 세노·트루먼·에라모르겠다·진흙탕 (방 곡 끔, 트릭만)
   //   overlay  → 불꽃남자김상원 (둘 다)
   const audioTrick = !inDuel ? (me?.audioTrick ?? null) : null
-  const trickReplace = audioTrick?.mode === 'replace'
-  const baseVol = songPowerOff ? 0 : musicVolume
   // 방/트릭/증강 BGM 은 App 루트 RoomSongPersistentBgm
   const showGenre = !noHintMode && audioTrick?.source !== 'mud'
   // 초성은 위쪽 슬롯 칸, 증강 정답 안내는 증강 적용 칸
