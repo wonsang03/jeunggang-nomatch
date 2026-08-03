@@ -1,11 +1,8 @@
-# Railway: 이 서비스는 server/ 를 루트로 두는 걸 권장
-# (Dashboard → Settings → Root Directory = server)
-#
-# Root Directory를 server로 설정했다면 아래 명령이 그 폴더 기준입니다.
+# Railway Settings → Root Directory = server 일 때 이 설정 사용 (권장)
 
 [build]
 builder = "NIXPACKS"
-buildCommand = "npm install && npx prisma generate && npm run build"
+buildCommand = "npm install && npx prisma generate && npx tsc"
 
 [deploy]
 startCommand = "npx prisma db push && node dist/index.js"

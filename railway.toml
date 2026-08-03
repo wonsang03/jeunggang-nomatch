@@ -1,9 +1,11 @@
-# 모노레포 루트에서 배포할 때 (Root Directory 비움)
+# Root Directory 를 비운 채 배포할 때 사용
+# 권장: Railway Settings → Root Directory = server (이 파일은 무시되고 server/railway.toml 사용)
+
 [build]
 builder = "NIXPACKS"
-buildCommand = "npm install --prefix server && npm run build --prefix server"
+buildCommand = "cd server && npm install && npx prisma generate && npx tsc"
 
 [deploy]
-startCommand = "npx --prefix server prisma db push && node server/dist/index.js"
+startCommand = "cd server && npx prisma db push && node dist/index.js"
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 5
