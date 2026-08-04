@@ -394,6 +394,7 @@ export function HiddenYouTube({
   }
 
   const lastLoadKeyRef = useRef('')
+  const lastKickAtRef = useRef(0)
 
   const switchVideo = (p: YtPlayer, videoId: string) => {
     setBlocked(false)
@@ -404,8 +405,10 @@ export function HiddenYouTube({
         p.cueVideoById(loadOpts(videoId))
       } catch { /* ignore */ }
     }
-    // load 직후 바로 play가 무시되는 경우가 있어 짧게 딜레이
-    const t = setTimeout(() => kickPlayback(p), 120)
+    const t = setTimeout(() => {
+      lastKickAtRef.current = Date.now()
+      kickPlayback(p)
+    }, 120)
     retryTimersRef.current.push(t)
   }
 
@@ -544,11 +547,16 @@ export function HiddenYouTube({
   }, [id, start, end, durationSec, audioUnlockAt, ready])
 
   // 라운드 시작 등: 같은 영상이어도 강제 재생 킥
+  // 단, 방금 load(switchVideo)로 이미 kick 했으면 스킵 → 이중 시작/브금 2번 방지
   useEffect(() => {
     if (!ready) return
     const p = playerRef.current
     if (!p || !id) return
-    const t = setTimeout(() => kickPlayback(p), 80)
+    if (Date.now() - lastKickAtRef.current < 400) return
+    const t = setTimeout(() => {
+      lastKickAtRef.current = Date.now()
+      kickPlayback(p)
+    }, 80)
     retryTimersRef.current.push(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playEpoch, ready])
@@ -578,16 +586,15 @@ export function HiddenYouTube({
     try {
       const vol = cutMuteRef.current ? 0 : Math.max(0, Math.min(100, volume))
       p.setVolume(vol)
+      // 볼륨만 바뀐 경우(카운트다운→플레이  unmute) 재로드/seek 없이 재생 유지
       if (vol <= 0) {
         p.mute()
-        p.playVideo()
       } else {
-        p.mute()
-        p.playVideo()
         p.unMute()
         p.setVolume(vol)
+        const st = typeof p.getPlayerState === 'function' ? p.getPlayerState() : -1
+        if (st !== 1 && st !== 3) p.playVideo()
       }
-      ensureClipPosition(p)
     } catch { /* ignore */ }
   }, [volume, ready, paused])
 
@@ -740,6 +747,7 @@ export function RoomSongPersistentBgm() {
     : 1
 
   // ── 증강 선택 화면: 같은 플레이어로 선택 BGM ─────────────────
+  // durationSec/루프 재시작 넣지 않음 → 20초 시점에 처음부터 다시 들려 "2번" 재생되는 문제 방지
   if (room.status === 'augment') {
     return (
       <HiddenYouTube
@@ -747,7 +755,6 @@ export function RoomSongPersistentBgm() {
         url={AUGMENT_SELECT_BGM_URL}
         startSec={0}
         volume={baseVol}
-        durationSec={20}
         paused={false}
         playbackRate={1}
         playLabel="🎵 탭해서 증강 BGM 재생"
@@ -777,12 +784,14 @@ export function RoomSongPersistentBgm() {
         cutMute={songPowerOff}
         roundEndsAt={audibleRound ? session.endsAt : null}
         roundDurationSec={session.roundDuration}
-        playEpoch={`trick-${audioTrick?.source}-${ytId(trickUrl)}-${session.index}-${room.status}`}
+        playEpoch={`trick-${audioTrick?.source}-${ytId(trickUrl)}-${session.index}`}
       />
     )
   }
 
   // ── 일반 방 정답곡 ───────────────────────────────────────────
+  // countdown 중에도 같은 곡을 미리 로드(볼륨 0). playEpoch는 index만 —
+  // status 바뀔 때마다 kick/seek 하면 수 초 무음이 남.
   const roomPlayVolume = (deafMode && audioTrick?.source !== 'mud') ? 0 : baseVol
   const vol = audibleRound ? roomPlayVolume : 0
 
@@ -799,7 +808,7 @@ export function RoomSongPersistentBgm() {
       cutMute={songPowerOff}
       roundEndsAt={audibleRound ? session.endsAt : null}
       roundDurationSec={session.roundDuration}
-      playEpoch={`${session.index}-${room.status}-${audibleRound ? 'on' : 'off'}`}
+      playEpoch={session.index}
     />
   )
 }
