@@ -15,7 +15,10 @@ export function connectSocket() {
   socket?.disconnect()
   socket = io(API_BASE, {
     auth: { token },
-    transports: ['websocket', 'polling'],
+    // polling 먼저 타면 RTT가 커지고 불안정 — websocket만 사용
+    transports: ['websocket'],
+    upgrade: false,
+    rememberUpgrade: true,
   })
   return socket
 }
