@@ -113,6 +113,7 @@ export type RoomMember = {
     mode: 'replace' | 'overlay'
     youtubeUrl: string
     startSec: number
+    endSec?: number | null
     label: string
     source: 'mud' | 'sakura' | 'flame'
   } | null
@@ -315,6 +316,8 @@ export function GameProvider({ children }: { children: ReactNode }) {
   const [results, setResults] = useState<GameResult[] | null>(null)
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const typewriterTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /** 트루먼 환상 중: 위 슬롯은 가짜 곡 기준 · 진짜 answer:correct 무시 */
+  const illusionActiveRef = useRef(false)
 
   const clearTypewriter = useCallback(() => {
     if (typewriterTimer.current) {
@@ -504,6 +507,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
     })
     s.on('round:start', (info: RoundInfo) => {
       clearTypewriter()
+      illusionActiveRef.current = false
       setStartCountdown(null)
       setCountdownEndsAt(null)
       setRound(info)
@@ -512,6 +516,25 @@ export function GameProvider({ children }: { children: ReactNode }) {
       setAugmentOffer(null)
       setAugmentHint(null)
       playSfx('roundStart')
+    })
+    s.on('illusion:round', (payload: {
+      slots: RoundSlot[]
+      genre?: string
+      titleChosung?: string
+      artistChosung?: string
+    }) => {
+      illusionActiveRef.current = true
+      setRound((r) => {
+        if (!r) return r
+        return {
+          ...r,
+          slots: payload.slots || [],
+          genre: payload.genre || r.genre,
+          titleChosung: payload.titleChosung ?? '',
+          artistChosung: payload.artistChosung ?? '',
+          hasHidden: false,
+        }
+      })
     })
     s.on('round:extend', (payload: { endsAt: number; duration: number; addedSec?: number }) => {
       setRound((r) => {
@@ -548,6 +571,8 @@ export function GameProvider({ children }: { children: ReactNode }) {
       }
     })
     s.on('answer:correct', (payload: { slotId: string; answer: string; by: string; allCleared?: boolean }) => {
+      // 환상 중엔 진짜 문제 정답 공개를 화면에 반영하지 않음
+      if (illusionActiveRef.current) return
       // 슬롯 하나여도 「둘 다 맞춤」팡파르로 통일
       playSfx('allCorrect')
       setRound((r) => {
@@ -562,7 +587,22 @@ export function GameProvider({ children }: { children: ReactNode }) {
         }
       })
     })
+    s.on('illusion:correct', (payload: { slotId: string; answer: string; label?: string; by: string }) => {
+      playSfx('allCorrect')
+      setRound((r) => {
+        if (!r) return r
+        return {
+          ...r,
+          slots: r.slots.map((sl) =>
+            sl.id === payload.slotId
+              ? { ...sl, revealed: true, answer: payload.answer, by: payload.by, label: payload.label || sl.label }
+              : sl,
+          ),
+        }
+      })
+    })
     s.on('truman:reveal', (payload: { name?: string; fakeScore?: number; realScore?: number }) => {
+      illusionActiveRef.current = false
       playSfx('augment')
       setTrumanReveal({
         name: payload.name || '트루먼쇼',
@@ -571,9 +611,11 @@ export function GameProvider({ children }: { children: ReactNode }) {
       })
     })
     s.on('truman:fake_correct', () => {
+      // 구버전 호환 · 신규는 illusion:correct
       playSfx('allCorrect')
     })
     s.on('hidden:unlock', (payload: { slots: Array<{ id: string; label: string }> }) => {
+      if (illusionActiveRef.current) return
       playSfx('augment')
       setRound((r) => {
         if (!r) return r
@@ -593,6 +635,8 @@ export function GameProvider({ children }: { children: ReactNode }) {
             : 'reveal',
       )
       setSkipVoted(true)
+      // 환상 중엔 진짜 곡 정답 공개 스킵 (가짜 슬롯 유지)
+      if (illusionActiveRef.current) return
       setRound((r) => {
         if (!r) return r
         return {
@@ -921,7 +965,6 @@ export function GameProvider({ children }: { children: ReactNode }) {
       useAugment,
       fetchGahoCandidates,
       clearResults,
-      clearTrumanReveal,
     }),
     [
       user,

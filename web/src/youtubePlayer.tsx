@@ -92,6 +92,7 @@ export function loadYtApi() {
 export function HiddenYouTube({
   url,
   startSec,
+  endSec: endSecProp,
   volume,
   durationSec,
   paused = false,
@@ -107,8 +108,10 @@ export function HiddenYouTube({
 }: {
   url: string
   startSec: number
+  /** 문제은행 종료 초 — 있으면 이 지점에서 컷 */
+  endSec?: number | null
   volume: number
-  /** 있으면 start부터 이 초만큼만 재생 */
+  /** 있으면 start부터 이 초만큼만 재생 (endSec 없을 때) */
   durationSec?: number
   /** true면 일시정지 (컷신 등) */
   paused?: boolean
@@ -119,7 +122,9 @@ export function HiddenYouTube({
   audioUnlockAt?: number | null
   /** 전원을 꺼봤습니다: 즉시 끊기 */
   cutMute?: boolean
+  /** 라운드 타이머 동기화용 종료 시각 (클립 endSec 과 별개) */
   roundEndsAt?: number | null
+  /** 라운드 타이머 길이(초) — late join seek용. 클립 길이와 다름 */
   roundDurationSec?: number | null
   /** true면 끝나면 startSec부터 다시 재생 (불꽃남자 BGM) */
   loop?: boolean
@@ -153,8 +158,13 @@ export function HiddenYouTube({
   const audioLockedRef = useRef(!!(audioUnlockAt && audioUnlockAt > serverNow()))
   const [blocked, setBlocked] = useState(false)
   const [ready, setReady] = useState(false)
-  const start = Math.max(0, Math.floor(startSec))
-  const end = durationSec && durationSec > 0 ? start + Math.floor(durationSec) : undefined
+  const start = Math.max(0, Math.floor(Number(startSec) || 0))
+  const endFromProp = endSecProp != null && Number.isFinite(Number(endSecProp))
+    ? Math.floor(Number(endSecProp))
+    : null
+  const end = endFromProp != null && endFromProp > start
+    ? endFromProp
+    : (durationSec && durationSec > 0 ? start + Math.floor(durationSec) : undefined)
   startRef.current = start
   endRef.current = end
 
@@ -192,29 +202,88 @@ export function HiddenYouTube({
     } catch { /* ignore */ }
   }
 
-  const seekToRoundProgress = (p: YtPlayer) => {
+  /** 문제은행 start~end + 라운드 경과(클립 길이로 모듈러 → 루프 동기화) */
+  const clipSeekTarget = () => {
+    const s = startRef.current
+    const clipEnd = endRef.current
+    const clipLen = clipEnd != null && clipEnd > s ? clipEnd - s : null
     const endsAt = endsAtRef.current
     const dur = roundDurRef.current
+    let target = s
+    if (endsAt && dur && dur > 0) {
+      const roundStart = endsAt - dur * 1000
+      const elapsedSec = Math.max(0, (serverNow() - roundStart) / 1000) * rateRef.current
+      if (clipLen && clipLen > 0) {
+        target = s + (elapsedSec % clipLen)
+      } else {
+        target = s + elapsedSec
+      }
+    }
+    if (clipEnd != null) target = Math.min(target, Math.max(s, clipEnd - 0.25))
+    return Math.max(s, target)
+  }
+
+  const ensureClipPosition = (p: YtPlayer, force = false) => {
     const s = startRef.current
-    if (!endsAt || !dur || dur <= 0) return
-    const roundStart = endsAt - dur * 1000
-    const elapsedSec = Math.max(0, (serverNow() - roundStart) / 1000)
-    const pos = s + elapsedSec * rateRef.current
+    const target = clipSeekTarget()
     try {
-      p.seekTo(pos, true)
+      const cur = typeof p.getCurrentTime === 'function' ? p.getCurrentTime() : NaN
+      const tooEarly = !Number.isFinite(cur) || cur < s - 0.75
+      const drifted = Number.isFinite(cur) && Math.abs(cur - target) > 1.75
+      if (force || tooEarly || drifted) p.seekTo(target, true)
+    } catch {
+      try { p.seekTo(target, true) } catch { /* ignore */ }
+    }
+  }
+
+  const restartClipFromStart = (p: YtPlayer) => {
+    if (pausedRef.current || audioLockedRef.current) return
+    try {
+      p.seekTo(startRef.current, true)
+      applyRate(p, rateRef.current)
+      const vol = cutMuteRef.current ? 0 : Math.max(0, Math.min(100, volumeRef.current))
+      p.setVolume(vol)
+      if (vol > 0) {
+        p.unMute()
+      } else {
+        p.mute()
+      }
+      p.playVideo()
     } catch { /* ignore */ }
   }
 
-  /** 항상 뮤트로 재생 시작(자동재생 허용) → volume>0이면 언뮤트 */
-  const syncPlayback = (p: YtPlayer, opts?: { seek?: boolean }) => {
+  const scheduleClipLoop = (p: YtPlayer) => {
+    if (stopTimerRef.current) {
+      clearTimeout(stopTimerRef.current)
+      stopTimerRef.current = null
+    }
+    if (pausedRef.current) return
+    const clipEnd = endRef.current
+    const s0 = startRef.current
+    const clipLen = clipEnd != null && clipEnd > s0
+      ? clipEnd - s0
+      : (durationSecRef.current && durationSecRef.current > 0 ? durationSecRef.current : null)
+    // 클립 구간이 있으면 끝나면 start로 루프. loop 플래그만 있어도 전체 루프.
+    if (!(clipLen && clipLen > 0) && !loopRef.current) return
+    const len = clipLen && clipLen > 0 ? clipLen : 0
+    if (len <= 0) return
+    let cur = startRef.current
     try {
-      if (opts?.seek) {
-        if (endsAtRef.current && roundDurRef.current && roundDurRef.current > 0) {
-          seekToRoundProgress(p)
-        } else {
-          p.seekTo(startRef.current, true)
-        }
-      }
+      if (typeof p.getCurrentTime === 'function') cur = p.getCurrentTime()
+    } catch { /* ignore */ }
+    const into = Math.max(0, cur - s0)
+    const remain = Math.max(0.4, len - (into % len))
+    stopTimerRef.current = setTimeout(() => {
+      if (pausedRef.current || audioLockedRef.current) return
+      restartClipFromStart(p)
+      scheduleClipLoop(p)
+    }, remain * 1000)
+  }
+
+  /** 항상 뮤트로 재생 시작(자동재생 허용) → volume>0이면 언뮤트 */
+  const syncPlayback = (p: YtPlayer, opts?: { seek?: boolean; forceSeek?: boolean }) => {
+    try {
+      if (opts?.seek) ensureClipPosition(p, !!opts.forceSeek)
       applyRate(p, rateRef.current)
       // paused만 진짜 정지. cutMute/volume0 은 pause 하지 않음
       // (http 배포에서 pause 후 loadVideoById 자동재생이 번갈아 실패함)
@@ -235,28 +304,24 @@ export function HiddenYouTube({
     } catch { /* ignore */ }
   }
 
-  const loadOpts = (videoId: string) => {
-    const opts: { videoId: string; startSeconds?: number; endSeconds?: number } = {
-      videoId,
-      startSeconds: startRef.current,
-    }
-    if (endRef.current != null) opts.endSeconds = endRef.current
-    return opts
-  }
+  /**
+   * YouTube endSeconds 는 ENDED 이벤트로 라운드 전환과 충돌해
+   * http(IP) 배포에서 곡이 번갈아 안 들리는 원인이 됨 → 클립 끝은 JS 타이머만 사용
+   */
+  const loadOpts = (videoId: string) => ({
+    videoId,
+    startSeconds: startRef.current,
+  })
 
   const kickPlayback = (p: YtPlayer) => {
     clearMediaTimers()
     const unlockAt = unlockAtRef.current
     const waitMs = unlockAt != null ? Math.max(0, unlockAt - serverNow()) : 0
     const run = () => {
-      syncPlayback(p, { seek: true })
-      const dur = durationSecRef.current
-      if (dur && dur > 0 && !pausedRef.current) {
-        stopTimerRef.current = setTimeout(() => {
-          try { p.pauseVideo() } catch { /* ignore */ }
-        }, dur * 1000)
-      }
-      // 자동재생이 한 박자 늦게 붙는 경우 대비 재시도
+      syncPlayback(p, { seek: true, forceSeek: true })
+      // 클립 끝 → 시작으로 루프 (라운드가 끝날 때까지)
+      scheduleClipLoop(p)
+      // 자동재생 재시도 + startSec 미적용 보정
       for (const ms of [200, 500, 1000, 1800, 2800]) {
         const t = setTimeout(() => {
           if (pausedRef.current || audioLockedRef.current) return
@@ -264,6 +329,8 @@ export function HiddenYouTube({
             const st = p.getPlayerState()
             // -1 unstarted, 0 ended, 2 paused, 5 cued
             if (st === 1 || st === 3) {
+              ensureClipPosition(p)
+              scheduleClipLoop(p)
               const vol = cutMuteRef.current ? 0 : volumeRef.current
               if (vol > 0) {
                 p.unMute()
@@ -275,7 +342,15 @@ export function HiddenYouTube({
               setBlocked(false)
               return
             }
-            syncPlayback(p, { seek: st === 0 || st === 5 || st === -1 || st === 2 })
+            // ended면 클립 루프
+            if (st === 0) {
+              restartClipFromStart(p)
+              scheduleClipLoop(p)
+              setBlocked(false)
+              return
+            }
+            syncPlayback(p, { seek: true, forceSeek: true })
+            scheduleClipLoop(p)
           } catch { /* ignore */ }
         }, ms)
         retryTimersRef.current.push(t)
@@ -286,6 +361,8 @@ export function HiddenYouTube({
           const st = p.getPlayerState()
           if (st !== 1 && st !== 3) setBlocked(true)
           else {
+            ensureClipPosition(p)
+            scheduleClipLoop(p)
             const vol = cutMuteRef.current ? 0 : volumeRef.current
             if (vol > 0) {
               p.unMute()
@@ -315,6 +392,8 @@ export function HiddenYouTube({
     }
   }
 
+  const lastLoadKeyRef = useRef('')
+
   const switchVideo = (p: YtPlayer, videoId: string) => {
     setBlocked(false)
     try {
@@ -329,7 +408,7 @@ export function HiddenYouTube({
     retryTimersRef.current.push(t)
   }
 
-  // 플레이어는 마운트 시 1회만 생성 — 라운드마다 destroy 하지 않음 (다음 곡 재생 실패 방지)
+  // 플레이어는 마운트 시 1회만 생성 — 라운드마다 destroy 하지 않음
   useEffect(() => {
     if (!hostRef.current) return
     let cancelled = false
@@ -346,6 +425,7 @@ export function HiddenYouTube({
       hostRef.current.appendChild(mount)
 
       const https = window.location.protocol === 'https:'
+      const startAt = startRef.current
       player = new window.YT.Player(mount, {
         videoId: initialId,
         width: 200,
@@ -361,6 +441,8 @@ export function HiddenYouTube({
           disablekb: 1,
           iv_load_policy: 3,
           enablejsapi: 1,
+          start: startAt,
+          // end 는 YouTube API에 넣지 않음 (JS 클립 루프만 — http에서 번갈아 재생 실패 방지)
           ...(https ? { origin: window.location.origin } : {}),
         },
         events: {
@@ -377,24 +459,21 @@ export function HiddenYouTube({
                 )
               }
             }, 0)
-            // ready 후 아래 effect가 load/kick — 여기서 중복 play 하지 않음
             setReady(true)
           },
           onStateChange: (e) => {
-            if (e.data === 0 && loopRef.current) {
-              try {
-                e.target.seekTo(startRef.current, true)
-                e.target.playVideo()
-                if (volumeRef.current > 0 && !pausedRef.current && !cutMuteRef.current) {
-                  e.target.unMute()
-                  e.target.setVolume(volumeRef.current)
-                }
-              } catch { /* ignore */ }
+            if (e.data === 0) {
+              if (loopRef.current || endRef.current != null || (durationSecRef.current && durationSecRef.current > 0)) {
+                restartClipFromStart(e.target)
+                scheduleClipLoop(e.target)
+              }
               return
             }
             if (e.data === 1) {
               setBlocked(false)
               if (!pausedRef.current && !audioLockedRef.current) {
+                ensureClipPosition(e.target)
+                scheduleClipLoop(e.target)
                 try {
                   const vol = cutMuteRef.current ? 0 : volumeRef.current
                   if (vol > 0) {
@@ -407,23 +486,29 @@ export function HiddenYouTube({
                 } catch { /* ignore */ }
               }
             }
-            // cued/unstarted/paused인데 재생해야 하면 한 번 더
             if (
               (e.data === 5 || e.data === -1 || e.data === 2)
               && !pausedRef.current
               && !audioLockedRef.current
             ) {
-              const t = setTimeout(() => syncPlayback(e.target, { seek: e.data !== 2 }), 80)
+              const t = setTimeout(() => {
+                syncPlayback(e.target, { seek: e.data !== 2, forceSeek: true })
+                scheduleClipLoop(e.target)
+              }, 80)
               retryTimersRef.current.push(t)
             }
           },
-          onError: () => {
-            const p = playerRef.current
+          onError: (e) => {
+            if (e.data === 101 || e.data === 150 || e.data === 153) {
+              setBlocked(true)
+              return
+            }
+            const curP = playerRef.current
             const cur = idRef.current
-            if (p && cur) {
+            if (curP && cur) {
               try {
-                p.cueVideoById(loadOpts(cur))
-                const t = setTimeout(() => kickPlayback(p), 200)
+                curP.cueVideoById(loadOpts(cur))
+                const t = setTimeout(() => kickPlayback(curP), 200)
                 retryTimersRef.current.push(t)
                 return
               } catch { /* ignore */ }
@@ -445,7 +530,6 @@ export function HiddenYouTube({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- 마운트 1회만
   }, [])
 
-  const lastLoadKeyRef = useRef('')
   // 곡/구간 변경 시 같은 플레이어에 새 영상 로드
   useEffect(() => {
     if (!id || !ready) return
@@ -502,6 +586,7 @@ export function HiddenYouTube({
         p.unMute()
         p.setVolume(vol)
       }
+      ensureClipPosition(p)
     } catch { /* ignore */ }
   }, [volume, ready, paused])
 
@@ -587,8 +672,10 @@ export function RoomSongPersistentBgm() {
   const [session, setSession] = useState<{
     url: string
     startSec: number
+    endSec: number
     endsAt: number | null
-    duration: number
+    /** 라운드 타이머 길이(보통 40) — late join 싱크용 */
+    roundDuration: number
     index: number
   } | null>(null)
 
@@ -603,15 +690,16 @@ export function RoomSongPersistentBgm() {
       return
     }
     if (round?.youtubeUrl) {
-      const clipDur = Math.max(
-        10,
-        Math.floor(round.duration || ((round.endSec ?? 0) - (round.startSec ?? 0)) || 40),
-      )
+      const start = Math.max(0, Math.floor(round.startSec ?? 0))
+      const endRaw = Math.floor(round.endSec ?? 0)
+      const end = endRaw > start ? endRaw : start + 40
+      const roundDur = Math.max(10, Math.floor(round.duration || 40))
       setSession({
         url: round.youtubeUrl,
-        startSec: round.startSec ?? 0,
+        startSec: start,
+        endSec: end,
         endsAt: round.endsAt ?? null,
-        duration: clipDur,
+        roundDuration: roundDur,
         index: round.index,
       })
     }
@@ -639,6 +727,9 @@ export function RoomSongPersistentBgm() {
   const trickUrl = (audioTrick?.youtubeUrl || '').trim()
     || (trickReplace && audioTrick?.source === 'mud' ? MUD_FIGHT_BGM_FALLBACK : '')
   const trickStartSec = audioTrick?.startSec ?? 0
+  const trickEndSec = audioTrick?.endSec != null && audioTrick.endSec > trickStartSec
+    ? audioTrick.endSec
+    : null
   const songPowerOff = !!(me?.songMuteUntil && now < me.songMuteUntil)
   const baseVol = songPowerOff ? 0 : musicVolume
   const inCountdown = room.status === 'countdown'
@@ -676,6 +767,7 @@ export function RoomSongPersistentBgm() {
         key="yt-room-persistent"
         url={trickUrl}
         startSec={trickStartSec}
+        endSec={trickEndSec}
         volume={vol}
         paused={false}
         playbackRate={1}
@@ -683,7 +775,7 @@ export function RoomSongPersistentBgm() {
         audioUnlockAt={null}
         cutMute={songPowerOff}
         roundEndsAt={audibleRound ? session.endsAt : null}
-        roundDurationSec={session.duration}
+        roundDurationSec={session.roundDuration}
         playEpoch={`trick-${audioTrick?.source}-${ytId(trickUrl)}-${session.index}-${room.status}`}
       />
     )
@@ -698,13 +790,14 @@ export function RoomSongPersistentBgm() {
       key="yt-room-persistent"
       url={session.url}
       startSec={session.startSec}
+      endSec={session.endSec}
       volume={vol}
       paused={false}
       playbackRate={songPlaybackRate}
       audioUnlockAt={audibleRound && !inCountdown && me?.audioDelaySec ? (me.audioDelayUntil ?? null) : null}
       cutMute={songPowerOff}
       roundEndsAt={audibleRound ? session.endsAt : null}
-      roundDurationSec={session.duration}
+      roundDurationSec={session.roundDuration}
       playEpoch={`${session.index}-${room.status}-${audibleRound ? 'on' : 'off'}`}
     />
   )
