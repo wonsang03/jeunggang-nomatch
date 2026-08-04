@@ -553,21 +553,24 @@ export function GameProvider({ children }: { children: ReactNode }) {
       setCountdownEndsAt(null)
       setAugmentOffer(offer)
       playSfx('augment')
-      // 증강 20초 동안 시계 샘플을 빨리 모아 노래 시작 시 seek가 맞도록
+      // 증강 20초 동안 시계 샘플을 빨리 모음 (나쁜 RTT는 applyClockSample이 무시)
       const burst = () => {
         const sock = getSocket()
         if (!sock?.connected) return
         const t0 = Date.now()
         sock.timeout(2500).emit('ping:rtt', {}, (err: Error | null, res?: { t?: number }) => {
           if (err || typeof res?.t !== 'number') return
-          applyClockSample(t0, res.t, Date.now())
-          setClockSamples((n) => n + 1)
-          setPingMs(Date.now() - t0)
+          const t1 = Date.now()
+          const rtt = t1 - t0
+          setPingMs((prev) => (prev == null ? rtt : Math.round(prev * 0.55 + rtt * 0.45)))
+          if (applyClockSample(t0, res.t, t1)) {
+            setClockSamples((n) => n + 1)
+          }
         })
       }
       burst()
-      for (let i = 1; i <= 6; i += 1) {
-        window.setTimeout(burst, i * 280)
+      for (let i = 1; i <= 8; i += 1) {
+        window.setTimeout(burst, i * 220)
       }
     })
     s.on('answer:correct', (payload: { slotId: string; answer: string; by: string; allCleared?: boolean }) => {
@@ -715,23 +718,25 @@ export function GameProvider({ children }: { children: ReactNode }) {
       s.timeout(4000).emit('ping:rtt', {}, (err: Error | null, res?: { t?: number }) => {
         if (err) return
         const t1 = Date.now()
-        setPingMs(t1 - t0)
+        const rtt = t1 - t0
+        setPingMs((prev) => (prev == null ? rtt : Math.round(prev * 0.55 + rtt * 0.45)))
         // 시계 오프셋은 증강 선택 중에만 갱신 (재생 중 계속 맞추면 seek/끊김)
         if (updateClock && typeof res?.t === 'number') {
-          applyClockSample(t0, res.t, t1)
-          setClockSamples((n) => n + 1)
+          if (applyClockSample(t0, res.t, t1)) {
+            setClockSamples((n) => n + 1)
+          }
         }
       })
     }
     if (augmentOffer) {
       // 증강 선택 페이즈: 이때만 시계 정렬
       measure(true)
-      const id = window.setInterval(() => measure(true), 600)
+      const id = window.setInterval(() => measure(true), 700)
       return () => window.clearInterval(id)
     }
-    // 플레이 중: 핑 표시만 (오프셋 고정)
+    // 플레이 중: 핑 표시만 (오프셋 고정) — 표시 주기도 조금 늘려 덜 깜빡이게
     measure(false)
-    const id = window.setInterval(() => measure(false), 5000)
+    const id = window.setInterval(() => measure(false), 4000)
     return () => window.clearInterval(id)
   }, [connected, augmentOffer])
 

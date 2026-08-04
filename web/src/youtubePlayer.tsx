@@ -229,7 +229,8 @@ export function HiddenYouTube({
     try {
       const cur = typeof p.getCurrentTime === 'function' ? p.getCurrentTime() : NaN
       const tooEarly = !Number.isFinite(cur) || cur < s - 0.75
-      const drifted = Number.isFinite(cur) && Math.abs(cur - target) > 1.75
+      // 핑 지터로 serverNow가 약간 흔들려도 잦은 seek 방지 (사람마다 들썩임)
+      const drifted = Number.isFinite(cur) && Math.abs(cur - target) > 2.8
       if (force || tooEarly || drifted) p.seekTo(target, true)
     } catch {
       try { p.seekTo(target, true) } catch { /* ignore */ }
