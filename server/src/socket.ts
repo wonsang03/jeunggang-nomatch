@@ -1115,6 +1115,11 @@ function openFollowAnswerWindow(
   room.followAnswerClaimed[slot.id] = new Set([byUserId])
 }
 
+// follow_answer는 "남이 맞힌 뒤 N초 안에"라는 서버 타이머 창이지만,
+// 클라이언트 submit 지연(핑/지터) 때문에 경계에서 탈락하는 걸 완화한다.
+// 너무 크게 잡으면 공정성이 흔들리니 아주 작은 완충치만 둔다.
+const FOLLOW_ANSWER_GRACE_MS = 250
+
 /** 보너스 타임 등: 정답 시 추가 점수 */
 function scoreBonusFor(m: Member, roundIndex: number): number {
   let extra = 0
@@ -4159,8 +4164,22 @@ export function registerSocket(io: Server) {
         if (room.revealed[slot.id]) {
           // 보너스 타임: 선답 후 windowMs 안 추종 정답
           const win = room.followAnswerWindow[slot.id]
-          if (!win) continue
-          if (Date.now() - win.at > win.windowMs) continue
+          if (!win) {
+            // ping 때문에 “내 입력이 조금 늦게 도착해서” 기본 점수를 못 받은 것처럼 느끼는 문제 완화용:
+            // 같은 슬롯의 정답인데 보너스 창이 열려있지 않으면, 점수는 안 주되 유저에게만 안내한다.
+            if (!slot.hidden && memberSelf && isAcceptedAnswer(scoreText, slot.acceptNorms)) {
+              io.to(memberSelf.socketId).emit('chat:message', {
+                id: Date.now(),
+                userId: '',
+                nickname: '시스템',
+                text: '이미 누군가 정답을 맞췄습니다.',
+                system: true,
+                at: Date.now(),
+              })
+            }
+            continue
+          }
+          if (Date.now() - win.at > win.windowMs + FOLLOW_ANSWER_GRACE_MS) continue
           if (!memberSelf || !hasFollowAnswer(memberSelf, room.index)) continue
           if (win.byUserId === user.id) continue
           const claimed = room.followAnswerClaimed[slot.id] || new Set()

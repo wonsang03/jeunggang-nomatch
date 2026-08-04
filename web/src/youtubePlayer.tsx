@@ -598,6 +598,64 @@ export function HiddenYouTube({
     } catch { /* ignore */ }
   }, [volume, ready, paused])
 
+  // 탭 전환·버퍼 끊김·뮤트 잔존으로 "갑자기 안 들림" 복구
+  useEffect(() => {
+    if (!ready || !id) return
+    const recover = (forceSeek = false) => {
+      const p = playerRef.current
+      if (!p || pausedRef.current || audioLockedRef.current) return
+      try {
+        const st = typeof p.getPlayerState === 'function' ? p.getPlayerState() : -1
+        const wantVol = cutMuteRef.current ? 0 : Math.max(0, Math.min(100, volumeRef.current))
+        // -1 unstarted, 0 ended, 2 paused, 5 cued
+        if (st === -1 || st === 0 || st === 2 || st === 5) {
+          syncPlayback(p, { seek: true, forceSeek: forceSeek || st === 0 || st === -1 })
+          scheduleClipLoop(p)
+          setBlocked(false)
+          return
+        }
+        if (wantVol > 0) {
+          p.unMute()
+          p.setVolume(wantVol)
+        } else {
+          p.mute()
+          p.setVolume(0)
+        }
+        if (st !== 1 && st !== 3) {
+          p.playVideo()
+        }
+      } catch { /* ignore */ }
+    }
+
+    const onVis = () => {
+      if (document.visibilityState === 'visible') recover(true)
+    }
+    document.addEventListener('visibilitychange', onVis)
+    window.addEventListener('focus', onVis)
+
+    const tick = setInterval(() => recover(false), 1500)
+    return () => {
+      document.removeEventListener('visibilitychange', onVis)
+      window.removeEventListener('focus', onVis)
+      clearInterval(tick)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, id])
+
+  // blocked 오버레이가 떠 있어도 주기적으로 자동 재시도 (클릭 전 무음 완화)
+  useEffect(() => {
+    if (!ready || !blocked || !id) return
+    const t = setInterval(() => {
+      const p = playerRef.current
+      if (!p || pausedRef.current || audioLockedRef.current) return
+      try {
+        kickPlayback(p)
+      } catch { /* ignore */ }
+    }, 2500)
+    return () => clearInterval(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [blocked, ready, id])
+
   const forcePlay = () => {
     const p = playerRef.current
     if (!p || !id) return

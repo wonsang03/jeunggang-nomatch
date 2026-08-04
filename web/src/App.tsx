@@ -1359,7 +1359,7 @@ function AugmentCutscene({
 
 
 function GameScreen({ nav }: { nav: (s: Screen) => void }) {
-  const { user, room, chats, round, skip, skipVoted, augmentHint, startCountdown, musicVolume, setMusicVolume, sfxVolume, setSfxVolume, submitAnswer, voteSkip, useAugment, fetchGahoCandidates, leaveRoom } = useGame()
+  const { user, room, chats, round, skip, skipVoted, augmentHint, startCountdown, musicVolume, setMusicVolume, sfxVolume, setSfxVolume, submitAnswer, voteSkip, useAugment, fetchGahoCandidates, leaveRoom, connected, pingMs } = useGame()
   const [input, setInput] = useState('')
   const [showUsedList, setShowUsedList] = useState(false)
   const [augHover, setAugHover] = useState(false)
@@ -1893,9 +1893,16 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
             />
           </div>
         </div>
-        <Btn size="sm" variant="danger" disabled={skipVoted || room.status !== 'playing' || inDuel} onClick={voteSkip}>
-          {inDuel ? '야차룰 중' : room.status === 'revealing' ? '공개 중' : room.status === 'countdown' ? '대기 중' : `스킵 ${skip.votes}/${skip.need}`}
-        </Btn>
+        <div style={{
+          fontFamily: F.ui, fontSize: 13, fontWeight: 700,
+          color: !connected ? C.red : pingMs == null ? C.muted : pingMs < 80 ? C.green : pingMs < 160 ? C.blue : C.red,
+          fontVariantNumeric: 'tabular-nums',
+          padding: '4px 8px',
+          minWidth: 52,
+          textAlign: 'right',
+        }} title="서버 왕복 지연">
+          {connected ? (pingMs == null ? '…ms' : `${pingMs}ms`) : '끊김'}
+        </div>
         <Btn size="sm" onClick={() => setLeaveOpen(true)}>나가기</Btn>
       </div>
 
@@ -2647,6 +2654,19 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
           }}
           noPaste
         />
+        <Btn
+          variant="danger"
+          disabled={skipVoted || room.status !== 'playing' || inDuel}
+          onClick={voteSkip}
+        >
+          {inDuel
+            ? '야차룰 중'
+            : room.status === 'revealing'
+              ? '공개 중'
+              : room.status === 'countdown'
+                ? '대기 중'
+                : `스킵 ${skip.votes}/${skip.need}`}
+        </Btn>
         <Btn variant="primary" disabled={submitBlocked} onClick={send}>제출</Btn>
       </div>
 
