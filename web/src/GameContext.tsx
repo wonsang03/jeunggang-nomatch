@@ -36,6 +36,8 @@ export type ActiveBuffPublic = {
   roundsLeft: number
   pending: boolean
   active: boolean
+  /** 트루먼쇼로 시간 정지된 버프 */
+  frozen?: boolean
 }
 
 export type RoomMember = {
@@ -72,14 +74,18 @@ export type RoomMember = {
   politeSuffix?: string | null
   politeRoundsLeft?: number | null
   politeBy?: string | null
+  /** 진조이니라 등: 정답 시 추가 점수 */
+  politeBonus?: number | null
   /** 쉬었음청년 */
   answerBlocked?: boolean
   answerBlockPending?: boolean
   answerBlockRoundsLeft?: number | null
   answerBlockBy?: string | null
-  /** 나이거 뭔지 알아: 본인만 보는 제목·가수 */
+  /** 나이거 뭔지 알아: 본인만 보는 제목·가수/커버/캐릭터 */
   knowSpoilTitle?: string | null
   knowSpoilArtist?: string | null
+  /** 슬롯 id → 스포일 (일론=전 슬롯·히든 영타 / 나이거=비전 슬롯 평문) */
+  knowSpoilSlots?: Record<string, string> | null
   /** 일론 머스크의 가호: 영타 표기 스포일 */
   alienQwertyActive?: boolean
   /** 범인은 당신이야: 감시 중 */
@@ -115,7 +121,7 @@ export type RoomMember = {
     startSec: number
     endSec?: number | null
     label: string
-    source: 'mud' | 'sakura' | 'flame'
+    source: 'mud' | 'sakura' | 'flame' | 'party'
   } | null
   /** @deprecated audioTrick 사용 · 호환용 */
   decoyYoutubeUrl?: string | null
@@ -183,6 +189,8 @@ export type RoomState = {
     penalty: number
     byName: string
   } | null
+  /** 트루먼쇼로 방 전체 증강 시간 정지 중 */
+  augmentPaused?: boolean
 }
 
 export type RoundSlot = {
@@ -266,6 +274,22 @@ type GameCtx = {
   /** 트루먼쇼 폭로 연출 */
   trumanReveal: { name: string; fakeScore: number; realScore: number } | null
   clearTrumanReveal: () => void
+  /** 가호 사용 시 전원 컷신 */
+  gahoCutscene: {
+    name: string
+    description: string
+    imageUrl?: string | null
+    nickname: string
+    tier?: string
+  } | null
+  clearGahoCutscene: () => void
+  /** 가호를 제외한 증강의 전원용 간단 사용 알림 */
+  augmentNotice: {
+    name: string
+    nickname: string
+    message: string
+  } | null
+  clearAugmentNotice: () => void
   login: (username: string, password: string) => Promise<void>
   register: (username: string, password: string, nickname: string) => Promise<void>
   logout: () => void
@@ -313,9 +337,22 @@ export function GameProvider({ children }: { children: ReactNode }) {
   const [augmentOffer, setAugmentOffer] = useState<AugmentOffer | null>(null)
   const [augmentHint, setAugmentHint] = useState<string | null>(null)
   const [trumanReveal, setTrumanReveal] = useState<{ name: string; fakeScore: number; realScore: number } | null>(null)
+  const [gahoCutscene, setGahoCutscene] = useState<{
+    name: string
+    description: string
+    imageUrl?: string | null
+    nickname: string
+    tier?: string
+  } | null>(null)
+  const [augmentNotice, setAugmentNotice] = useState<{
+    name: string
+    nickname: string
+    message: string
+  } | null>(null)
   const [results, setResults] = useState<GameResult[] | null>(null)
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const typewriterTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const augmentNoticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   /** 트루먼 환상 중: 위 슬롯은 가짜 곡 기준 · 진짜 answer:correct 무시 */
   const illusionActiveRef = useRef(false)
 
@@ -653,8 +690,41 @@ export function GameProvider({ children }: { children: ReactNode }) {
       })
     })
     s.on('round:skip_update', (p: { votes: number; need: number }) => setSkip(p))
-    s.on('augment:used', () => {
+    s.on('augment:used', (p?: {
+      userId?: string
+      nickname?: string
+      name?: string
+      description?: string
+      imageUrl?: string | null
+      tier?: string
+      message?: string
+    }) => {
+      const tier = (p?.tier || '').toLowerCase()
+      const isGaho = tier === '가호' || tier === 'gaho'
+      if (isGaho && p?.name) {
+        playSfx('gaho')
+        setGahoCutscene({
+          name: p.name,
+          description: p.description || '',
+          imageUrl: p.imageUrl ?? null,
+          nickname: p.nickname || '누군가',
+          tier: p.tier,
+        })
+        return
+      }
       playSfx('augmentUse')
+      if (p?.name) {
+        if (augmentNoticeTimer.current) clearTimeout(augmentNoticeTimer.current)
+        setAugmentNotice({
+          name: p.name,
+          nickname: p.nickname || '누군가',
+          message: p.message || `${p.nickname || '누군가'}님이 [${p.name}]을(를) 사용했습니다`,
+        })
+        augmentNoticeTimer.current = setTimeout(() => {
+          setAugmentNotice(null)
+          augmentNoticeTimer.current = null
+        }, 4000)
+      }
     })
     s.on('augment:hint', (p: {
       userId?: string
@@ -690,6 +760,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
 
     return () => {
       clearTypewriter()
+      if (augmentNoticeTimer.current) clearTimeout(augmentNoticeTimer.current)
       s.off('connect', onConnect)
       s.off('disconnect', onDisconnect)
       s.removeAllListeners()
@@ -924,6 +995,12 @@ export function GameProvider({ children }: { children: ReactNode }) {
   }
   const clearResults = () => setResults(null)
   const clearTrumanReveal = () => setTrumanReveal(null)
+  const clearGahoCutscene = () => setGahoCutscene(null)
+  const clearAugmentNotice = () => {
+    if (augmentNoticeTimer.current) clearTimeout(augmentNoticeTimer.current)
+    augmentNoticeTimer.current = null
+    setAugmentNotice(null)
+  }
 
   const value = useMemo(
     () => ({
@@ -948,6 +1025,10 @@ export function GameProvider({ children }: { children: ReactNode }) {
       results,
       trumanReveal,
       clearTrumanReveal,
+      gahoCutscene,
+      clearGahoCutscene,
+      augmentNotice,
+      clearAugmentNotice,
       serverNow,
       clockSamples,
       login,
@@ -992,6 +1073,8 @@ export function GameProvider({ children }: { children: ReactNode }) {
       augmentHint,
       results,
       trumanReveal,
+      gahoCutscene,
+      augmentNotice,
       clockSamples,
     ],
   )

@@ -77,13 +77,15 @@ type Member = {
     byName: string
     byNickname: string
   } | null
-  /** 예의바른청년: 답 끝에 suffix 필수 */
+  /** 예의바른청년/다요/진조이니라: 답 끝에 suffix 필수 */
   politeSuffix: {
     startIndex: number
     roundsLeft: number
     suffix: string
     byName: string
     byNickname: string
+    /** 진조이니라 등: 정답 시 추가 점수 */
+    bonus?: number
   } | null
   /** 쉬었음청년: 정답 인정 불가 (채팅은 가능) */
   answerBlock: {
@@ -197,6 +199,8 @@ type Room = {
   }>
   /** 보너스 타임: 슬롯별 이미 추종 득점한 유저 */
   followAnswerClaimed: Record<string, Set<string>>
+  /** 미룬이의 가호: 이미 공개된 슬롯을 뒤늦게 맞힌 유저 */
+  lateAnswerClaimed: Record<string, Set<string>>
   /** 야차룰 1v1 */
   duel: {
     challengerId: string
@@ -218,6 +222,20 @@ type Room = {
     penalty: number
     byName: string
   } | null
+  /** 야차 곡 고르는 중 — startRound 재진입 방지 */
+  duelStarting: boolean
+  /** 다음 라운드 발동 증강: 예약자는 즉시 알고, 전원은 실제 발동 때 알림 */
+  pendingAugmentNotices: Array<{
+    startIndex: number
+    userId: string
+    nickname: string
+    name: string
+    effectType: string
+    description: string
+    imageUrl: string | null
+    tier?: string
+    message: string
+  }>
 }
 
 function parseEffectValue(raw: string | null | undefined): Record<string, unknown> {
@@ -233,11 +251,42 @@ function buffApplies(buff: ActiveBuff, roundIndex: number) {
   return roundIndex >= buff.startIndex && buff.roundsLeft > 0
 }
 
-function activeBuffsAt(m: Member, roundIndex: number) {
+/** 트루먼쇼 예약·진행 중이면 다른 증강 시간 정지 */
+function isAugmentTimePaused(room: Room): boolean {
+  for (const m of room.members.values()) {
+    if (m.sakuraDecoy?.mode === 'truman' && m.sakuraDecoy.roundsLeft > 0) return true
+  }
+  return false
+}
+
+function activeBuffsAt(m: Member, roundIndex: number, room?: Room | null) {
+  if (room && isAugmentTimePaused(room)) return []
   return m.activeBuffs.filter((b) => buffApplies(b, roundIndex))
 }
 
-function tickBuffsAfterRound(io: Server, room: Room, m: Member, endedIndex: number) {
+function tickBuffsAfterRound(
+  io: Server,
+  room: Room,
+  m: Member,
+  endedIndex: number,
+  /** endRound 시작 시점 스냅샷 — 트루먼 마지막 라운드에도 다른 증강은 깎지 않음 */
+  pauseOthers: boolean,
+) {
+  // 트루먼만 항상 진행 (정지 대상 아님)
+  if (
+    m.sakuraDecoy
+    && m.sakuraDecoy.mode === 'truman'
+    && endedIndex >= m.sakuraDecoy.startIndex
+    && m.sakuraDecoy.roundsLeft > 0
+  ) {
+    m.sakuraDecoy.roundsLeft -= 1
+    if (m.sakuraDecoy.roundsLeft <= 0) {
+      settleTrumanIllusion(io, room, m)
+    }
+  }
+
+  if (pauseOthers) return
+
   for (const b of m.activeBuffs) {
     if (endedIndex >= b.startIndex && b.roundsLeft > 0) b.roundsLeft -= 1
   }
@@ -268,12 +317,15 @@ function tickBuffsAfterRound(io: Server, room: Room, m: Member, endedIndex: numb
   if (m.answerProxy && endedIndex >= m.answerProxy.startIndex && m.answerProxy.roundsLeft > 0) {
     m.answerProxy.roundsLeft -= 1
   }
-  if (m.sakuraDecoy && endedIndex >= m.sakuraDecoy.startIndex && m.sakuraDecoy.roundsLeft > 0) {
+  // 세노 등 비-트루먼 디코이
+  if (
+    m.sakuraDecoy
+    && m.sakuraDecoy.mode !== 'truman'
+    && endedIndex >= m.sakuraDecoy.startIndex
+    && m.sakuraDecoy.roundsLeft > 0
+  ) {
     m.sakuraDecoy.roundsLeft -= 1
-    if (m.sakuraDecoy.roundsLeft <= 0) {
-      if (m.sakuraDecoy.mode === 'truman') settleTrumanIllusion(io, room, m)
-      else m.sakuraDecoy = null
-    }
+    if (m.sakuraDecoy.roundsLeft <= 0) m.sakuraDecoy = null
   }
   if (m.flameKim && endedIndex >= m.flameKim.startIndex && m.flameKim.roundsLeft > 0) {
     m.flameKim.roundsLeft -= 1
@@ -281,7 +333,8 @@ function tickBuffsAfterRound(io: Server, room: Room, m: Member, endedIndex: numb
   }
 }
 
-function isAnswerProxyActive(m: Member, roundIndex: number) {
+function isAnswerProxyActive(m: Member, roundIndex: number, room?: Room | null) {
+  if (room && isAugmentTimePaused(room)) return false
   return !!(m.answerProxy && roundIndex >= m.answerProxy.startIndex && m.answerProxy.roundsLeft > 0)
 }
 
@@ -316,14 +369,14 @@ function settleAllAnswerProxies(io: Server, room: Room) {
 }
 
 /** 맞췄죠?: 해당 라운드에 슬롯을 하나라도 맞히면 bonus, 아니면 penalty */
-function wagerBuffAt(m: Member, roundIndex: number) {
-  return activeBuffsAt(m, roundIndex).find((b) => b.effectType === 'wager_answer') || null
+function wagerBuffAt(m: Member, room: Room) {
+  return activeBuffsAt(m, room.index, room).find((b) => b.effectType === 'wager_answer') || null
 }
 
 /** 정답 즉시 성공 결산. 적용된 보너스 점수 반환 */
 function tryResolveWagerWin(io: Server, room: Room, m: Member): number {
   if (room.wagerSettled.has(m.userId)) return 0
-  const b = wagerBuffAt(m, room.index)
+  const b = wagerBuffAt(m, room)
   if (!b) return 0
   const bonus = Number(b.effectValue.bonus)
   const winPts = Number.isFinite(bonus) ? bonus : 5
@@ -349,7 +402,7 @@ function tryResolveWagerWin(io: Server, room: Room, m: Member): number {
 function settleWagerAnswers(io: Server, room: Room) {
   for (const m of room.members.values()) {
     if (room.wagerSettled.has(m.userId)) continue
-    const b = wagerBuffAt(m, room.index)
+    const b = wagerBuffAt(m, room)
     if (!b) continue
     const penalty = Number(b.effectValue.penalty)
     const losePts = Number.isFinite(penalty) ? penalty : 5
@@ -371,13 +424,14 @@ function settleWagerAnswers(io: Server, room: Room) {
   }
 }
 
-function isGabukiActive(m: Member, roundIndex: number) {
+function isGabukiActive(m: Member, roundIndex: number, room?: Room | null) {
+  if (room && isAugmentTimePaused(room)) return false
   return !!(m.gabuki && roundIndex >= m.gabuki.startIndex && m.gabuki.roundsLeft > 0)
 }
 
 /** 가불기: 대상이 정답을 맞히면 시전자에게 hitPenalty 이전 */
 function applyGabukiOnCorrect(io: Server, room: Room, victim: Member) {
-  if (!isGabukiActive(victim, room.index) || !victim.gabuki) return
+  if (!isGabukiActive(victim, room.index, room) || !victim.gabuki) return
   const g = victim.gabuki
   const amt = g.hitPenalty > 0 ? g.hitPenalty : 1
   const caster = room.members.get(g.casterUserId)
@@ -405,7 +459,7 @@ function applyGabukiOnCorrect(io: Server, room: Room, victim: Member) {
 /** 가불기: 해당 라운드에 정답을 한 번도 못 맞히면 missPenalty 이전 */
 function settleGabukiMiss(io: Server, room: Room) {
   for (const m of room.members.values()) {
-    if (!isGabukiActive(m, room.index) || !m.gabuki) continue
+    if (!isGabukiActive(m, room.index, room) || !m.gabuki) continue
     const hadCorrect = Object.values(room.revealed).some((r) => r.userId === m.userId)
     if (hadCorrect) continue
     const g = m.gabuki
@@ -439,7 +493,7 @@ function settleWaterGhost(io: Server, room: Room) {
   if (!q || q.slots.length === 0) return
 
   for (const m of room.members.values()) {
-    const b = activeBuffsAt(m, room.index).find((x) => x.effectType === 'water_ghost')
+    const b = activeBuffsAt(m, room.index, room).find((x) => x.effectType === 'water_ghost')
     if (!b) continue
     // 본인이 이번 라운드 모든 슬롯(점수)을 맞혀야 원정 실패
     const gotAll = q.slots.every((s) => room.revealed[s.id]?.userId === m.userId)
@@ -494,7 +548,7 @@ function settleComboClear(io: Server, room: Room) {
   if (!q || q.slots.length === 0) return
 
   for (const m of room.members.values()) {
-    const b = activeBuffsAt(m, room.index).find((x) => x.effectType === 'combo_clear_double')
+    const b = activeBuffsAt(m, room.index, room).find((x) => x.effectType === 'combo_clear_double')
     if (!b) continue
     const gotAll = q.slots.every((s) => room.revealed[s.id]?.userId === m.userId)
     if (!gotAll) {
@@ -544,7 +598,7 @@ function forceSettleAnswerProxies(io: Server, room: Room) {
 function bankAnswerProxyPoints(io: Server, room: Room, targetUserId: string, gain: number) {
   if (gain <= 0) return
   for (const m of room.members.values()) {
-    if (!isAnswerProxyActive(m, room.index)) continue
+    if (!isAnswerProxyActive(m, room.index, room)) continue
     if (m.answerProxy!.targetUserId !== targetUserId) continue
     m.answerProxy!.pendingScore += gain
     io.to(m.socketId).emit('augment:hint', {
@@ -581,35 +635,47 @@ function tryTriggerAccuseSleep(io: Server, room: Room, m: Member) {
   })
 }
 
-function isChatMuted(m: Member, roundIndex: number) {
+function isChatMuted(m: Member, roundIndex: number, room?: Room | null) {
+  if (room && isAugmentTimePaused(room)) return false
   return !!(m.chatMute && roundIndex >= m.chatMute.startIndex && m.chatMute.roundsLeft > 0)
 }
 
-function isAnswerDelayActive(m: Member, roundIndex: number) {
+function isAnswerDelayActive(m: Member, roundIndex: number, room?: Room | null) {
+  if (room && isAugmentTimePaused(room)) return false
   return !!(m.answerDelay && roundIndex >= m.answerDelay.startIndex && m.answerDelay.roundsLeft > 0)
 }
 
-function isPoliteSuffixActive(m: Member, roundIndex: number) {
+function isPoliteSuffixActive(m: Member, roundIndex: number, room?: Room | null) {
+  if (room && isAugmentTimePaused(room)) return false
   return !!(m.politeSuffix && roundIndex >= m.politeSuffix.startIndex && m.politeSuffix.roundsLeft > 0)
 }
 
-function isAnswerBlocked(m: Member, roundIndex: number) {
+function isAnswerBlocked(m: Member, roundIndex: number, room?: Room | null) {
+  if (room && isAugmentTimePaused(room)) return false
   if (m.answerBlock && roundIndex >= m.answerBlock.startIndex && m.answerBlock.roundsLeft > 0) return true
-  return activeBuffsAt(m, roundIndex).some((b) => b.effectType === 'know_but_cant')
+  return activeBuffsAt(m, roundIndex, room).some((b) => b.effectType === 'know_but_cant')
 }
 
-function knowButCantBuff(m: Member, roundIndex: number) {
-  return activeBuffsAt(m, roundIndex).find((b) => b.effectType === 'know_but_cant') || null
+function knowButCantBuff(m: Member, roundIndex: number, room?: Room | null) {
+  return activeBuffsAt(m, roundIndex, room).find((b) => b.effectType === 'know_but_cant') || null
 }
 
 function knowButCantPending(m: Member, roundIndex: number) {
   return m.activeBuffs.find((b) => b.effectType === 'know_but_cant' && roundIndex < b.startIndex) || null
 }
 
-function answerBlockPublic(m: Member, roundIndex: number) {
+function answerBlockPublic(m: Member, roundIndex: number, room?: Room | null) {
+  if (room && isAugmentTimePaused(room)) {
+    return {
+      answerBlocked: false,
+      answerBlockPending: false,
+      answerBlockRoundsLeft: null as number | null,
+      answerBlockBy: null as string | null,
+    }
+  }
   const classicActive = !!(m.answerBlock && roundIndex >= m.answerBlock.startIndex && m.answerBlock.roundsLeft > 0)
   const classicPending = !!(m.answerBlock && roundIndex < m.answerBlock.startIndex)
-  const know = knowButCantBuff(m, roundIndex)
+  const know = knowButCantBuff(m, roundIndex, room)
   const knowPend = knowButCantPending(m, roundIndex)
   return {
     answerBlocked: classicActive || !!know,
@@ -633,7 +699,7 @@ function isGameGenre(genre: string) {
 }
 
 function answerDelayRemainingMs(room: Room, m: Member): number {
-  if (!isAnswerDelayActive(m, room.index) || !m.answerDelay) return 0
+  if (!isAnswerDelayActive(m, room.index, room) || !m.answerDelay) return 0
   const unlockAt = room.roundStartedAt + m.answerDelay.delaySec * 1000
   return Math.max(0, unlockAt - Date.now())
 }
@@ -662,9 +728,10 @@ function emitSpectatorChat(
   }
 }
 
-function answerScoreFor(m: Member, roundIndex: number) {
+function answerScoreFor(m: Member, roundIndex: number, slotHidden = false, room?: Room | null) {
+  const base = slotHidden ? 3 : 1
   let mult = 1
-  for (const b of activeBuffsAt(m, roundIndex)) {
+  for (const b of activeBuffsAt(m, roundIndex, room)) {
     if (
       b.effectType === 'score_mult'
       || b.effectType === 'score_mult_no_hint'
@@ -679,33 +746,40 @@ function answerScoreFor(m: Member, roundIndex: number) {
     const n = m.sakuraDecoy!.scoreMult
     if (Number.isFinite(n) && n > mult) mult = n
   }
-  return Math.max(1, Math.floor(mult))
+  return Math.max(1, Math.floor(base * mult))
 }
 
-function hasRiskyDouble(m: Member, roundIndex: number) {
-  return activeBuffsAt(m, roundIndex).some((b) => b.effectType === 'score_mult_risky')
+function hasRiskyDouble(m: Member, roundIndex: number, room?: Room | null) {
+  return activeBuffsAt(m, roundIndex, room).some((b) => b.effectType === 'score_mult_risky')
 }
 
-function hasHiddenRun(m: Member, roundIndex: number) {
-  return activeBuffsAt(m, roundIndex).some((b) => b.effectType === 'hidden_run')
+function hasHiddenRun(m: Member, roundIndex: number, room?: Room | null) {
+  return activeBuffsAt(m, roundIndex, room).some((b) => b.effectType === 'hidden_run')
 }
 
-/** 히든런: 일반 슬롯 0점, 히든만 ×mult */
+/** 히든런: 일반 슬롯 0점, 히든은 baseGain × mult */
 function hiddenRunGainForAnswer(
   m: Member,
   roundIndex: number,
   slotHidden: boolean,
   baseGain: number,
+  room?: Room | null,
 ): number {
-  if (!hasHiddenRun(m, roundIndex)) return baseGain
+  if (!hasHiddenRun(m, roundIndex, room)) return baseGain
   if (!slotHidden) return 0
-  const buff = activeBuffsAt(m, roundIndex).find((b) => b.effectType === 'hidden_run')
+  const buff = activeBuffsAt(m, roundIndex, room).find((b) => b.effectType === 'hidden_run')
   const n = Number(buff?.effectValue.mult)
-  return Math.max(1, Math.floor(Number.isFinite(n) ? n : 3))
+  const mult = Number.isFinite(n) && n > 0 ? n : 3
+  return Math.max(1, Math.floor(baseGain * mult))
 }
 
 function isTitleLikeLabel(label: string) {
   return label.includes('제목') || label.includes('게임')
+}
+
+/** 가수 = 커버 = 캐릭터 (힌트·초성·스포일 동일 취급) */
+function isArtistLikeLabel(label: string) {
+  return label.includes('가수') || label.includes('커버') || label.includes('캐릭터')
 }
 
 /** 조사 을/를 */
@@ -719,12 +793,12 @@ function josaUlReul(word: string) {
 
 function findTitleSlot(q: QuestionRuntime) {
   return q.slots.find((s) => !s.hidden && isTitleLikeLabel(s.label))
-    || q.slots.find((s) => !s.hidden && !s.label.includes('가수'))
+    || q.slots.find((s) => !s.hidden && !isArtistLikeLabel(s.label))
     || null
 }
 
 function findArtistSlots(q: QuestionRuntime) {
-  return q.slots.filter((s) => !s.hidden && s.label.includes('가수'))
+  return q.slots.filter((s) => !s.hidden && isArtistLikeLabel(s.label))
 }
 
 /**
@@ -738,7 +812,7 @@ function riskyGainForAnswer(
   q: QuestionRuntime,
   baseGain: number,
 ): number {
-  if (!hasRiskyDouble(m, room.index)) return baseGain
+  if (!hasRiskyDouble(m, room.index, room)) return baseGain
   const titleSlot = findTitleSlot(q)
   if (!titleSlot) return baseGain
   const titleRev = room.revealed[titleSlot.id]
@@ -746,8 +820,11 @@ function riskyGainForAnswer(
   return -1
 }
 
-function isSakuraDecoyActive(m: Member, roundIndex: number) {
-  return !!(m.sakuraDecoy && roundIndex >= m.sakuraDecoy.startIndex && m.sakuraDecoy.roundsLeft > 0)
+function isSakuraDecoyActive(m: Member, roundIndex: number, room?: Room | null) {
+  if (!(m.sakuraDecoy && roundIndex >= m.sakuraDecoy.startIndex && m.sakuraDecoy.roundsLeft > 0)) return false
+  // 트루먼은 정지 대상이 아님 · 세노 등만 정지
+  if (m.sakuraDecoy.mode !== 'truman' && room && isAugmentTimePaused(room)) return false
+  return true
 }
 
 /** 트루먼쇼 환상 모드 (가짜 곡 채점 · 가짜 점수 표시) */
@@ -808,7 +885,8 @@ function forceSettleTrumanIllusions(io: Server, room: Room) {
   }
 }
 
-function isFlameKimActive(m: Member, roundIndex: number) {
+function isFlameKimActive(m: Member, roundIndex: number, room?: Room | null) {
+  if (room && isAugmentTimePaused(room)) return false
   return !!(m.flameKim && roundIndex >= m.flameKim.startIndex && m.flameKim.roundsLeft > 0)
 }
 
@@ -819,25 +897,26 @@ function resolveAudioTrick(m: Member, room: Room): {
   startSec: number
   endSec: number | null
   label: string
-  source: 'mud' | 'sakura' | 'flame'
+  source: 'mud' | 'sakura' | 'flame' | 'party'
 } | null {
   if (room.status === 'duel') return null
-  for (const b of activeBuffsAt(m, room.index)) {
-    if (b.effectType !== 'mud_fight') continue
+  for (const b of activeBuffsAt(m, room.index, room)) {
+    if (b.effectType !== 'mud_fight' && b.effectType !== 'party_music_others') continue
     const youtubeUrl = String(b.effectValue.bgmUrl || b.effectValue.youtubeUrl || '').trim()
     if (!youtubeUrl) continue
-    const startRaw = Number(b.effectValue.bgmStartSec)
+    const startRaw = Number(b.effectValue.bgmStartSec ?? b.effectValue.startSec)
+    const party = b.effectType === 'party_music_others'
     return {
       mode: 'replace',
       youtubeUrl,
       startSec: Number.isFinite(startRaw) && startRaw >= 0 ? Math.floor(startRaw) : 0,
       endSec: null,
-      label: b.name || '진흙탕 싸움',
-      source: 'mud',
+      label: b.name || (party ? '풍악을 울려라' : '진흙탕 싸움'),
+      source: party ? 'party' : 'mud',
     }
   }
   // 세노·트루먼·에라모르겠다 등: 대상에게 강제곡 (방 곡 대체)
-  if (isSakuraDecoyActive(m, room.index) && m.sakuraDecoy?.youtubeUrl) {
+  if (isSakuraDecoyActive(m, room.index, room) && m.sakuraDecoy?.youtubeUrl) {
     const end = m.sakuraDecoy.endSec
     return {
       mode: 'replace',
@@ -849,7 +928,7 @@ function resolveAudioTrick(m: Member, room: Room): {
     }
   }
   // 불꽃남자: 방 곡 + 트릭 곡 오버레이
-  if (isFlameKimActive(m, room.index) && m.flameKim) {
+  if (isFlameKimActive(m, room.index, room) && m.flameKim) {
     return {
       mode: 'overlay',
       youtubeUrl: m.flameKim.youtubeUrl,
@@ -864,7 +943,7 @@ function resolveAudioTrick(m: Member, room: Room): {
 
 /** 불꽃남자김상원: 시전자 정답 시 대상 점수 감소 (시전자 본인 득점은 그대로) */
 function applyFlameKimOnCorrect(io: Server, room: Room, caster: Member) {
-  if (!isFlameKimActive(caster, room.index) || !caster.flameKim) return
+  if (!isFlameKimActive(caster, room.index, room) || !caster.flameKim) return
   const f = caster.flameKim
   const victim = room.members.get(f.targetUserId)
   if (!victim || victim.userId === caster.userId) return
@@ -1032,32 +1111,38 @@ async function pickNamedTrack(
 
 /** 야차룰: 큐에 없는 새 곡 · 제목 슬롯만 */
 async function pickDuelQuestion(room: Room): Promise<QuestionRuntime | null> {
-  const excludeIds = new Set(room.queue.map((q) => q.id))
-  const currentYt = room.queue[room.index] ? extractYoutubeId(room.queue[room.index].youtubeUrl) : null
-  const list = await prisma.question.findMany({
-    where: { enabled: true },
-    include: { slots: { orderBy: { sortOrder: 'asc' } }, genre: true },
-  })
-  const preferred = list.filter((q) => !excludeIds.has(q.id) && extractYoutubeId(q.youtubeUrl) !== currentYt)
-  const pool = (preferred.length ? preferred : list.filter((q) => extractYoutubeId(q.youtubeUrl) !== currentYt))
-    .slice()
-    .sort(() => Math.random() - 0.5)
-  for (const q of pool) {
-    const rt = toQuestionRuntime(q)
-    const title = rt.slots.find((s) => !s.hidden && s.label.includes('제목'))
-      || rt.slots.find((s) => !s.hidden)
-    if (!title) continue
-    return {
-      ...rt,
-      artistChosung: '',
-      slots: [{ ...title, hidden: false, label: title.label.includes('제목') ? title.label : '제목' }],
+  try {
+    const excludeIds = new Set(room.queue.map((q) => q.id))
+    const currentYt = room.queue[room.index] ? extractYoutubeId(room.queue[room.index].youtubeUrl) : null
+    const list = await prisma.question.findMany({
+      where: { enabled: true },
+      include: { slots: { orderBy: { sortOrder: 'asc' } }, genre: true },
+    })
+    if (!list.length) return null
+    const preferred = list.filter((q) => !excludeIds.has(q.id) && extractYoutubeId(q.youtubeUrl) !== currentYt)
+    const fallback = list.filter((q) => extractYoutubeId(q.youtubeUrl) !== currentYt)
+    const candidates = preferred.length ? preferred : (fallback.length ? fallback : list)
+    const pool = shuffleArray(candidates)
+    for (const q of pool) {
+      const rt = toQuestionRuntime(q)
+      const title = rt.slots.find((s) => !s.hidden && s.label.includes('제목'))
+        || rt.slots.find((s) => !s.hidden)
+      if (!title) continue
+      return {
+        ...rt,
+        artistChosung: '',
+        slots: [{ ...title, hidden: false, label: title.label.includes('제목') ? title.label : '제목' }],
+      }
     }
+    return null
+  } catch (err) {
+    console.error('[yacha_duel] pickDuelQuestion failed', err)
+    return null
   }
-  return null
 }
 
-function playbackRateFor(m: Member, roundIndex: number): number | null {
-  for (const b of activeBuffsAt(m, roundIndex)) {
+function playbackRateFor(m: Member, roundIndex: number, room?: Room | null): number | null {
+  for (const b of activeBuffsAt(m, roundIndex, room)) {
     if (b.effectType === 'slow_playback') {
       const r = Number(b.effectValue.rate)
       if (Number.isFinite(r) && r > 0) return r
@@ -1066,29 +1151,33 @@ function playbackRateFor(m: Member, roundIndex: number): number | null {
   return null
 }
 
-function slowStarterDelaySec(m: Member, roundIndex: number): number | null {
-  const b = activeBuffsAt(m, roundIndex).find((x) => x.effectType === 'slow_starter')
+function slowStarterDelaySec(m: Member, roundIndex: number, room?: Room | null): number | null {
+  const b = activeBuffsAt(m, roundIndex, room).find((x) => x.effectType === 'slow_starter')
   if (!b) return null
   const n = Number(b.effectValue.delaySec)
   return Number.isFinite(n) && n > 0 ? n : 7
 }
 
-function slowStarterBonus(m: Member, roundIndex: number): number {
-  const b = activeBuffsAt(m, roundIndex).find((x) => x.effectType === 'slow_starter')
+function slowStarterBonus(m: Member, roundIndex: number, room?: Room | null): number {
+  const b = activeBuffsAt(m, roundIndex, room).find((x) => x.effectType === 'slow_starter')
   if (!b) return 0
   const n = Number(b.effectValue.bonus)
-  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 1
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 2
 }
 
 /** 보너스 타임: 남이 맞힌 뒤 windowMs 안에 같은 답을 치면 추가 인정 */
-function hasFollowAnswer(m: Member, roundIndex: number) {
-  return activeBuffsAt(m, roundIndex).some((b) => b.effectType === 'follow_answer')
+function hasFollowAnswer(m: Member, roundIndex: number, room?: Room | null) {
+  return activeBuffsAt(m, roundIndex, room).some((b) => b.effectType === 'follow_answer')
+}
+
+function lateAnswerBuff(m: Member, roundIndex: number, room?: Room | null) {
+  return activeBuffsAt(m, roundIndex, room).find((b) => b.effectType === 'late_answer') || null
 }
 
 function followAnswerWindowMsForRoom(room: Room): number {
   let ms = 2000
   for (const m of room.members.values()) {
-    for (const b of activeBuffsAt(m, room.index)) {
+    for (const b of activeBuffsAt(m, room.index, room)) {
       if (b.effectType !== 'follow_answer') continue
       const n = Number(b.effectValue.windowMs)
       if (Number.isFinite(n) && n > 0) ms = Math.max(ms, Math.floor(n))
@@ -1102,7 +1191,7 @@ function openFollowAnswerWindow(
   slot: { id: string; label: string; answer: string; acceptNorms: string[]; hidden: boolean },
   byUserId: string,
 ) {
-  if (![...room.members.values()].some((m) => hasFollowAnswer(m, room.index))) return
+  if (![...room.members.values()].some((m) => hasFollowAnswer(m, room.index, room))) return
   room.followAnswerWindow[slot.id] = {
     at: Date.now(),
     windowMs: followAnswerWindowMsForRoom(room),
@@ -1121,14 +1210,21 @@ function openFollowAnswerWindow(
 const FOLLOW_ANSWER_GRACE_MS = 250
 
 /** 보너스 타임 등: 정답 시 추가 점수 */
-function scoreBonusFor(m: Member, roundIndex: number): number {
+function scoreBonusFor(m: Member, roundIndex: number, room?: Room | null): number {
   let extra = 0
-  for (const b of activeBuffsAt(m, roundIndex)) {
+  for (const b of activeBuffsAt(m, roundIndex, room)) {
     if (b.effectType !== 'score_bonus' && b.effectType !== 'mud_fight') continue
     const n = Number(b.effectValue.bonus)
     if (Number.isFinite(n) && n > 0) extra += Math.floor(n)
   }
   return extra
+}
+
+/** 진조이니라 등: politeSuffix.bonus */
+function politeSuffixBonus(m: Member, roundIndex: number, room?: Room | null): number {
+  if (!isPoliteSuffixActive(m, roundIndex, room) || !m.politeSuffix) return 0
+  const n = Number(m.politeSuffix.bonus)
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0
 }
 
 /** 무지개 반사: 활성 버프 또는 보유 중(지목 시 자동 사용) 실드 소모 */
@@ -1169,13 +1265,13 @@ function formatSlotAnswers(q: QuestionRuntime, includeHidden = false) {
     .join(' / ')
 }
 
-/** 제목·가수만 (나이거 뭔지 알아) */
+/** 제목·가수/커버/캐릭터만 (나이거·미래시 등) */
 function formatTitleArtistAnswers(q: QuestionRuntime) {
   const parts: string[] = []
   const title = findTitleSlot(q)
-  if (title) parts.push(`제목: ${title.answer}`)
+  if (title) parts.push(`${title.label}: ${title.answer}`)
   for (const artist of findArtistSlots(q)) {
-    parts.push(`가수: ${artist.answer}`)
+    parts.push(`${artist.label}: ${artist.answer}`)
   }
   return parts.join(' · ') || formatSlotAnswers(q)
 }
@@ -1198,6 +1294,22 @@ function formatSlotAnswersPlain(q: QuestionRuntime, includeHidden = false) {
     .join('\n')
 }
 
+/** 슬롯별 스포일 맵 (나이거 / 일론 등) */
+function buildSpoilBySlot(
+  q: QuestionRuntime,
+  mode: 'plain' | 'qwerty',
+  includeHidden: boolean,
+): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const s of q.slots) {
+    if (!includeHidden && s.hidden) continue
+    const raw = (s.answer || '').trim()
+    if (!raw) continue
+    out[s.id] = mode === 'qwerty' ? hangulToQwertyMistype(raw) : raw
+  }
+  return out
+}
+
 /** 일론 머스크의 가호: 외계인 영타 표기 */
 function formatAlienQwertyAnswers(q: QuestionRuntime, includeHidden = false) {
   return q.slots
@@ -1206,8 +1318,8 @@ function formatAlienQwertyAnswers(q: QuestionRuntime, includeHidden = false) {
     .join(' / ')
 }
 
-function alienQwertyBuff(m: Member, roundIndex: number) {
-  return activeBuffsAt(m, roundIndex).find((b) => b.effectType === 'alien_qwerty_answer') || null
+function alienQwertyBuff(m: Member, roundIndex: number, room?: Room | null) {
+  return activeBuffsAt(m, roundIndex, room).find((b) => b.effectType === 'alien_qwerty_answer') || null
 }
 
 function clearHeldAugment(m: Member) {
@@ -1334,8 +1446,8 @@ function ensureGahoPickCandidates(m: Member, list: CachedAugment[], count = 3) {
 
 type OfferTier = 'bronze' | 'silver' | 'gold'
 
-function shuffleArray<T>(arr: T[]): T[] {
-  const a = [...arr]
+function shuffleArray<T>(arr: T[] | Iterable<T> | null | undefined): T[] {
+  const a = [...(arr ?? [])]
   for (let i = a.length - 1; i > 0; i -= 1) {
     const j = Math.floor(Math.random() * (i + 1))
     const t = a[i]
@@ -1348,13 +1460,6 @@ function shuffleArray<T>(arr: T[]): T[] {
 function pickRandomOfferTier(
   list: Array<{ tier: string }>,
 ): OfferTier {
-  const forceName = process.env.FORCE_AUGMENT_NAME?.trim()
-  if (
-    (forceName === '트루먼쇼' || forceName === 'sakura_decoy')
-    && list.some((a) => a.tier === 'gold')
-  ) {
-    return 'gold'
-  }
   const available = (['bronze', 'silver', 'gold'] as const).filter((t) =>
     list.some((a) => a.tier === t),
   )
@@ -1433,20 +1538,6 @@ function pickOfferCandidates(
   const seenIds = new Set<string>()
   const seenNames = new Set<string>()
 
-  // 로컬 테스트: FORCE_AUGMENT_NAME=트루먼쇼 → 오퍼 맨 앞에 고정
-  const forceName = process.env.FORCE_AUGMENT_NAME?.trim()
-  if (forceName) {
-    const excluded = new Set(opts?.excludeNames || [])
-    const forced = list.find((a) =>
-      (a.name === forceName || a.effectType === forceName) && !excluded.has(a.name),
-    )
-    if (forced) {
-      seenIds.add(forced.id)
-      seenNames.add(forced.name)
-      picked.push(forced)
-    }
-  }
-
   for (const a of shuffleArray(pool)) {
     if (seenIds.has(a.id) || seenNames.has(a.name)) continue
     seenIds.add(a.id)
@@ -1463,7 +1554,8 @@ function pickOfferCandidates(
       if (picked.length >= count) break
     }
   }
-  return picked.map(toOfferAugment)
+  // 카드 배치(왼쪽→오른쪽)도 매번 랜덤
+  return shuffleArray(picked).map(toOfferAugment)
 }
 
 function pickRandomFromOfferPool<T extends {
@@ -1625,10 +1717,25 @@ function roomState(room: Room) {
       return counts
     })(),
     members: [...room.members.values()].map((m) => {
-      const block = answerBlockPublic(m, room.index)
+      const pause = isAugmentTimePaused(room)
+      const block = answerBlockPublic(m, room.index, room)
       const spoilQ = room.queue[room.index]
-      const spoilActive = !!(spoilQ && room.status !== 'duel' && knowButCantBuff(m, room.index))
-      const alienActive = !!(spoilQ && room.status !== 'duel' && !spoilActive && alienQwertyBuff(m, room.index))
+      const spoilActive = !!(spoilQ && room.status !== 'duel' && !pause && knowButCantBuff(m, room.index, room))
+      const alienActive = !!(spoilQ && room.status !== 'duel' && !spoilActive && !pause && alienQwertyBuff(m, room.index, room))
+      // 일론=전 슬롯·히든 영타 / 나이거=제목·가수·커버·캐릭터 평문
+      const spoilBySlot = alienActive
+        ? buildSpoilBySlot(spoilQ!, 'qwerty', true)
+        : spoilActive
+          ? (() => {
+              const out: Record<string, string> = {}
+              const title = findTitleSlot(spoilQ!)
+              if (title?.answer) out[title.id] = title.answer
+              for (const s of findArtistSlots(spoilQ!)) {
+                if (s.answer) out[s.id] = s.answer
+              }
+              return out
+            })()
+          : null
       return {
       userId: m.userId,
       nickname: m.nickname,
@@ -1644,24 +1751,25 @@ function roomState(room: Room) {
       heldAugmentEffectType: m.heldAugmentEffectType,
       heldAugmentTier: m.heldAugmentTier,
       usedAugments: m.usedAugments,
-      chatMuted: isChatMuted(m, room.index),
-      chatMutePending: !!(m.chatMute && room.index < m.chatMute.startIndex),
+      chatMuted: isChatMuted(m, room.index, room),
+      chatMutePending: !pause && !!(m.chatMute && room.index < m.chatMute.startIndex),
       chatMuteBy: m.chatMute?.byName || null,
       chatMuteByNickname: m.chatMute?.byNickname || null,
       chatMuteStartIndex: m.chatMute?.startIndex ?? null,
       answerDelayed: answerDelayRemainingMs(room, m) > 0,
-      answerDelaySec: isAnswerDelayActive(m, room.index) ? m.answerDelay!.delaySec : null,
-      answerDelayUnlockAt: isAnswerDelayActive(m, room.index)
+      answerDelaySec: isAnswerDelayActive(m, room.index, room) ? m.answerDelay!.delaySec : null,
+      answerDelayUnlockAt: isAnswerDelayActive(m, room.index, room)
         ? room.roundStartedAt + m.answerDelay!.delaySec * 1000
         : null,
-      answerDelayPending: !!(m.answerDelay && room.index < m.answerDelay.startIndex),
+      answerDelayPending: !pause && !!(m.answerDelay && room.index < m.answerDelay.startIndex),
       answerDelayRoundsLeft: m.answerDelay?.roundsLeft ?? null,
       answerDelayBy: m.answerDelay?.byName || null,
-      politeActive: isPoliteSuffixActive(m, room.index),
-      politePending: !!(m.politeSuffix && room.index < m.politeSuffix.startIndex),
-      politeSuffix: isPoliteSuffixActive(m, room.index) ? m.politeSuffix!.suffix : null,
+      politeActive: isPoliteSuffixActive(m, room.index, room),
+      politePending: !pause && !!(m.politeSuffix && room.index < m.politeSuffix.startIndex),
+      politeSuffix: isPoliteSuffixActive(m, room.index, room) ? m.politeSuffix!.suffix : null,
       politeRoundsLeft: m.politeSuffix?.roundsLeft ?? null,
       politeBy: m.politeSuffix?.byName || null,
+      politeBonus: isPoliteSuffixActive(m, room.index, room) ? (m.politeSuffix!.bonus || null) : null,
       answerBlocked: block.answerBlocked,
       answerBlockPending: block.answerBlockPending,
       answerBlockRoundsLeft: block.answerBlockRoundsLeft,
@@ -1676,61 +1784,63 @@ function roomState(room: Room) {
         : alienActive
           ? hangulToQwertyMistype(findArtistSlots(spoilQ!).map((s) => s.answer).join(', '))
           : null,
+      /** 슬롯 id → 스포일 텍스트 (일론=전 슬롯·히든 영타 / 나이거=비전 슬롯 평문) */
+      knowSpoilSlots: spoilBySlot,
       alienQwertyActive: alienActive,
       accuseWatchPending: !!(m.accuseMark && room.index < m.accuseMark.watchIndex),
       accuseWatchActive: !!(m.accuseMark && room.index === m.accuseMark.watchIndex),
       accuseWatchBy: m.accuseMark?.byName || null,
-      gabukiActive: isGabukiActive(m, room.index),
-      gabukiPending: !!(m.gabuki && room.index < m.gabuki.startIndex),
+      gabukiActive: isGabukiActive(m, room.index, room),
+      gabukiPending: !pause && !!(m.gabuki && room.index < m.gabuki.startIndex),
       gabukiRoundsLeft: m.gabuki?.roundsLeft ?? null,
       gabukiBy: m.gabuki?.byName || null,
-      playbackRate: room.status === 'duel' ? 1 : playbackRateFor(m, room.index),
-      audioDelaySec: room.status === 'duel' ? null : slowStarterDelaySec(m, room.index),
+      playbackRate: room.status === 'duel' ? 1 : playbackRateFor(m, room.index, room),
+      audioDelaySec: room.status === 'duel' ? null : slowStarterDelaySec(m, room.index, room),
       audioDelayUntil: (() => {
         if (room.status === 'duel') return null
-        const d = slowStarterDelaySec(m, room.index)
+        const d = slowStarterDelaySec(m, room.index, room)
         return d != null ? room.roundStartedAt + d * 1000 : null
       })(),
-      songMuteUntil: m.songMuteUntil && m.songMuteUntil > Date.now() ? m.songMuteUntil : null,
+      songMuteUntil: (!pause && m.songMuteUntil && m.songMuteUntil > Date.now()) ? m.songMuteUntil : null,
       /** 방 노래와 분리된 트릭 오디오 · mode=replace면 방 곡 음소거, overlay면 동시 재생 */
       audioTrick: resolveAudioTrick(m, room),
       decoyYoutubeUrl: (() => {
         if (room.status === 'duel') return null
-        if (isSakuraDecoyActive(m, room.index)) return m.sakuraDecoy!.youtubeUrl
-        if (isFlameKimActive(m, room.index)) return m.flameKim!.youtubeUrl
+        if (isSakuraDecoyActive(m, room.index, room)) return m.sakuraDecoy!.youtubeUrl
+        if (isFlameKimActive(m, room.index, room)) return m.flameKim!.youtubeUrl
         return null
       })(),
       decoyStartSec: (() => {
         if (room.status === 'duel') return null
-        if (isSakuraDecoyActive(m, room.index)) return m.sakuraDecoy!.startSec
-        if (isFlameKimActive(m, room.index)) return m.flameKim!.startSec
+        if (isSakuraDecoyActive(m, room.index, room)) return m.sakuraDecoy!.startSec
+        if (isFlameKimActive(m, room.index, room)) return m.flameKim!.startSec
         return null
       })(),
       // 트루먼쇼는 UI·버프 패널에 안 보이게 (audioTrick만으로 재생)
       sakuraActive: room.status === 'duel'
         ? false
-        : (isSakuraDecoyActive(m, room.index) && m.sakuraDecoy!.mode !== 'truman'),
+        : (isSakuraDecoyActive(m, room.index, room) && m.sakuraDecoy!.mode !== 'truman'),
       sakuraScoreMult: room.status === 'duel'
         ? null
-        : (isSakuraDecoyActive(m, room.index) && m.sakuraDecoy!.mode !== 'truman'
+        : (isSakuraDecoyActive(m, room.index, room) && m.sakuraDecoy!.mode !== 'truman'
           ? m.sakuraDecoy!.scoreMult
           : null),
       sakuraBy: room.status === 'duel'
         ? null
-        : (isSakuraDecoyActive(m, room.index) && m.sakuraDecoy!.mode !== 'truman'
+        : (isSakuraDecoyActive(m, room.index, room) && m.sakuraDecoy!.mode !== 'truman'
           ? m.sakuraDecoy!.byName
           : null),
       sakuraTruman: false,
       trumanIllusion: false,
       trumanFakeScore: 0,
-      flameKimActive: room.status === 'duel' ? false : isFlameKimActive(m, room.index),
-      flameKimPending: !!(m.flameKim && room.index < m.flameKim.startIndex),
+      flameKimActive: room.status === 'duel' ? false : isFlameKimActive(m, room.index, room),
+      flameKimPending: !pause && !!(m.flameKim && room.index < m.flameKim.startIndex),
       flameKimRoundsLeft: m.flameKim?.roundsLeft ?? null,
       flameKimTarget: m.flameKim?.targetNickname || null,
       flameKimBy: m.flameKim?.byName || null,
-      answerProxyActive: isAnswerProxyActive(m, room.index)
-        || !!(m.answerProxy && room.index < m.answerProxy.startIndex),
-      answerProxyPending: !!(m.answerProxy && room.index < m.answerProxy.startIndex),
+      answerProxyActive: !pause && (isAnswerProxyActive(m, room.index)
+        || !!(m.answerProxy && room.index < m.answerProxy.startIndex)),
+      answerProxyPending: !pause && !!(m.answerProxy && room.index < m.answerProxy.startIndex),
       answerProxyPendingScore: m.answerProxy?.pendingScore ?? 0,
       answerProxyRoundsLeft: m.answerProxy?.roundsLeft ?? null,
       activeBuffs: m.activeBuffs.map((b) => {
@@ -1738,6 +1848,7 @@ function roomState(room: Room) {
         const rateRaw = Number(b.effectValue.rate)
         const bgmUrl = String(b.effectValue.bgmUrl || '').trim() || null
         const bgmStartRaw = Number(b.effectValue.bgmStartSec)
+        const applies = !pause && buffApplies(b, room.index)
         return {
           name: b.name,
           description: b.description,
@@ -1746,18 +1857,20 @@ function roomState(room: Room) {
           usedByNickname: b.usedByNickname,
           mult: Number.isFinite(multRaw) && multRaw > 1 ? multRaw : null,
           rate: Number.isFinite(rateRaw) && rateRaw > 0 && rateRaw !== 1 ? rateRaw : null,
-          bgmUrl: buffApplies(b, room.index) ? bgmUrl : null,
-          bgmStartSec: buffApplies(b, room.index) && Number.isFinite(bgmStartRaw) && bgmStartRaw >= 0
+          bgmUrl: applies ? bgmUrl : null,
+          bgmStartSec: applies && Number.isFinite(bgmStartRaw) && bgmStartRaw >= 0
             ? Math.floor(bgmStartRaw)
             : null,
           startIndex: b.startIndex,
           roundsLeft: b.roundsLeft,
-          pending: room.index < b.startIndex,
-          active: buffApplies(b, room.index),
+          pending: pause || room.index < b.startIndex,
+          active: applies,
+          frozen: pause && buffApplies(b, room.index),
         }
       }),
     }
     }),
+    augmentPaused: isAugmentTimePaused(room),
     duel: room.duel
       ? {
           challengerId: room.duel.challengerId,
@@ -1828,7 +1941,7 @@ async function pickQuestions(genreCounts: Record<string, number>): Promise<Quest
 
   for (const row of genreRows) {
     if (!row) continue
-    const shuffled = row.list.sort(() => Math.random() - 0.5)
+    const shuffled = shuffleArray(row.list)
     let picked = 0
     for (const q of shuffled) {
       if (picked >= row.count) break
@@ -1841,29 +1954,8 @@ async function pickQuestions(genreCounts: Record<string, number>): Promise<Quest
       out.push(toQuestionRuntime(q))
     }
   }
-  let queue = out.sort(() => Math.random() - 0.5)
-
-  // 로컬 테스트: FORCE_FIRST_SONG=곡제목(부분일치) → 1번 문제 고정
-  const forceNeedle = process.env.FORCE_FIRST_SONG?.trim()
-  if (forceNeedle) {
-    const needle = forceNeedle.toLowerCase()
-    const all = await prisma.question.findMany({
-      where: { enabled: true },
-      include: { slots: { orderBy: { sortOrder: 'asc' } }, genre: true },
-    })
-    const dbHit = all.find((q) =>
-      q.slots.some((s) => `${s.answer} ${s.acceptAnswers || ''}`.toLowerCase().includes(needle)),
-    )
-    if (dbHit) {
-      const forced = toQuestionRuntime(dbHit)
-      queue = [forced, ...queue.filter((q) => q.id !== forced.id)]
-      console.log(`[FORCE_FIRST_SONG] 1번 고정: ${forceNeedle} (${forced.id})`)
-    } else {
-      console.warn(`[FORCE_FIRST_SONG] 매칭 실패: ${forceNeedle}`)
-    }
-  }
-
-  return queue
+  // 장르 순서 영향 없이 전체 큐를 균등 셔플
+  return shuffleArray(out)
 }
 
 type DbQuestionWithSlots = {
@@ -1884,9 +1976,9 @@ type DbQuestionWithSlots = {
 
 function toQuestionRuntime(q: DbQuestionWithSlots): QuestionRuntime {
   const titleSlot = q.slots.find((s) => !s.hidden && isTitleLikeLabel(s.label))
-    || q.slots.find((s) => !s.hidden && !s.label.includes('가수'))
+    || q.slots.find((s) => !s.hidden && !isArtistLikeLabel(s.label))
     || q.slots.find((s) => !s.hidden)
-  const artistSlots = q.slots.filter((s) => !s.hidden && s.label.includes('가수'))
+  const artistSlots = q.slots.filter((s) => !s.hidden && isArtistLikeLabel(s.label))
   const title = titleSlot?.answer || ''
   const titleAccepts = titleSlot ? (JSON.parse(titleSlot.acceptAnswers || '[]') as string[]) : []
   const artistChosungParts = artistSlots.map((s) => {
@@ -1905,7 +1997,7 @@ function toQuestionRuntime(q: DbQuestionWithSlots): QuestionRuntime {
     artistChosung: artistChosungParts.join(' / '),
     slots: q.slots.map((s) => {
       const accepts = JSON.parse(s.acceptAnswers || '[]') as string[]
-      const isArtist = s.label.includes('가수')
+      const isArtist = isArtistLikeLabel(s.label)
       const expanded = isArtist ? expandArtistAccepts(s.answer, accepts) : accepts
       const acceptNorms = [...new Set([s.answer, ...expanded].map(normalizeAnswer))]
       return {
@@ -1965,7 +2057,7 @@ async function swapExtremeGenreRemaining(room: Room): Promise<{ ok: boolean; hin
     include: { slots: { orderBy: { sortOrder: 'asc' } }, genre: true },
   })
   const extras: QuestionRuntime[] = []
-  for (const q of pool.sort(() => Math.random() - 0.5)) {
+  for (const q of shuffleArray(pool)) {
     if (extras.length >= delta) break
     if (usedIds.has(q.id)) continue
     const yt = extractYoutubeId(q.youtubeUrl)
@@ -1993,7 +2085,7 @@ async function swapExtremeGenreRemaining(room: Room): Promise<{ ok: boolean; hin
 
   const drop = new Set(removeIdx)
   upcoming = upcoming.filter((_, i) => !drop.has(i))
-  upcoming = [...upcoming, ...extras].sort(() => Math.random() - 0.5)
+  upcoming = shuffleArray([...upcoming, ...extras])
 
   room.queue = [...room.queue.slice(0, from), current, ...upcoming]
 
@@ -2040,7 +2132,7 @@ async function equalizeGenreRemaining(room: Room): Promise<{ ok: boolean; hint: 
   const changes: string[] = []
 
   for (const g of genres) {
-    const pool = [...(byGenre.get(g) || [])].sort(() => Math.random() - 0.5)
+    const pool = shuffleArray([...(byGenre.get(g) || [])])
     const target = targets.get(g) || base
     const keep = pool.slice(0, Math.min(target, pool.length))
     nextUpcoming.push(...keep)
@@ -2054,7 +2146,7 @@ async function equalizeGenreRemaining(room: Room): Promise<{ ok: boolean; hint: 
         include: { slots: { orderBy: { sortOrder: 'asc' } }, genre: true },
       })
       let added = 0
-      for (const q of bank.sort(() => Math.random() - 0.5)) {
+      for (const q of shuffleArray(bank)) {
         if (added >= need) break
         if (usedIds.has(q.id)) continue
         const yt = extractYoutubeId(q.youtubeUrl)
@@ -2079,7 +2171,7 @@ async function equalizeGenreRemaining(room: Room): Promise<{ ok: boolean; hint: 
   room.queue = [
     ...room.queue.slice(0, from),
     current,
-    ...nextUpcoming.sort(() => Math.random() - 0.5),
+    ...shuffleArray(nextUpcoming),
   ]
   return {
     ok: true,
@@ -2142,7 +2234,7 @@ async function banGenreAndRedistribute(
       include: { slots: { orderBy: { sortOrder: 'asc' } }, genre: true },
     })
     let added = 0
-    for (const q of bank.sort(() => Math.random() - 0.5)) {
+    for (const q of shuffleArray(bank)) {
       if (added >= need) break
       if (usedIds.has(q.id)) continue
       const yt = extractYoutubeId(q.youtubeUrl)
@@ -2162,7 +2254,7 @@ async function banGenreAndRedistribute(
   room.queue = [
     ...room.queue.slice(0, from),
     current,
-    ...[...keep, ...extras].sort(() => Math.random() - 0.5),
+    ...shuffleArray([...keep, ...extras]),
   ]
 
   const short = extras.length < n ? ` (은행 부족으로 ${extras.length}/${n}곡만 보충)` : ''
@@ -2233,7 +2325,7 @@ async function boostAttemptedGenreFromOthers(
   let removed = 0
   for (const [g, list] of byGenre.entries()) {
     const rem = Math.min(removeAllot.get(g) || 0, list.length)
-    const shuffled = [...list].sort(() => Math.random() - 0.5)
+    const shuffled = shuffleArray(list)
     if (rem > 0) {
       removeParts.push(`${g} −${rem}`)
       removed += rem
@@ -2260,7 +2352,7 @@ async function boostAttemptedGenreFromOthers(
       where: { genreId: genreRow.id, enabled: true },
       include: { slots: { orderBy: { sortOrder: 'asc' } }, genre: true },
     })
-    for (const q of bank.sort(() => Math.random() - 0.5)) {
+    for (const q of shuffleArray(bank)) {
       if (extras.length >= removed) break
       if (usedIds.has(q.id)) continue
       const yt = extractYoutubeId(q.youtubeUrl)
@@ -2280,7 +2372,7 @@ async function boostAttemptedGenreFromOthers(
   room.queue = [
     ...room.queue.slice(0, from),
     current,
-    ...[...same, ...keepOthers, ...extras].sort(() => Math.random() - 0.5),
+    ...shuffleArray([...same, ...keepOthers, ...extras]),
   ]
 
   const short = extras.length < removed ? ` (은행 부족 ${extras.length}/${removed})` : ''
@@ -2294,7 +2386,6 @@ const TARGET_AUGMENT_TYPES = new Set([
   'mute_chat',
   'slow_playback',
   'answer_proxy',
-  'sakura_decoy',
   'named_decoy',
   'answer_delay',
   'yacha_duel',
@@ -2315,6 +2406,24 @@ const GENRE_AUGMENT_TYPES = new Set(['ban_genre'])
 const AUTO_APPLY_AUGMENT_TYPES = new Set(['water_ghost', 'combo_clear_double'])
 /** 수동 사용 불가 · 지목당하면 자동 발동 */
 const PASSIVE_HELD_AUGMENT_TYPES = new Set(['reflect_debuff'])
+/** 사용 시 예약되고 다음 라운드부터 실제 효과가 시작되는 공개형 증강 */
+const NEXT_ROUND_PUBLIC_AUGMENT_TYPES = new Set([
+  'mute_chat',
+  'polite_suffix',
+  'answer_block',
+  'answer_block_others',
+  'accuse_sleep',
+  'gabuki_mark',
+  'flame_kim',
+  'answer_delay',
+  'yacha_duel',
+  'slow_playback',
+  'named_decoy',
+  'answer_proxy',
+  'mud_fight',
+  'slow_starter',
+  'party_music_others',
+])
 
 type AugmentLike = {
   name: string
@@ -2331,6 +2440,50 @@ type ApplyAugmentResult = {
   chatText: string | null
   /** true면 방 전체 사용 연출·시스템 채팅 생략 (트루먼쇼 등) */
   silent?: boolean
+}
+
+function formatActivatedAugmentMessage(message: string) {
+  const activated = message
+    .replace(/다음\s+(\d+)\s*R/g, '지금부터 $1R')
+    .replace(/다음\s+라운드에/g, '이번 라운드에')
+    .replace(/다음\s+라운드부터/g, '이번 라운드부터')
+    .replace(/다음\s+라운드/g, '이번 라운드')
+  return `발동! ${activated}`
+}
+
+function flushPendingAugmentNotices(io: Server, room: Room) {
+  if (isAugmentTimePaused(room)) return
+  const due = room.pendingAugmentNotices.filter((notice) => notice.startIndex <= room.index)
+  if (!due.length) return
+  room.pendingAugmentNotices = room.pendingAugmentNotices.filter((notice) => notice.startIndex > room.index)
+  for (const notice of due) {
+    // 야차룰은 startDuelRound 전용 문구가 본체 — 여기서 중복 발동 알림 내지 않음
+    if (notice.effectType === 'yacha_duel') continue
+    const message = formatActivatedAugmentMessage(notice.message)
+    io.to(room.id).emit('augment:used', {
+      userId: notice.userId,
+      nickname: notice.nickname,
+      name: notice.name,
+      description: notice.description,
+      imageUrl: notice.imageUrl,
+      tier: notice.tier,
+      message,
+    })
+    io.to(room.id).emit('chat:message', {
+      id: Date.now() + Math.floor(Math.random() * 1000),
+      userId: '',
+      nickname: '시스템',
+      text: message,
+      system: true,
+      at: Date.now(),
+      augmentCard: {
+        name: notice.name,
+        description: notice.description,
+        imageUrl: notice.imageUrl,
+        tier: notice.tier,
+      },
+    })
+  }
 }
 
 /** held 소모·usedAugments 기록은 호출측에서. 효과만 적용 */
@@ -2381,7 +2534,7 @@ async function applyAugmentEffect(
 
   if (aug.effectType === 'power_off_others') {
     const secRaw = Number(value.seconds)
-    const seconds = Number.isFinite(secRaw) && secRaw > 0 ? Math.min(60, secRaw) : 10
+    const seconds = Number.isFinite(secRaw) && secRaw > 0 ? Math.min(60, secRaw) : 20
     const until = Date.now() + seconds * 1000
     let hit = 0
     for (const other of room.members.values()) {
@@ -2403,6 +2556,37 @@ async function applyAugmentEffect(
       ok: true,
       hint: `[${aug.name}] 다른 플레이어 ${hit}명 · ${seconds}초 노래 끊김`,
       chatText: `${user.nickname}님이 [${aug.name}]! 본인 제외 전원 ${seconds}초 동안 노래가 끊깁니다`,
+    }
+  }
+
+  if (aug.effectType === 'party_music_others') {
+    const partyRounds = rounds > 0 ? rounds : 3
+    const youtubeUrl = String(value.youtubeUrl || '').trim()
+    if (!youtubeUrl) return { ok: false, hint: '재생할 영상 주소가 없습니다', chatText: null }
+    const startRaw = Number(value.startSec)
+    const startSec = Number.isFinite(startRaw) && startRaw >= 0 ? Math.floor(startRaw) : 0
+    const startIndex = room.index + 1
+    let hit = 0
+    for (const other of room.members.values()) {
+      if (other.userId === m.userId) continue
+      other.activeBuffs = other.activeBuffs.filter((b) => b.effectType !== 'party_music_others')
+      other.activeBuffs.push({
+        name: aug.name,
+        description: aug.description,
+        effectType: aug.effectType,
+        effectValue: { rounds: partyRounds, youtubeUrl, startSec },
+        imageUrl: aug.imageUrl || null,
+        usedByNickname: user.nickname,
+        startIndex,
+        roundsLeft: partyRounds,
+      })
+      hit += 1
+    }
+    if (!hit) return { ok: false, hint: '적용할 상대가 없습니다', chatText: null }
+    return {
+      ok: true,
+      hint: `[${aug.name}] 다음 ${partyRounds}R · 본인 제외 ${hit}명에게 풍악 재생`,
+      chatText: `${user.nickname}님이 [${aug.name}]! 다음 ${partyRounds}R 동안 본인 제외 전원에게 풍악이 울립니다`,
     }
   }
 
@@ -2440,10 +2624,31 @@ async function applyAugmentEffect(
     }
   }
 
+  // 진조이니라: 본인에게 즉시 N라운드 · 답 끝 suffix 필수 · 정답 시 +bonus
+  if (aug.effectType === 'self_suffix_bonus') {
+    const selfRounds = rounds > 0 ? rounds : 3
+    const suffix = String(value.suffix || '이니라')
+    const bonusRaw = Number(value.bonus)
+    const bonus = Number.isFinite(bonusRaw) && bonusRaw > 0 ? Math.floor(bonusRaw) : 1
+    m.politeSuffix = {
+      startIndex: room.index,
+      roundsLeft: selfRounds,
+      suffix,
+      byName: aug.name,
+      byNickname: user.nickname,
+      bonus,
+    }
+    return {
+      ok: true,
+      hint: `[${aug.name}] 지금부터 ${selfRounds}R · 답 끝「${suffix}」필수 · 정답 시 +${bonus}`,
+      chatText: `${user.nickname}님이 [${aug.name}]! 지금부터 ${selfRounds}R 동안 답 끝에 「${suffix}」를 붙여야 하며, 맞히면 +${bonus}점`,
+    }
+  }
+
   if (aug.effectType === 'answer_block') {
     const intended = targetUserId ? room.members.get(targetUserId) : null
     if (!intended || intended.userId === m.userId) return { ok: false, hint: null, chatText: null }
-    const blockRounds = rounds > 0 ? rounds : 1
+    const blockRounds = rounds > 0 ? rounds : 2
     const shield = takeReflectShield(intended, room.index)
     const victim = shield ? m : intended
     const reflected = !!shield
@@ -2473,7 +2678,7 @@ async function applyAugmentEffect(
   }
 
   if (aug.effectType === 'answer_block_others') {
-    const blockRounds = rounds > 0 ? rounds : 1
+    const blockRounds = rounds > 0 ? rounds : 2
     let hit = 0
     let reflectedCount = 0
     for (const other of room.members.values()) {
@@ -2585,7 +2790,10 @@ async function applyAugmentEffect(
     if (!solo && (!intended || intended.userId === m.userId)) {
       return { ok: false, hint: '대상을 선택하세요', chatText: null }
     }
-    const flameRounds = 3
+    const flameRoundsRaw = Number(value.rounds)
+    const flameRounds = Number.isFinite(flameRoundsRaw) && flameRoundsRaw > 0
+      ? Math.floor(flameRoundsRaw)
+      : (rounds > 0 ? rounds : 3)
     const drainRaw = Number(value.drain)
     const drain = Number.isFinite(drainRaw) && drainRaw > 0 ? Math.floor(drainRaw) : 1
     const youtubeUrl = String(value.youtubeUrl || '').trim()
@@ -2658,14 +2866,19 @@ async function applyAugmentEffect(
   }
 
   if (aug.effectType === 'yacha_duel') {
-    if (room.duel || room.pendingDuel) {
+    if (room.duel || room.pendingDuel || room.duelStarting) {
       return { ok: false, hint: '이미 야차룰이 예약·진행 중입니다', chatText: null }
     }
     if (room.status !== 'playing' && room.status !== 'revealing' && room.status !== 'countdown') {
       return { ok: false, hint: '지금은 야차룰을 시작할 수 없습니다', chatText: null }
     }
+    if (room.members.size < 2) {
+      return { ok: false, hint: '야차룰은 상대가 1명 이상 필요합니다', chatText: null }
+    }
     const intended = targetUserId ? room.members.get(targetUserId) : null
-    if (!intended || intended.userId === m.userId) return { ok: false, hint: null, chatText: null }
+    if (!intended || intended.userId === m.userId) {
+      return { ok: false, hint: '야차룰로 맞붙을 상대를 선택하세요', chatText: null }
+    }
     const shield = takeReflectShield(intended, room.index)
     const challenger = shield ? intended : m
     const opponent = shield ? m : intended
@@ -2704,8 +2917,8 @@ async function applyAugmentEffect(
     if (!intended || intended.userId === m.userId) return { ok: false, hint: null, chatText: null }
     const minRaw = Number(value.rateMin)
     const maxRaw = Number(value.rateMax)
-    const rateMin = Number.isFinite(minRaw) ? minRaw : 0.2
-    const rateMax = Number.isFinite(maxRaw) ? maxRaw : 0.5
+    const rateMin = Number.isFinite(minRaw) ? minRaw : 0.4
+    const rateMax = Number.isFinite(maxRaw) ? maxRaw : 0.6
     const lo = Math.min(rateMin, rateMax)
     const hi = Math.max(rateMin, rateMax)
     const rate = Math.round((lo + Math.random() * (hi - lo)) * 100) / 100
@@ -2742,55 +2955,35 @@ async function applyAugmentEffect(
     }
   }
 
-  if (aug.effectType === 'sakura_decoy' || aug.effectType === 'named_decoy') {
-    const intended = targetUserId ? room.members.get(targetUserId) : null
-    if (!intended || intended.userId === m.userId) return { ok: false, hint: null, chatText: null }
-    const isTruman = aug.effectType === 'sakura_decoy'
-    const titleKey = String(value.titleIncludes || '').trim() || '연애서큘레이션'
-    let youtubeUrl = ''
-    let startSec = 0
-    if (!isTruman) {
-      const decoy = await pickNamedTrack(room, titleKey, {
-        youtubeUrl: String(value.youtubeUrl || ''),
-        startSec: Number(value.startSec),
-      })
-      if (!decoy) {
-        return {
-          ok: false,
-          hint: `[${aug.name}] 문제은행에 「${titleKey}」이(가) 없습니다`,
-          chatText: null,
-        }
-      }
-      youtubeUrl = decoy.youtubeUrl
-      startSec = decoy.startSec
-    } else {
-      // 문제은행에서 디코이 가능 여부만 확인 (실제 곡은 라운드 시작 때 픽)
-      const probe = await pickDecoyTrack(room)
-      if (!probe) return { ok: false, hint: `[${aug.name}] 틀 곡을 찾지 못했습니다`, chatText: null }
-    }
-    const shield = takeReflectShield(intended, room.index)
-    const victim = shield ? m : intended
-    const reflected = !!shield
-    const multDefault = 1
-    const multRaw = Number(value.scoreMult)
-    const mult = Number.isFinite(multRaw) && multRaw > 0 ? Math.floor(multRaw) : multDefault
-    const sakuraRounds = rounds > 0 ? rounds : (isTruman ? 2 : 1)
-    // 상대 지정 디코이: 다음 라운드부터
+  if (aug.effectType === 'sakura_decoy') {
+    const others = [...room.members.values()].filter((o) => o.userId !== m.userId)
+    if (!others.length) return { ok: false, hint: '적용할 상대가 없습니다', chatText: null }
+    const halfCount = Math.max(1, Math.floor(others.length / 2))
+    const intendedList = pickRandomOtherMembers(room, m.userId, halfCount)
+    const probe = await pickDecoyTrack(room)
+    if (!probe) return { ok: false, hint: `[${aug.name}] 틀 곡을 찾지 못했습니다`, chatText: null }
+    const sakuraRounds = rounds > 0 ? rounds : 2
     const startIndex = room.index + 1
-    const songLabel = isTruman ? '다른 곡' : titleKey
-    const multHint = !isTruman && mult > 1 ? ` · 정답 시 ×${mult}` : ''
-    const whenHint = `다음 ${sakuraRounds}R `
-    if (isTruman) {
-      // 곡은 활성 라운드 시작 때 매번 랜덤 픽 (여기선 자리만 잡음)
+    let applied = 0
+    for (const intended of intendedList) {
+      const shield = takeReflectShield(intended, room.index)
+      const victim = shield ? m : intended
+      if (shield) {
+        io.to(intended.socketId).emit('augment:hint', {
+          name: shield.name,
+          hint: `[무지개 반사] ${user.nickname}님의 [${aug.name}]을(를) 되돌려보냈습니다`,
+          durationMs: 0,
+        })
+      }
       victim.sakuraDecoy = {
         youtubeUrl: '',
         startSec: 0,
         endSec: 0,
         startIndex,
         roundsLeft: sakuraRounds,
-        scoreMult: mult,
-        byName: reflected ? shield!.name : aug.name,
-        byNickname: reflected ? intended.nickname : user.nickname,
+        scoreMult: 1,
+        byName: shield ? shield.name : aug.name,
+        byNickname: shield ? intended.nickname : user.nickname,
         mode: 'truman',
         slots: [],
         fakeRevealed: {},
@@ -2800,36 +2993,69 @@ async function applyAugmentEffect(
         titleChosung: '',
         artistChosung: '',
       }
-    } else {
-      victim.sakuraDecoy = {
-        youtubeUrl,
-        startSec,
-        endSec: 0,
-        startIndex,
-        roundsLeft: sakuraRounds,
-        scoreMult: mult,
-        byName: reflected ? shield!.name : aug.name,
-        byNickname: reflected ? intended.nickname : user.nickname,
-        mode: 'classic',
-        slots: [],
-        fakeRevealed: {},
-        fakeScore: 0,
-        usedDecoyYt: [],
-        genre: '',
-        titleChosung: '',
-        artistChosung: '',
+      applied += 1
+    }
+    return {
+      ok: true,
+      hint: `[${aug.name}] 몰래 적용됨 (${applied}명)`,
+      chatText: null,
+      silent: true,
+    }
+  }
+
+  if (aug.effectType === 'named_decoy') {
+    const intended = targetUserId ? room.members.get(targetUserId) : null
+    if (!intended || intended.userId === m.userId) return { ok: false, hint: null, chatText: null }
+    const titleKey = String(value.titleIncludes || '').trim() || '연애서큘레이션'
+    const decoy = await pickNamedTrack(room, titleKey, {
+      youtubeUrl: String(value.youtubeUrl || ''),
+      startSec: Number(value.startSec),
+    })
+    if (!decoy) {
+      return {
+        ok: false,
+        hint: `[${aug.name}] 문제은행에 「${titleKey}」이(가) 없습니다`,
+        chatText: null,
       }
     }
-    // 트루먼쇼: 피해자·방 전원에게 사용/대상/환상 힌트 금지 (종료 폭로만)
-    if (!isTruman) {
-      io.to(victim.socketId).emit('augment:hint', {
-        name: aug.name,
-        hint: reflected
-          ? `[무지개 반사] ${whenHint}「${songLabel}」이(가) 재생됩니다${multHint}`
-          : `[${aug.name}] ${whenHint}「${songLabel}」이(가) 재생됩니다${multHint}`,
-        durationMs: 0,
-      })
+    const youtubeUrl = decoy.youtubeUrl
+    const startSec = decoy.startSec
+    const shield = takeReflectShield(intended, room.index)
+    const victim = shield ? m : intended
+    const reflected = !!shield
+    const multDefault = 1
+    const multRaw = Number(value.scoreMult)
+    const mult = Number.isFinite(multRaw) && multRaw > 0 ? Math.floor(multRaw) : multDefault
+    const sakuraRounds = rounds > 0 ? rounds : 1
+    const startIndex = room.index + 1
+    const songLabel = titleKey
+    const multHint = mult > 1 ? ` · 정답 시 ×${mult}` : ''
+    const whenHint = `다음 ${sakuraRounds}R `
+    victim.sakuraDecoy = {
+      youtubeUrl,
+      startSec,
+      endSec: 0,
+      startIndex,
+      roundsLeft: sakuraRounds,
+      scoreMult: mult,
+      byName: reflected ? shield!.name : aug.name,
+      byNickname: reflected ? intended.nickname : user.nickname,
+      mode: 'classic',
+      slots: [],
+      fakeRevealed: {},
+      fakeScore: 0,
+      usedDecoyYt: [],
+      genre: '',
+      titleChosung: '',
+      artistChosung: '',
     }
+    io.to(victim.socketId).emit('augment:hint', {
+      name: aug.name,
+      hint: reflected
+        ? `[무지개 반사] ${whenHint}「${songLabel}」이(가) 재생됩니다${multHint}`
+        : `[${aug.name}] ${whenHint}「${songLabel}」이(가) 재생됩니다${multHint}`,
+      durationMs: 0,
+    })
     if (reflected) {
       io.to(intended.socketId).emit('augment:hint', {
         name: shield!.name,
@@ -2838,19 +3064,8 @@ async function applyAugmentEffect(
       })
       return {
         ok: true,
-        hint: isTruman
-          ? `[무지개 반사] 튕겨 돌아옴 · 몰래 적용됨`
-          : `[무지개 반사] ${intended.nickname}님에게 튕겨 ${whenHint}「${songLabel}」 재생${multHint}`,
+        hint: `[무지개 반사] ${intended.nickname}님에게 튕겨 ${whenHint}「${songLabel}」 재생${multHint}`,
         chatText: `${intended.nickname}님의 [무지개 반사]! ${user.nickname}님의 [${aug.name}]이(가) 되돌아갔습니다!`,
-        silent: isTruman,
-      }
-    }
-    if (isTruman) {
-      return {
-        ok: true,
-        hint: `[${aug.name}] 몰래 적용됨`,
-        chatText: null,
-        silent: true,
       }
     }
     return {
@@ -3000,6 +3215,7 @@ async function applyAugmentEffect(
     const penalty = Number(value.penalty)
     const winPts = Number.isFinite(bonus) ? bonus : 5
     const losePts = Number.isFinite(penalty) ? penalty : 5
+    // 본인 이득형: 사용 즉시(이번 라운드부터)
     m.activeBuffs.push({
       name: aug.name,
       description: aug.description,
@@ -3007,12 +3223,12 @@ async function applyAugmentEffect(
       effectValue: { rounds: wagerRounds, bonus: winPts, penalty: losePts },
       imageUrl: aug.imageUrl || null,
       usedByNickname: user.nickname,
-      startIndex: room.index + 1,
+      startIndex: room.index,
       roundsLeft: wagerRounds,
     })
     return {
       ok: true,
-      hint: `[${aug.name}] 다음 ${wagerRounds}R · 정답 시 +${winPts} / 실패 시 −${losePts}`,
+      hint: `[${aug.name}] 지금부터 ${wagerRounds}R · 정답 시 +${winPts} / 실패 시 −${losePts}`,
       chatText: defaultChat,
     }
   }
@@ -3080,7 +3296,7 @@ async function applyAugmentEffect(
     const delayRaw = Number(value.delaySec)
     const bonusRaw = Number(value.bonus)
     const delaySec = Number.isFinite(delayRaw) && delayRaw > 0 ? delayRaw : 7
-    const bonus = Number.isFinite(bonusRaw) && bonusRaw > 0 ? Math.floor(bonusRaw) : 1
+    const bonus = Number.isFinite(bonusRaw) && bonusRaw > 0 ? Math.floor(bonusRaw) : 2
     // 다음 라운드부터 적용 (이번 R에는 안 걸림)
     const startIndex = room.index + 1
     m.activeBuffs.push({
@@ -3097,6 +3313,25 @@ async function applyAugmentEffect(
       ok: true,
       hint: `[${aug.name}] 다음부터 ${starterRounds}R · ${delaySec}초 뒤 재생 · 정답 시 +${bonus}`,
       chatText: `${user.nickname}님이 [${aug.name}]! 다음 라운드부터 ${starterRounds}R · ${delaySec}초 뒤 재생 · 정답 +${bonus}`,
+    }
+  }
+
+  if (aug.effectType === 'late_answer') {
+    const lateRounds = rounds > 0 ? rounds : 5
+    m.activeBuffs.push({
+      name: aug.name,
+      description: aug.description,
+      effectType: aug.effectType,
+      effectValue: { rounds: lateRounds },
+      imageUrl: aug.imageUrl || null,
+      usedByNickname: user.nickname,
+      startIndex: room.index + 1,
+      roundsLeft: lateRounds,
+    })
+    return {
+      ok: true,
+      hint: `[${aug.name}] 다음 ${lateRounds}R · 이미 공개된 정답도 스킵 전까지 제출 가능`,
+      chatText: `${user.nickname}님이 [${aug.name}]! 다음 ${lateRounds}R 동안 스킵 전까지 늦은 정답도 인정됩니다`,
     }
   }
 
@@ -3176,7 +3411,7 @@ async function applyAugmentEffect(
   }
 
   if (aug.effectType === 'score_bonus') {
-    const bonusRounds = rounds > 0 ? rounds : 2
+    const bonusRounds = rounds > 0 ? rounds : 3
     const bonusRaw = Number(value.bonus)
     const bonus = Number.isFinite(bonusRaw) && bonusRaw > 0 ? Math.floor(bonusRaw) : 1
     m.activeBuffs.push({
@@ -3253,7 +3488,7 @@ async function applyAugmentEffect(
     const genre = next.genre || '-'
     return {
       ok: true,
-      hint: `[${aug.name}] 다음 곡 힌트\n장르: ${genre}\n제목: ${titleH}\n가수: ${artistH}`,
+      hint: `[${aug.name}] 다음 곡 힌트\n장르: ${genre}\n제목: ${titleH}\n가수/커버/캐릭터: ${artistH}`,
       chatText: `${user.nickname}님이 [${aug.name}]으로 다음 라운드 힌트를 훔쳐봤습니다`,
     }
   }
@@ -3296,7 +3531,7 @@ async function applyAugmentEffect(
     })
     return {
       ok: true,
-      hint: `[${aug.name}] 지금부터 ${knowRounds}R · 제목·가수 공개 · 정답 불가`,
+      hint: `[${aug.name}] 지금부터 ${knowRounds}R · 제목·가수/커버/캐릭터 공개 · 정답 불가`,
       chatText: `${user.nickname}님이 [${aug.name}]! 지금부터 ${knowRounds}R 답을 알지만 맞힐 수 없습니다`,
     }
   }
@@ -3600,7 +3835,7 @@ async function applyAugmentEffect(
   }
 
   if (aug.effectType === 'reveal_game_song') {
-    const revealRounds = rounds > 0 ? rounds : 5
+    const revealRounds = rounds > 0 ? rounds : 8
     m.activeBuffs.push({
       name: aug.name,
       description: aug.description,
@@ -3613,7 +3848,7 @@ async function applyAugmentEffect(
     })
     return {
       ok: true,
-      hint: `[${aug.name}] 지금부터 ${revealRounds}R · 게임 장르면 정답 공개`,
+      hint: `[${aug.name}] 지금부터 ${revealRounds}R · 게임 분야에서 정답 공개`,
       chatText: defaultChat,
     }
   }
@@ -3668,12 +3903,12 @@ function pickRandomOtherMember(room: Room, selfId: string): Member | null {
 function pickRandomOtherMembers(room: Room, selfId: string, count: number): Member[] {
   const others = [...room.members.values()].filter((x) => x.userId !== selfId)
   if (!others.length || count <= 0) return []
-  const shuffled = [...others].sort(() => Math.random() - 0.5)
+  const shuffled = shuffleArray(others)
   return shuffled.slice(0, Math.min(count, shuffled.length))
 }
 
 function pickChaosAugments(pool: AugmentLike[], count: number): AugmentLike[] {
-  const shuffled = [...pool].sort(() => Math.random() - 0.5)
+  const shuffled = shuffleArray(pool)
   if (shuffled.length >= count) return shuffled.slice(0, count)
   const out = [...shuffled]
   while (out.length < count && pool.length > 0) {
@@ -3700,10 +3935,12 @@ function clearTimer(room: Room) {
 }
 
 function applyRoundStartBuffs(io: Server, room: Room) {
+  if (isAugmentTimePaused(room)) return
   const q = room.queue[room.index]
   if (!q) return
+  flushPendingAugmentNotices(io, room)
   for (const m of room.members.values()) {
-    for (const b of activeBuffsAt(m, room.index)) {
+    for (const b of activeBuffsAt(m, room.index, room)) {
       if (b.effectType === 'flash_answer') {
         const delaySec = Number(b.effectValue.delaySec) || 0
         const ms = Number(b.effectValue.ms)
@@ -3841,8 +4078,11 @@ export function registerSocket(io: Server) {
         wagerSettled: new Set(),
         followAnswerWindow: {},
         followAnswerClaimed: {},
+        lateAnswerClaimed: {},
         duel: null,
         pendingDuel: null,
+        duelStarting: false,
+        pendingAugmentNotices: [],
       }
       attachMember(room, emptyMember(user.id, profile.nickname, profile.avatarUrl, socket.id))
       rooms.set(id, room)
@@ -3917,7 +4157,7 @@ export function registerSocket(io: Server) {
       const room = findRoomByUser(user.id)
       if (!room) return
       const m = room.members.get(user.id)
-      if (m && room.status === 'playing' && isChatMuted(m, room.index)) {
+      if (m && room.status === 'playing' && isChatMuted(m, room.index, room)) {
         io.to(m.socketId).emit('chat:message', {
           id: Date.now(),
           userId: '',
@@ -3966,6 +4206,7 @@ export function registerSocket(io: Server) {
       room.lastAugmentAt = -1
       room.duel = null
       room.pendingDuel = null
+      room.duelStarting = false
       room.skipVotes = new Set()
       room.revealed = {}
       room.clearedHintSent = false
@@ -3973,6 +4214,7 @@ export function registerSocket(io: Server) {
       room.wagerSettled = new Set()
       room.followAnswerWindow = {}
       room.followAnswerClaimed = {}
+      room.lateAnswerClaimed = {}
       for (const m of room.members.values()) {
         m.score = 0
         m.ready = false
@@ -4027,7 +4269,7 @@ export function registerSocket(io: Server) {
           at: Date.now(),
         })
         const q = duel.question
-        const slot = q.slots[0]
+        const slot = q?.slots?.[0]
         if (!slot || room.revealed[slot.id]) return
         if (!isAcceptedAnswer(text, slot.acceptNorms)) return
 
@@ -4059,7 +4301,7 @@ export function registerSocket(io: Server) {
       }
 
       const memberSelf = room.members.get(user.id)
-      if (memberSelf && isChatMuted(memberSelf, room.index)) {
+      if (memberSelf && isChatMuted(memberSelf, room.index, room)) {
         io.to(memberSelf.socketId).emit('chat:message', {
           id: Date.now(),
           userId: '',
@@ -4095,7 +4337,7 @@ export function registerSocket(io: Server) {
         at: Date.now(),
       })
 
-      if (memberSelf && isAnswerBlocked(memberSelf, room.index)) {
+      if (memberSelf && isAnswerBlocked(memberSelf, room.index, room)) {
         const blockName = answerBlockPublic(memberSelf, room.index).answerBlockBy || '쉬었음청년'
         io.to(memberSelf.socketId).emit('chat:message', {
           id: Date.now() + 1,
@@ -4109,14 +4351,15 @@ export function registerSocket(io: Server) {
       }
 
       let scoreText = text
-      if (memberSelf && isPoliteSuffixActive(memberSelf, room.index)) {
+      if (memberSelf && isPoliteSuffixActive(memberSelf, room.index, room)) {
         const suffix = memberSelf.politeSuffix!.suffix || '입니다'
+        const ruleName = memberSelf.politeSuffix!.byName || '예의바른청년'
         if (!text.trim().endsWith(suffix)) {
           io.to(memberSelf.socketId).emit('chat:message', {
             id: Date.now() + 1,
             userId: '',
             nickname: '시스템',
-            text: `예의바른청년! 답 끝에 「${suffix}」를 붙여야 합니다`,
+            text: `${ruleName}! 답 끝에 「${suffix}」를 붙여야 합니다`,
             system: true,
             at: Date.now(),
           })
@@ -4162,6 +4405,55 @@ export function registerSocket(io: Server) {
 
       for (const slot of q.slots) {
         if (room.revealed[slot.id]) {
+          // 미룬이의 가호: 누가 먼저 맞힌 뒤라도 스킵 전까지 본인 정답을 1회 인정
+          const lateBuff = memberSelf ? lateAnswerBuff(memberSelf, room.index, room) : null
+          const lateClaimed = room.lateAnswerClaimed[slot.id] || new Set<string>()
+          if (
+            lateBuff
+            && room.revealed[slot.id].userId !== user.id
+            && !lateClaimed.has(user.id)
+            && isAcceptedAnswer(scoreText, slot.acceptNorms)
+          ) {
+            lateClaimed.add(user.id)
+            room.lateAnswerClaimed[slot.id] = lateClaimed
+
+            let gain = answerScoreFor(memberSelf!, room.index, slot.hidden, room)
+            gain = riskyGainForAnswer(room, memberSelf!, user.id, q, gain)
+            gain = hiddenRunGainForAnswer(memberSelf!, room.index, slot.hidden, gain, room)
+            let starterBonus = slowStarterBonus(memberSelf!, room.index, room)
+            let flatBonus = scoreBonusFor(memberSelf!, room.index, room) + politeSuffixBonus(memberSelf!, room.index, room)
+            if (!slot.hidden && hasHiddenRun(memberSelf!, room.index, room)) {
+              starterBonus = 0
+              flatBonus = 0
+            }
+            if (gain < 0) {
+              starterBonus = 0
+              flatBonus = 0
+            }
+            const pointsShown = gain + starterBonus + flatBonus
+            memberSelf!.score += pointsShown
+            memberSelf!.roundScoreGain += pointsShown
+            tryResolveWagerWin(io, room, memberSelf!)
+            tryTriggerAccuseSleep(io, room, memberSelf!)
+            applyGabukiOnCorrect(io, room, memberSelf!)
+            applyFlameKimOnCorrect(io, room, memberSelf!)
+            bankAnswerProxyPoints(io, room, user.id, pointsShown)
+            io.to(room.id).emit('room:state', roomState(room))
+            io.to(room.id).emit('chat:message', {
+              id: Date.now() + 19,
+              userId: '',
+              nickname: '시스템',
+              text: `${user.nickname}님 [${lateBuff.name}]! ${slot.label} 늦은 정답 인정 +${pointsShown}점`,
+              system: true,
+              at: Date.now(),
+            })
+            io.to(memberSelf!.socketId).emit('augment:hint', {
+              name: lateBuff.name,
+              hint: `[${lateBuff.name}] ${slot.label} 늦은 정답 인정! +${pointsShown}점`,
+              durationMs: 2500,
+            })
+            break
+          }
           // 보너스 타임: 선답 후 windowMs 안 추종 정답
           const win = room.followAnswerWindow[slot.id]
           if (!win) {
@@ -4180,7 +4472,7 @@ export function registerSocket(io: Server) {
             continue
           }
           if (Date.now() - win.at > win.windowMs + FOLLOW_ANSWER_GRACE_MS) continue
-          if (!memberSelf || !hasFollowAnswer(memberSelf, room.index)) continue
+          if (!memberSelf || !hasFollowAnswer(memberSelf, room.index, room)) continue
           if (win.byUserId === user.id) continue
           const claimed = room.followAnswerClaimed[slot.id] || new Set()
           if (claimed.has(user.id)) continue
@@ -4189,14 +4481,14 @@ export function registerSocket(io: Server) {
           claimed.add(user.id)
           room.followAnswerClaimed[slot.id] = claimed
 
-          let gain = answerScoreFor(memberSelf, room.index)
+          let gain = answerScoreFor(memberSelf, room.index, win.hidden, room)
           let starterBonus = 0
           let flatBonus = 0
           gain = riskyGainForAnswer(room, memberSelf, user.id, q, gain)
-          gain = hiddenRunGainForAnswer(memberSelf, room.index, win.hidden, gain)
-          starterBonus = slowStarterBonus(memberSelf, room.index)
-          flatBonus = scoreBonusFor(memberSelf, room.index)
-          if (!win.hidden && hasHiddenRun(memberSelf, room.index)) {
+          gain = hiddenRunGainForAnswer(memberSelf, room.index, win.hidden, gain, room)
+          starterBonus = slowStarterBonus(memberSelf, room.index, room)
+          flatBonus = scoreBonusFor(memberSelf, room.index, room) + politeSuffixBonus(memberSelf, room.index, room)
+          if (!win.hidden && hasHiddenRun(memberSelf, room.index, room)) {
             starterBonus = 0
             flatBonus = 0
           }
@@ -4240,11 +4532,11 @@ export function registerSocket(io: Server) {
           if (isTitle) {
             for (const other of room.members.values()) {
               if (other.userId === user.id) continue
-              if (!hasRiskyDouble(other, room.index)) continue
+              if (!hasRiskyDouble(other, room.index, room)) continue
               if (room.riskyBustApplied.has(other.userId)) continue
               room.riskyBustApplied.add(other.userId)
               other.score -= 1
-              const buff = activeBuffsAt(other, room.index).find((b) => b.effectType === 'score_mult_risky')
+              const buff = activeBuffsAt(other, room.index, room).find((b) => b.effectType === 'score_mult_risky')
               const name = buff?.name || '점수가 2배'
               io.to(room.id).emit('chat:message', {
                 id: Date.now() + 5,
@@ -4262,16 +4554,16 @@ export function registerSocket(io: Server) {
             }
           }
           const member = room.members.get(user.id)
-          let gain = member ? answerScoreFor(member, room.index) : 1
+          let gain = member ? answerScoreFor(member, room.index, slot.hidden, room) : (slot.hidden ? 3 : 1)
           let starterBonus = 0
           let flatBonus = 0
           if (member) {
             gain = riskyGainForAnswer(room, member, user.id, q, gain)
-            gain = hiddenRunGainForAnswer(member, room.index, slot.hidden, gain)
-            starterBonus = slowStarterBonus(member, room.index)
-            flatBonus = scoreBonusFor(member, room.index)
+            gain = hiddenRunGainForAnswer(member, room.index, slot.hidden, gain, room)
+            starterBonus = slowStarterBonus(member, room.index, room)
+            flatBonus = scoreBonusFor(member, room.index, room) + politeSuffixBonus(member, room.index, room)
             // 히든런 일반 슬롯 0점 규칙이 보너스도 막음
-            if (!slot.hidden && hasHiddenRun(member, room.index)) {
+            if (!slot.hidden && hasHiddenRun(member, room.index, room)) {
               starterBonus = 0
               flatBonus = 0
             }
@@ -4469,6 +4761,15 @@ export function registerSocket(io: Server) {
       if (!room || room.status !== 'playing') return
       const m = room.members.get(user.id)
       if (!m?.heldAugmentId || !m.heldAugmentName || !m.heldAugmentEffectType) return
+      // 트루먼쇼 예약·진행 중: 다른 증강 사용 불가 (남은 라운드 보존)
+      if (isAugmentTimePaused(room)) {
+        io.to(m.socketId).emit('augment:hint', {
+          name: m.heldAugmentName,
+          hint: '트루먼쇼 동안 증강은 사용할 수 없습니다 (남은 라운드는 보존됩니다)',
+          durationMs: 0,
+        })
+        return
+      }
       // 자동 사용 / 피격 자동 발동 증강은 수동 사용 불가
       if (
         AUTO_APPLY_AUGMENT_TYPES.has(m.heldAugmentEffectType)
@@ -4503,7 +4804,8 @@ export function registerSocket(io: Server) {
         )
         const picks = pickChaosAugments(pool, 2)
         const hintLines: string[] = []
-        const chatLines: string[] = []
+        const publicChatLines: string[] = []
+        const reservedChatLines: string[] = []
         for (const pick of picks) {
           let targetId: string | undefined
           let genrePick: string | undefined
@@ -4527,19 +4829,57 @@ export function registerSocket(io: Server) {
             }
             genrePick = options[Math.floor(Math.random() * options.length)]
           }
-          const result = await applyAugmentEffect(io, room, m, user, pick, targetId, genrePick)
+          const result = await applyAugmentEffect(io, room, m, user, pick, targetId, genrePick).catch((err) => {
+            console.error('[chaos_cast] apply failed', pick.effectType, err)
+            return { ok: false as const, hint: null, chatText: null, silent: false }
+          })
           if (!result.ok) {
             hintLines.push(`[${pick.name}] 적용 실패`)
             continue
           }
           if (result.hint) hintLines.push(result.hint)
-          if (result.chatText) chatLines.push(result.chatText)
+          if (result.silent) {
+            // 트루먼쇼 등: 전원 채팅 생략
+          } else if (result.chatText && NEXT_ROUND_PUBLIC_AUGMENT_TYPES.has(pick.effectType)) {
+            room.pendingAugmentNotices.push({
+              startIndex: room.index + 1,
+              userId: user.id,
+              nickname: user.nickname,
+              name: pick.name,
+              effectType: pick.effectType,
+              description: pick.description,
+              imageUrl: pick.imageUrl || null,
+              tier: pick.tier,
+              message: result.chatText,
+            })
+            reservedChatLines.push(result.chatText)
+          } else if (result.chatText) {
+            publicChatLines.push(result.chatText)
+          }
           // 혹시 상태 전이가 있으면 추가 효과 중단
           if (room.status !== 'playing') break
         }
         const names = picks.map((p) => p.name).join(' · ')
         hint = `[혼돈] ${names}\n${hintLines.join('\n')}`
-        chatText = `${user.nickname}님의 [혼돈]! → ${names}${chatLines.length ? `\n${chatLines.join(' / ')}` : ''}`
+        const publicTail = publicChatLines.length ? `\n${publicChatLines.join(' / ')}` : ''
+        chatText = `${user.nickname}님의 [혼돈]! → ${names}${publicTail}`
+        // 예약형은 시전자에게만 별도 안내 (전원 채팅은 발동 시)
+        if (reservedChatLines.length) {
+          io.to(m.socketId).emit('chat:message', {
+            id: Date.now() + 17,
+            userId: '',
+            nickname: '시스템',
+            text: `예약 완료 · 다음 라운드에 발동합니다 (본인만 표시) — ${reservedChatLines.join(' / ')}`,
+            system: true,
+            at: Date.now(),
+            augmentCard: {
+              name: aug.name,
+              description: aug.description,
+              imageUrl: aug.imageUrl || null,
+              tier: aug.tier,
+            },
+          })
+        }
       } else if (aug.effectType === 'gaho_select') {
         const gahoId = payload?.gahoAugmentId
         if (!gahoId) return
@@ -4636,16 +4976,36 @@ export function registerSocket(io: Server) {
         if (GENRE_AUGMENT_TYPES.has(aug.effectType)) {
           if (!payload?.genreName) return
         }
-        const result = await applyAugmentEffect(
-          io,
-          room,
-          m,
-          user,
-          aug,
-          payload?.targetUserId,
-          payload?.genreName,
-        )
-        if (!result.ok) return
+        let result: Awaited<ReturnType<typeof applyAugmentEffect>>
+        try {
+          result = await applyAugmentEffect(
+            io,
+            room,
+            m,
+            user,
+            aug,
+            payload?.targetUserId,
+            payload?.genreName,
+          )
+        } catch (err) {
+          console.error('[augment:use] apply failed', aug.effectType, err)
+          io.to(m.socketId).emit('augment:hint', {
+            name: aug.name,
+            hint: `[${aug.name}] 적용 중 오류가 발생했습니다`,
+            durationMs: 0,
+          })
+          return
+        }
+        if (!result.ok) {
+          if (result.hint) {
+            io.to(m.socketId).emit('augment:hint', {
+              name: aug.name,
+              hint: result.hint,
+              durationMs: 0,
+            })
+          }
+          return
+        }
         m.usedAugments.push(aug.name)
         clearHeldAugment(m)
         hint = result.hint
@@ -4653,14 +5013,36 @@ export function registerSocket(io: Server) {
         if (result.silent) silentUse = true
       }
 
+      const deferPublicNotice = !silentUse
+        && usedCard.tier !== '가호'
+        && (usedCard.tier || '').toLowerCase() !== 'gaho'
+        && NEXT_ROUND_PUBLIC_AUGMENT_TYPES.has(aug.effectType)
+        && !!chatText
+      if (deferPublicNotice) {
+        room.pendingAugmentNotices.push({
+          startIndex: room.index + 1,
+          userId: user.id,
+          nickname: user.nickname,
+          name: usedCard.name,
+          effectType: aug.effectType,
+          description: usedCard.description,
+          imageUrl: usedCard.imageUrl || null,
+          tier: usedCard.tier,
+          message: chatText!,
+        })
+      }
+
       if (!silentUse) {
-        io.to(room.id).emit('augment:used', {
+        io.to(deferPublicNotice ? m.socketId : room.id).emit('augment:used', {
           userId: user.id,
           nickname: user.nickname,
           name: usedCard.name,
           description: usedCard.description,
           imageUrl: usedCard.imageUrl || null,
           tier: usedCard.tier,
+          message: deferPublicNotice
+            ? `예약 완료 · 다음 라운드에 발동합니다 (본인만 표시)\n${chatText}`
+            : chatText || `${user.nickname}님이 [${usedCard.name}]을(를) 사용했습니다`,
         })
       }
       if (hint) {
@@ -4672,11 +5054,13 @@ export function registerSocket(io: Server) {
       }
       io.to(room.id).emit('room:state', roomState(room))
       if (chatText) {
-        io.to(room.id).emit('chat:message', {
+        io.to(deferPublicNotice ? m.socketId : room.id).emit('chat:message', {
           id: Date.now(),
           userId: '',
           nickname: '시스템',
-          text: chatText,
+          text: deferPublicNotice
+            ? `예약 완료 · 다음 라운드에 발동합니다 (본인만 표시) — ${chatText}`
+            : chatText,
           system: true,
           at: Date.now(),
           ...(silentUse
@@ -4706,25 +5090,86 @@ function findRoomByUser(userId: string) {
 function leaveRoom(io: Server, socket: Socket, userId: string) {
   const room = findRoomByUser(userId)
   if (!room) return
+  const nickname = room.members.get(userId)?.nickname || '?'
+  const pendingHit = !!(
+    room.pendingDuel
+    && (userId === room.pendingDuel.challengerId || userId === room.pendingDuel.opponentId)
+  )
+  const duelHit = !!(room.status === 'duel' && room.duel && isDuelParticipant(room, userId))
+
   room.members.delete(userId)
   userRoomId.delete(userId)
   socket.leave(room.id)
   if (room.members.size === 0) {
     clearTimer(room)
+    room.duel = null
+    room.pendingDuel = null
+    room.duelStarting = false
     rooms.delete(room.id)
   } else {
     if (room.hostId === userId) {
       room.hostId = [...room.members.keys()][0]
     }
-    io.to(room.id).emit('room:state', roomState(room))
+    if (pendingHit) {
+      room.pendingDuel = null
+      room.duelStarting = false
+      room.pendingAugmentNotices = room.pendingAugmentNotices.filter(
+        (notice) => notice.effectType !== 'yacha_duel',
+      )
+      io.to(room.id).emit('chat:message', {
+        id: Date.now(),
+        userId: '',
+        nickname: '시스템',
+        text: `야차룰 상대(${nickname})가 나가 예약이 취소되었습니다`,
+        system: true,
+        at: Date.now(),
+      })
+    }
+    if (duelHit && room.duel) {
+      io.to(room.id).emit('chat:message', {
+        id: Date.now(),
+        userId: '',
+        nickname: '시스템',
+        text: `${nickname}님이 나가 야차룰이 종료되었습니다`,
+        system: true,
+        at: Date.now(),
+      })
+      endDuel(io, room, 'resolved')
+    } else {
+      io.to(room.id).emit('room:state', roomState(room))
+    }
   }
   io.emit('lobby:rooms', publicRooms())
 }
 
 function startDuelRound(io: Server, room: Room) {
   const duel = room.duel
-  if (!duel) return
+  if (!duel || !duel.question?.slots?.length) {
+    room.duel = null
+    room.duelStarting = false
+    if (rooms.has(room.id) && room.status !== 'ended' && room.members.size > 0) {
+      startRound(io, room)
+    }
+    return
+  }
+  if (!room.members.has(duel.challengerId) || !room.members.has(duel.opponentId)) {
+    room.duel = null
+    room.duelStarting = false
+    io.to(room.id).emit('chat:message', {
+      id: Date.now(),
+      userId: '',
+      nickname: '시스템',
+      text: '야차룰 상대가 없어 취소되었습니다',
+      system: true,
+      at: Date.now(),
+    })
+    if (rooms.has(room.id) && room.status !== 'ended' && room.members.size > 0) {
+      startRound(io, room)
+    }
+    return
+  }
   clearTimer(room)
+  room.duelStarting = false
   room.status = 'duel'
   room.skipVotes = new Set()
   room.revealed = {}
@@ -4799,12 +5244,9 @@ function endDuel(io: Server, room: Room, reason: 'resolved' | 'timeout') {
     })
   }
 
-  const reveal = q.slots.map((s) => ({
-    id: s.id,
-    label: s.label,
-    answer: s.answer,
-    by: room.revealed[s.id]?.by || null,
-  }))
+  const reveal = q?.slots?.length
+    ? buildRevealSlots(room, q)
+    : []
 
   room.status = 'revealing'
   io.to(room.id).emit('round:reveal', { reason: reason === 'timeout' ? 'timeout' : 'cleared', slots: reveal, pauseSec: 3 })
@@ -4816,8 +5258,11 @@ function endDuel(io: Server, room: Room, reason: 'resolved' | 'timeout') {
   const savedRiskyBust = duel.savedRiskyBust
   const savedWagerSettled = duel.savedWagerSettled
   room.duel = null
+  room.duelStarting = false
   room.index = resumeIndex
   room.timer = setTimeout(() => {
+    if (!rooms.has(room.id) || room.members.size === 0 || room.status === 'ended') return
+    if (room.duel || room.duelStarting) return
     resumeMainRoundAfterDuel(io, room, {
       revealed: savedRevealed,
       remainingMs: savedRemainingMs,
@@ -4872,6 +5317,7 @@ function resumeMainRoundAfterDuel(
   room.wagerSettled = new Set(saved.wagerSettled)
   room.followAnswerWindow = {}
   room.followAnswerClaimed = {}
+  room.lateAnswerClaimed = {}
 
   const remainingSec = Math.max(10, Math.ceil(saved.remainingMs / 1000))
   const duration = Math.max(remainingSec, 10)
@@ -4927,6 +5373,8 @@ function resumeMainRoundAfterDuel(
 
 function startRound(io: Server, room: Room) {
   clearTimer(room)
+  // 야차 진행/부팅 중이면 본게임 라운드 시작으로 덮어쓰지 않음
+  if (room.status === 'duel' || room.duelStarting) return
   if (room.index >= room.queue.length) {
     forceSettleTrumanIllusions(io, room)
     forceSettleAnswerProxies(io, room)
@@ -4997,38 +5445,84 @@ function startRound(io: Server, room: Room) {
   // 예약된 야차룰 → 이번 곡 시작 직전에 발동 (종료 후 이 인덱스 라운드 재개)
   if (room.pendingDuel && !room.duel) {
     const pending = room.pendingDuel
-    room.pendingDuel = null
+    room.duelStarting = true
     void (async () => {
-      const question = await pickDuelQuestion(room)
-      if (!question) {
+      const failStart = (msg: string) => {
+        room.duelStarting = false
+        room.pendingDuel = null
+        room.duel = null
+        room.pendingAugmentNotices = room.pendingAugmentNotices.filter(
+          (notice) => notice.effectType !== 'yacha_duel',
+        )
+        if (!rooms.has(room.id) || room.members.size === 0 || room.status === 'ended') return
         io.to(room.id).emit('chat:message', {
           id: Date.now(),
           userId: '',
           nickname: '시스템',
-          text: '야차룰에 쓸 노래를 찾지 못해 취소되었습니다',
+          text: msg,
           system: true,
           at: Date.now(),
         })
         startRound(io, room)
-        return
       }
-      if (room.status === 'ended' || room.duel) {
-        startRound(io, room)
-        return
+      try {
+        // 퇴장 등으로 예약이 이미 취소된 경우
+        if (room.pendingDuel !== pending) {
+          room.duelStarting = false
+          if (!room.duel && rooms.has(room.id) && room.status !== 'ended' && room.members.size > 0) {
+            startRound(io, room)
+          }
+          return
+        }
+        if (!room.members.has(pending.challengerId) || !room.members.has(pending.opponentId)) {
+          failStart('야차룰 상대가 없어 취소되었습니다')
+          return
+        }
+        const question = await pickDuelQuestion(room)
+        if (room.pendingDuel !== pending) {
+          room.duelStarting = false
+          if (!room.duel && rooms.has(room.id) && room.status !== 'ended' && room.members.size > 0) {
+            startRound(io, room)
+          }
+          return
+        }
+        if (!question?.slots?.length) {
+          failStart('야차룰에 쓸 노래를 찾지 못해 취소되었습니다')
+          return
+        }
+        if (!rooms.has(room.id) || room.status === 'ended' || room.members.size === 0) {
+          room.duelStarting = false
+          room.pendingDuel = null
+          return
+        }
+        if (room.duel) {
+          room.duelStarting = false
+          room.pendingDuel = null
+          return
+        }
+        if (!room.members.has(pending.challengerId) || !room.members.has(pending.opponentId)) {
+          failStart('야차룰 상대가 없어 취소되었습니다')
+          return
+        }
+        room.pendingDuel = null
+        room.duel = {
+          challengerId: pending.challengerId,
+          opponentId: pending.opponentId,
+          question,
+          penalty: pending.penalty,
+          byName: pending.byName,
+          resumeIndex: room.index,
+          savedRevealed: {},
+          savedRemainingMs: 40_000,
+          savedRiskyBust: new Set(),
+          savedWagerSettled: new Set(),
+        }
+        flushPendingAugmentNotices(io, room)
+        startDuelRound(io, room)
+      } catch (err) {
+        console.error('[yacha_duel] pending start failed', err)
+        failStart('야차룰 시작 중 오류로 취소되었습니다')
       }
-      room.duel = {
-        challengerId: pending.challengerId,
-        opponentId: pending.opponentId,
-        question,
-        penalty: pending.penalty,
-        byName: pending.byName,
-        resumeIndex: room.index,
-        savedRevealed: {},
-        savedRemainingMs: 40_000,
-        savedRiskyBust: new Set(),
-        savedWagerSettled: new Set(),
-      }
-      startDuelRound(io, room)
     })()
     return
   }
@@ -5041,6 +5535,7 @@ function startRound(io: Server, room: Room) {
   room.wagerSettled = new Set()
   room.followAnswerWindow = {}
   room.followAnswerClaimed = {}
+  room.lateAnswerClaimed = {}
   for (const m of room.members.values()) {
     m.roundScoreGain = 0
   }
@@ -5096,6 +5591,22 @@ function startRound(io: Server, room: Room) {
   room.timer = setTimeout(() => endRound(io, room, 'timeout'), duration * 1000)
 }
 
+function buildRevealSlots(room: Room, q: QuestionRuntime) {
+  const openSlots = q.slots.filter((s) => !s.hidden)
+  // 일반(제목·가수 등)을 전부 맞혀 히든이 등장한 뒤에만 히든 정답 공개
+  const hiddenUnlocked = openSlots.length === 0 || openSlots.every((s) => room.revealed[s.id])
+  return q.slots.map((s) => {
+    const alreadySolved = !!room.revealed[s.id]
+    const showHiddenAnswer = !s.hidden || hiddenUnlocked || alreadySolved
+    return {
+      id: s.id,
+      label: s.label,
+      answer: showHiddenAnswer ? s.answer : '???',
+      by: room.revealed[s.id]?.by || null,
+    }
+  })
+}
+
 function endRound(io: Server, room: Room, reason: 'cleared' | 'skip' | 'timeout') {
   // reveal / 다음 라운드 대기 중 중복 endRound 방지 (스킵 연타로 곡이 여러 개 넘어가던 버그)
   if (room.status !== 'playing') return
@@ -5119,17 +5630,15 @@ function endRound(io: Server, room: Room, reason: 'cleared' | 'skip' | 'timeout'
   settleWaterGhost(io, room)
   settleComboClear(io, room)
   settleGabukiMiss(io, room)
+  // 한입만/맞췄죠?: 버프 tick 전에 실패 결산 (1R 버프가 tick으로 사라지면 패널티 누락)
+  settleWagerAnswers(io, room)
+  const pauseAugments = isAugmentTimePaused(room)
   for (const m of room.members.values()) {
-    tickBuffsAfterRound(io, room, m, room.index)
+    tickBuffsAfterRound(io, room, m, room.index, pauseAugments)
   }
   settleAllAnswerProxies(io, room)
 
-  const reveal = q.slots.map((s) => ({
-    id: s.id,
-    label: s.label,
-    answer: s.answer,
-    by: room.revealed[s.id]?.by || null,
-  }))
+  const reveal = buildRevealSlots(room, q)
 
   io.to(room.id).emit('round:reveal', { reason, slots: reveal, pauseSec: 3 })
   io.to(room.id).emit('round:skip_update', { votes: 0, need: Math.floor(room.members.size / 2) + 1 })
@@ -5209,6 +5718,7 @@ async function finishAugmentIfReady(io: Server, room: Room) {
         description: aug.description,
         imageUrl: aug.imageUrl || null,
         tier: aug.tier,
+        message: result.chatText || `${m.nickname}님이 [${aug.name}]을(를) 사용했습니다`,
       })
       io.to(room.id).emit('chat:message', {
         id: Date.now() + Math.floor(Math.random() * 100),

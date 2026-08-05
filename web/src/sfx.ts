@@ -8,6 +8,7 @@ type SfxName =
   | 'skip'
   | 'augment'
   | 'augmentUse'
+  | 'gaho'
   | 'gameEnd'
   | 'click'
   | 'countdown'
@@ -146,6 +147,20 @@ const plays: Record<SfxName, () => void> = {
     const t = ensureCtx().currentTime
     tone(220, t, 0.24, 'sine', 0.46, 330)
     tone(330, t + 0.1, 0.22, 'triangle', 0.38)
+  },
+  /** 가호 강림 — 깊고 화려한 팡파르 */
+  gaho() {
+    const t = ensureCtx().currentTime
+    softThump(t, 0.22, 0.42)
+    tone(130.81, t, 0.35, 'sine', 0.55)
+    tone(164.81, t + 0.08, 0.32, 'triangle', 0.4)
+    ;[261.63, 329.63, 392, 523.25].forEach((f, i) => {
+      tone(f, t + 0.18 + i * 0.11, 0.28, 'sine', 0.48 - i * 0.04)
+      tone(f * 2, t + 0.22 + i * 0.11, 0.2, 'triangle', 0.22)
+    })
+    tone(659.25, t + 0.72, 0.55, 'sine', 0.5)
+    tone(783.99, t + 0.78, 0.6, 'triangle', 0.32)
+    softThump(t + 0.7, 0.18, 0.3)
   },
   gameEnd() {
     const t = ensureCtx().currentTime

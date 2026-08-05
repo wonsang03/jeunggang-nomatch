@@ -225,6 +225,19 @@ export function HiddenYouTube({
 
   const ensureClipPosition = (p: YtPlayer, force = false) => {
     const s = startRef.current
+    const hasRoundSync = !!(endsAtRef.current && roundDurRef.current && roundDurRef.current > 0)
+    const hasClipEnd = endRef.current != null && endRef.current > s
+    // 증강 선택 BGM 등: 라운드/클립 싱크가 없으면 "시작보다 앞"만 보정.
+    // target=startSec 인 채로 재생 경과를 drift로 오판하면 ~3초마다 처음으로 되감김.
+    if (!hasRoundSync && !hasClipEnd) {
+      try {
+        const cur = typeof p.getCurrentTime === 'function' ? p.getCurrentTime() : NaN
+        if (force || !Number.isFinite(cur) || cur < s - 0.75) p.seekTo(s, true)
+      } catch {
+        try { p.seekTo(s, true) } catch { /* ignore */ }
+      }
+      return
+    }
     const target = clipSeekTarget()
     try {
       const cur = typeof p.getCurrentTime === 'function' ? p.getCurrentTime() : NaN
@@ -733,7 +746,8 @@ const MUD_FIGHT_BGM_FALLBACK = 'https://www.youtube.com/watch?v=ZzHYbM0l4ec'
  * (여러 YouTube iframe 이 동시에 뜨면 http IP 에서 재생이 깨짐)
  */
 export function RoomSongPersistentBgm() {
-  const { user, room, round, musicVolume } = useGame()
+  const { user, room, round, musicVolume, gahoCutscene } = useGame()
+  const cutMuteSong = !!gahoCutscene
   const [now, setNow] = useState(() => serverNow())
   const [session, setSession] = useState<{
     url: string
@@ -816,7 +830,7 @@ export function RoomSongPersistentBgm() {
         paused={false}
         playbackRate={1}
         playLabel="🎵 탭해서 증강 BGM 재생"
-        cutMute={false}
+        cutMute={cutMuteSong}
         loop={false}
         playEpoch={`augment-${room.id || 'x'}`}
       />
@@ -839,7 +853,7 @@ export function RoomSongPersistentBgm() {
         playbackRate={1}
         playLabel="🎵 탭해서 증강 노래 재생"
         audioUnlockAt={null}
-        cutMute={songPowerOff}
+        cutMute={songPowerOff || cutMuteSong}
         roundEndsAt={audibleRound ? session.endsAt : null}
         roundDurationSec={session.roundDuration}
         playEpoch={`trick-${audioTrick?.source}-${ytId(trickUrl)}-${session.index}`}
@@ -863,7 +877,7 @@ export function RoomSongPersistentBgm() {
       paused={false}
       playbackRate={songPlaybackRate}
       audioUnlockAt={audibleRound && !inCountdown && me?.audioDelaySec ? (me.audioDelayUntil ?? null) : null}
-      cutMute={songPowerOff}
+      cutMute={songPowerOff || cutMuteSong}
       roundEndsAt={audibleRound ? session.endsAt : null}
       roundDurationSec={session.roundDuration}
       playEpoch={session.index}
@@ -876,7 +890,7 @@ export function RoomSongPersistentBgm() {
  * 스킵·공개·증강 선택 화면으로 넘어가도 플레이어를 유지해 끊김/처음부터 재생을 막음.
  */
 export function FlameKimOverlayBgm() {
-  const { user, room, musicVolume } = useGame()
+  const { user, room, musicVolume, gahoCutscene } = useGame()
   const me = room?.members.find((m) => m.userId === user?.id)
   const [session, setSession] = useState<{ url: string; startSec: number } | null>(null)
   const [now, setNow] = useState(() => serverNow())
@@ -940,7 +954,7 @@ export function FlameKimOverlayBgm() {
       playbackRate={1}
       playLabel="🎵 탭해서 불꽃남자 재생"
       audioUnlockAt={null}
-      cutMute={songPowerOff}
+      cutMute={songPowerOff || !!gahoCutscene}
       loop
       roundEndsAt={null}
       roundDurationSec={null}
