@@ -1178,6 +1178,8 @@ function WaitingScreen({ nav }: { nav: (s: Screen) => void }) {
   const [leaveOpen, setLeaveOpen] = useState(false)
   const [roleBusy, setRoleBusy] = useState(false)
   const chatRef = useRef<HTMLDivElement>(null)
+  const [chatStickBottom, setChatStickBottom] = useState(true)
+  const [chatHasNew, setChatHasNew] = useState(false)
 
   useEffect(() => {
     if (!room) nav('lobby')
@@ -1189,9 +1191,31 @@ function WaitingScreen({ nav }: { nav: (s: Screen) => void }) {
   }, [room?.status, nav])
 
   useEffect(() => {
-    if (chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight
-  }, [chats])
+    const el = chatRef.current
+    if (!el) return
+    if (chatStickBottom) {
+      el.scrollTop = el.scrollHeight
+      setChatHasNew(false)
+    } else {
+      setChatHasNew(true)
+    }
+  }, [chats, chatStickBottom])
 
+  const onChatScroll = () => {
+    const el = chatRef.current
+    if (!el) return
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 48
+    setChatStickBottom(nearBottom)
+    if (nearBottom) setChatHasNew(false)
+  }
+
+  const jumpToLatestChat = () => {
+    const el = chatRef.current
+    if (!el) return
+    el.scrollTop = el.scrollHeight
+    setChatStickBottom(true)
+    setChatHasNew(false)
+  }
   if (!room || !user) return null
 
   const players = room.members
@@ -1290,12 +1314,32 @@ function WaitingScreen({ nav }: { nav: (s: Screen) => void }) {
 
           <NoteCard>
             <div style={{ fontFamily: F.ui, fontSize: 18, fontWeight: 900, marginBottom: 12 }}>채팅</div>
-            <div ref={chatRef} style={{ height: 220, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 10 }}>
-              {chats.map(m => (
-                <div key={m.id} style={{ fontFamily: F.chat, fontSize: 18 }}>
-                  <strong style={{ color: m.system ? C.green : C.blue }}>{m.nickname}</strong>: {m.text}
-                </div>
-              ))}
+            <div style={{ position: 'relative', marginBottom: 10 }}>
+              <div
+                ref={chatRef}
+                onScroll={onChatScroll}
+                style={{ height: 220, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}
+              >
+                {chats.map(m => (
+                  <div key={m.id} style={{ fontFamily: F.chat, fontSize: 18 }}>
+                    <strong style={{ color: m.system ? C.green : C.blue }}>{m.nickname}</strong>: {m.text}
+                  </div>
+                ))}
+              </div>
+              {chatHasNew && !chatStickBottom && (
+                <button
+                  type="button"
+                  onClick={jumpToLatestChat}
+                  style={{
+                    position: 'absolute', bottom: 8, left: '50%', transform: 'translateX(-50%)',
+                    fontFamily: F.ui, fontSize: 13, fontWeight: 800, padding: '6px 12px',
+                    ...sk(C.blue, true), backgroundColor: C.blueLight, color: C.blue, cursor: 'pointer',
+                    whiteSpace: 'nowrap', zIndex: 2,
+                  }}
+                >
+                  최근 채팅으로
+                </button>
+              )}
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
               <SketchInput value={chatInput} onChange={setChatInput} onKeyDown={e => e.key === 'Enter' && send()} placeholder="메시지..." style={{ flex: 1 }} />
@@ -1766,6 +1810,8 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
   const [genreSettled, setGenreSettled] = useState(true)
   const [genreIntroActive, setGenreIntroActive] = useState(false)
   const chatRef = useRef<HTMLDivElement>(null)
+  const [chatStickBottom, setChatStickBottom] = useState(true)
+  const [chatHasNew, setChatHasNew] = useState(false)
   const genreSlotRef = useRef<HTMLDivElement>(null)
   const genreIntroRoundRef = useRef<number | null>(null)
 
@@ -1816,8 +1862,40 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
   }, [room?.status, round?.index, round?.duel])
 
   useEffect(() => {
-    if (chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight
-  }, [chats])
+    const el = chatRef.current
+    if (!el) return
+    if (chatStickBottom) {
+      // smooth 스크롤과 휠이 싸우면 복제감 → 즉시 이동
+      const prev = el.style.scrollBehavior
+      el.style.scrollBehavior = 'auto'
+      el.scrollTop = el.scrollHeight
+      el.style.scrollBehavior = prev
+      setChatHasNew(false)
+    } else {
+      setChatHasNew(true)
+    }
+  }, [chats, chatStickBottom])
+
+  const onGameChatScroll = () => {
+    const el = chatRef.current
+    if (!el) return
+    if (chatCardHover != null) {
+      setChatCardHover(null)
+      setChatCardAnchor(null)
+    }
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 56
+    setChatStickBottom(nearBottom)
+    if (nearBottom) setChatHasNew(false)
+  }
+
+  const jumpToLatestGameChat = () => {
+    const el = chatRef.current
+    if (!el) return
+    el.style.scrollBehavior = 'auto'
+    el.scrollTop = el.scrollHeight
+    setChatStickBottom(true)
+    setChatHasNew(false)
+  }
 
   if (!room || !user) return null
 
@@ -2459,14 +2537,10 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
                 <span style={{ fontSize: 13, marginLeft: 6, opacity: 0.7 }}>· 다음 R부터 격리</span>
               )}
             </div>
+            <div style={{ position: 'relative', flex: 1, minHeight: 0, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
             <div
               ref={chatRef}
-              onScroll={() => {
-                if (chatCardHover != null) {
-                  setChatCardHover(null)
-                  setChatCardAnchor(null)
-                }
-              }}
+              onScroll={onGameChatScroll}
               style={{
                 flex: 1,
                 overflowY: 'auto',
@@ -2478,7 +2552,7 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
                 minWidth: 0,
                 // 스케치 그림자·우측 말풍선이 잘리지 않게
                 padding: '6px 12px 10px 6px',
-                scrollBehavior: 'smooth',
+                scrollBehavior: 'auto',
               }}
             >
               {visibleChats.map(msg => {
@@ -2561,6 +2635,21 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
                   </div>
                 )
               })}
+            </div>
+              {chatHasNew && !chatStickBottom && (
+                <button
+                  type="button"
+                  onClick={jumpToLatestGameChat}
+                  style={{
+                    position: 'absolute', bottom: 10, left: '50%', transform: 'translateX(-50%)',
+                    fontFamily: F.ui, fontSize: 13, fontWeight: 800, padding: '7px 14px',
+                    ...sk(C.blue, true), backgroundColor: C.blueLight, color: C.blue, cursor: 'pointer',
+                    whiteSpace: 'nowrap', zIndex: 3, boxShadow: `0 4px 0 ${C.graphite}22`,
+                  }}
+                >
+                  최근 채팅으로
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -2828,95 +2917,108 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
               ) : (
                 <>
                   {visibleBuffs.map((b, i) => (
-                    <div key={`${b.name}-${i}`} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    <div
+                      key={`${b.name}-${i}`}
+                      title={[
+                        b.description || '',
+                        b.usedByNickname ? `시전: ${b.usedByNickname}` : '',
+                        b.pending ? '다음 라운드부터' : `남은 ${b.roundsLeft}R`,
+                      ].filter(Boolean).join('\n')}
+                      style={{ display: 'flex', flexDirection: 'column', gap: 4, cursor: 'help' }}
+                    >
                       <div style={{ fontFamily: F.ui, fontSize: 14, fontWeight: 800, color: C.blue }}>
                         {b.name}
-                        {b.pending ? ' · 다음 라운드부터' : ` · ${b.roundsLeft}R`}
+                        {b.usedByNickname ? ` · ${b.usedByNickname}` : ''}
+                        {b.pending ? ' · 다음부터' : ` · ${b.roundsLeft}R`}
                         {b.mult && b.mult > 1 ? ` · ×${b.mult}` : ''}
                       </div>
                       {b.description && (
-                        <div style={{ fontFamily: F.ui, fontSize: 14, color: C.body, lineHeight: 1.45 }}>
-                          {b.description}
+                        <div style={{ fontFamily: F.ui, fontSize: 13, color: C.muted, lineHeight: 1.4 }}>
+                          올려보면 설명 · {b.description.length > 36 ? `${b.description.slice(0, 36)}…` : b.description}
                         </div>
                       )}
                     </div>
                   ))}
                   {me?.sakuraActive && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    <div
+                      title={`${me.sakuraBy || '다른 곡'}\n지금 들리는 곡은 실제 문제와 다릅니다.`}
+                      style={{ display: 'flex', flexDirection: 'column', gap: 4, cursor: 'help' }}
+                    >
                       <div style={{ fontFamily: F.ui, fontSize: 14, fontWeight: 800, color: C.blue }}>
                         {me.sakuraBy || '다른 곡'}
                         {me.sakuraScoreMult && me.sakuraScoreMult > 1
                           ? ` · 다른 곡 · 정답 ×${me.sakuraScoreMult}`
                           : ' · 다른 곡'}
                       </div>
-                      <div style={{ fontFamily: F.ui, fontSize: 14, color: C.body, lineHeight: 1.45 }}>
-                        {me.sakuraScoreMult && me.sakuraScoreMult > 1
-                          ? '지금 들리는 곡은 실제 문제와 다릅니다. 그래도 맞히면 점수가 배율 적용됩니다.'
-                          : '지금 들리는 곡은 실제 문제와 다릅니다. 정답은 원래 문제 기준입니다.'}
-                      </div>
+                      <div style={{ fontFamily: F.ui, fontSize: 13, color: C.muted }}>올려보면 설명</div>
                     </div>
                   )}
                   {(me?.answerDelayPending || (me?.answerDelayRoundsLeft && me.answerDelayRoundsLeft > 0)) && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    <div
+                      title={`${me.answerDelayBy || '잠깐만요'}\n매 라운드 시작 ${me.answerDelaySec || 5}초 뒤에만 정답 입력`}
+                      style={{ display: 'flex', flexDirection: 'column', gap: 4, cursor: 'help' }}
+                    >
                       <div style={{ fontFamily: F.ui, fontSize: 14, fontWeight: 800, color: C.blue }}>
                         {me.answerDelayBy || '잠깐만요'}
                         {me.answerDelayPending
-                          ? ' · 다음 라운드부터'
-                          : ` · ${me.answerDelayRoundsLeft}R · ${me.answerDelaySec || 5}초 딜레이`}
+                          ? ' · 다음부터'
+                          : ` · ${me.answerDelayRoundsLeft}R · ${me.answerDelaySec || 5}초`}
                       </div>
-                      <div style={{ fontFamily: F.ui, fontSize: 14, color: C.body, lineHeight: 1.45 }}>
-                        매 라운드 시작 {me.answerDelaySec || 5}초 뒤에만 정답을 입력할 수 있습니다.
-                      </div>
+                      <div style={{ fontFamily: F.ui, fontSize: 13, color: C.muted }}>올려보면 설명</div>
                     </div>
                   )}
                   {me?.answerProxyActive && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    <div
+                      title="신속정확대리 · 대상은 비공개 · 3라운드 후 적립 결산"
+                      style={{ display: 'flex', flexDirection: 'column', gap: 4, cursor: 'help' }}
+                    >
                       <div style={{ fontFamily: F.ui, fontSize: 14, fontWeight: 800, color: C.blue }}>
                         신속정확대리
                         {me.answerProxyPending
-                          ? ' · 다음 라운드부터'
+                          ? ' · 다음부터'
                           : ` · ${me.answerProxyRoundsLeft ?? '?'}R · 적립 ${me.answerProxyPendingScore ?? 0}점`}
                       </div>
-                      <div style={{ fontFamily: F.ui, fontSize: 14, color: C.body, lineHeight: 1.45 }}>
-                        대상은 비공개입니다. 3라운드 후 적립 점수가 결산됩니다.
-                      </div>
+                      <div style={{ fontFamily: F.ui, fontSize: 13, color: C.muted }}>올려보면 설명</div>
                     </div>
                   )}
                   {(me?.accuseWatchPending || me?.accuseWatchActive) && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    <div
+                      title={`${me.accuseWatchBy || '범인은 당신이야!'}\n감시 라운드에 맞히면 다음 라운드 수면`}
+                      style={{ display: 'flex', flexDirection: 'column', gap: 4, cursor: 'help' }}
+                    >
                       <div style={{ fontFamily: F.ui, fontSize: 14, fontWeight: 800, color: C.blue }}>
                         {me.accuseWatchBy || '범인은 당신이야!'}
-                        {me.accuseWatchPending ? ' · 다음 라운드부터 감시' : ' · 감시 중'}
+                        {me.accuseWatchPending ? ' · 다음부터 감시' : ' · 감시 중'}
                       </div>
-                      <div style={{ fontFamily: F.ui, fontSize: 14, color: C.body, lineHeight: 1.45 }}>
-                        감시 라운드에 문제를 맞히면, 다음 라운드에 수면이 걸립니다. (정답 인정 안 됨 · 채팅은 가능)
-                      </div>
+                      <div style={{ fontFamily: F.ui, fontSize: 13, color: C.muted }}>올려보면 설명</div>
                     </div>
                   )}
                   {(me?.gabukiPending || me?.gabukiActive) && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    <div
+                      title={`${me.gabukiBy || '가불기'}\n정답 시 −1 · 못 맞히면 −2 · 시전자에게 전달`}
+                      style={{ display: 'flex', flexDirection: 'column', gap: 4, cursor: 'help' }}
+                    >
                       <div style={{ fontFamily: F.ui, fontSize: 14, fontWeight: 800, color: C.blue }}>
                         {me.gabukiBy || '가불기'}
                         {me.gabukiPending
-                          ? ' · 다음 라운드부터'
+                          ? ' · 다음부터'
                           : ` · ${me.gabukiRoundsLeft ?? '?'}R`}
                       </div>
-                      <div style={{ fontFamily: F.ui, fontSize: 14, color: C.body, lineHeight: 1.45 }}>
-                        정답 시 −1점, 라운드에서 한 번도 못 맞히면 −2점. 깎인 점수는 시전자에게 갑니다.
-                      </div>
+                      <div style={{ fontFamily: F.ui, fontSize: 13, color: C.muted }}>올려보면 설명</div>
                     </div>
                   )}
                   {(me?.flameKimPending || me?.flameKimActive) && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    <div
+                      title={`${me.flameKimBy || '불꽃남자김상원'}\n방 노래+불꽃남자 동시 · 본인 득점 시 대상 −1`}
+                      style={{ display: 'flex', flexDirection: 'column', gap: 4, cursor: 'help' }}
+                    >
                       <div style={{ fontFamily: F.ui, fontSize: 14, fontWeight: 800, color: C.blue }}>
                         {me.flameKimBy || '불꽃남자김상원'}
                         {me.flameKimPending
-                          ? ' · 다음 라운드부터'
+                          ? ' · 다음부터'
                           : ` · ${me.flameKimRoundsLeft ?? '?'}R · ${me.flameKimTarget || '대상'}`}
                       </div>
-                      <div style={{ fontFamily: F.ui, fontSize: 14, color: C.body, lineHeight: 1.45 }}>
-                        방 노래와 「불꽃남자」가 같이 들립니다. 본인은 평소처럼 득점하고, 맞힐 때마다 대상 −1점입니다.
-                      </div>
+                      <div style={{ fontFamily: F.ui, fontSize: 13, color: C.muted }}>올려보면 설명</div>
                     </div>
                   )}
                   {augmentHint && (
@@ -3177,6 +3279,7 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
                       type="button"
                       onClick={() => {
                         useAugment({ gahoAugmentId: g.id })
+                        // 대상/장르 추가 선택이 필요하면 held가 바뀌며 창을 유지하지 않음 · room:state로 UI 갱신
                         setGahoPickOpen(false)
                         setGahoCandidates([])
                       }}
@@ -3405,9 +3508,12 @@ function AugmentScreen({ nav }: { nav: (s: Screen) => void }) {
     tier: string
     imageUrl?: string | null
   }>>([])
+  const [selectedGahoId, setSelectedGahoId] = useState<string | null>(null)
   const selectedRef = useRef(selected)
+  const selectedGahoIdRef = useRef<string | null>(null)
   const doneRef = useRef(false)
   selectedRef.current = selected
+  selectedGahoIdRef.current = selectedGahoId
 
   useEffect(() => {
     if (room?.status === 'playing' || room?.status === 'revealing' || room?.status === 'countdown' || room?.status === 'duel') nav('game')
@@ -3424,11 +3530,13 @@ function AugmentScreen({ nav }: { nav: (s: Screen) => void }) {
       } else {
         setTimer(augmentOffer.timeoutSec)
       }
-      doneRef.current = false
-      setGahoOpen(false)
-      setGahoCandidates([])
+      // 가호 고르는 중이면 오퍼 갱신해도 창 유지
+      if (!gahoOpen) {
+        doneRef.current = false
+        setGahoCandidates([])
+      }
     }
-  }, [augmentOffer])
+  }, [augmentOffer, gahoOpen])
 
   useEffect(() => {
     if (augmentOffer?.candidates) setCandidates(augmentOffer.candidates)
@@ -3436,10 +3544,22 @@ function AugmentScreen({ nav }: { nav: (s: Screen) => void }) {
 
   useEffect(() => {
     const endsAt = augmentOffer?.endsAt
-    const finalize = () => {
+  const finalize = () => {
       if (doneRef.current) return
+      // 가호 선택 중이면 타임아웃에도 랜덤 확정하되, 고른 가호가 있으면 그걸 보냄
+      if (gahoOpen && selectedGahoIdRef.current) {
+        doneRef.current = true
+        pickAugment(selectedRef.current, selectedGahoIdRef.current)
+        setGahoOpen(false)
+        return
+      }
+      if (gahoOpen) {
+        doneRef.current = true
+        pickAugment(selectedRef.current)
+        setGahoOpen(false)
+        return
+      }
       doneRef.current = true
-      // 가호 고르는 중이었으면 id 없이 보내 서버가 랜덤 가호 배정
       pickAugment(selectedRef.current)
       setGahoOpen(false)
     }
@@ -3461,7 +3581,7 @@ function AugmentScreen({ nav }: { nav: (s: Screen) => void }) {
     tick()
     const t = setInterval(tick, endsAt ? 250 : 1000)
     return () => clearInterval(t)
-  }, [augmentOffer?.endsAt, pickAugment])
+  }, [augmentOffer?.endsAt, pickAugment, gahoOpen])
 
   const onReroll = async () => {
     if (rerollsLeft <= 0 || gahoOpen) return
@@ -3473,6 +3593,7 @@ function AugmentScreen({ nav }: { nav: (s: Screen) => void }) {
   const openGahoFromOffer = async (augmentId: string) => {
     setGahoBusy(true)
     setGahoOpen(true)
+    setSelectedGahoId(null)
     try {
       const { candidates: list } = await fetchGahoCandidates()
       setGahoCandidates(list)
@@ -3499,6 +3620,7 @@ function AugmentScreen({ nav }: { nav: (s: Screen) => void }) {
     doneRef.current = true
     pickAugment(selected, gahoId)
     setGahoOpen(false)
+    setSelectedGahoId(null)
   }
 
   return (
@@ -3648,24 +3770,27 @@ function AugmentScreen({ nav }: { nav: (s: Screen) => void }) {
             {gahoBusy ? (
               <div style={{ fontFamily: F.ui, fontSize: 15, color: C.muted }}>불러오는 중…</div>
             ) : (
+              <>
               <div style={{
                 display: 'grid',
                 gridTemplateColumns: 'repeat(3, 1fr)',
                 gap: 14,
+                marginBottom: 18,
               }}>
                 {gahoCandidates.map((g) => {
                   const tierC = C.tierGaho
+                  const on = selectedGahoId === g.id
                   return (
                     <button
                       key={g.id}
                       type="button"
-                      onClick={() => confirmGaho(g.id)}
+                      onClick={() => setSelectedGahoId(g.id)}
                       style={{
-                        ...sk(tierC),
-                        backgroundColor: C.card,
+                        ...sk(on ? C.blue : tierC),
+                        backgroundColor: on ? C.blueLight : C.card,
                         padding: 12,
                         cursor: 'pointer',
-                        border: `2.5px solid ${tierC}`,
+                        border: `2.5px solid ${on ? C.blue : tierC}`,
                         display: 'flex',
                         flexDirection: 'column',
                         alignItems: 'center',
@@ -3698,6 +3823,15 @@ function AugmentScreen({ nav }: { nav: (s: Screen) => void }) {
                   </div>
                 )}
               </div>
+              <Btn
+                variant="primary"
+                size="lg"
+                disabled={!selectedGahoId}
+                onClick={() => selectedGahoId && confirmGaho(selectedGahoId)}
+              >
+                이 가호로 보관
+              </Btn>
+              </>
             )}
           </div>
         </div>

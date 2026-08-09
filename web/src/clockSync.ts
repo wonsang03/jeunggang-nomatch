@@ -71,14 +71,14 @@ export function applyClockSample(t0: number, tServer: number, t1: number): boole
 
   const target = median(goodOffsets)
   // 한 번에 많이 안 움직임 (사람마다 다르게 튀는 것 방지)
-  const maxStep = sampleCount < 3 ? 120 : 35
+  // 재생 중에도 샘플은 모으되, 한 번에 크게 안 움직임(다음 곡에서만 체감)
+  const maxStep = sampleCount < 3 ? 160 : 48
   const delta = target - offsetMs
   if (sampleCount === 0) {
     offsetMs = target
   } else {
     const step = Math.sign(delta) * Math.min(Math.abs(delta), maxStep)
-    // 남은 오차는 약하게 추가 수렴
-    offsetMs += step + (delta - step) * 0.08
+    offsetMs += step + (delta - step) * 0.12
   }
   sampleCount += 1
   return true

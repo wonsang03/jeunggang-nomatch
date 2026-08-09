@@ -582,7 +582,21 @@ export function GameProvider({ children }: { children: ReactNode }) {
         }
       })
     })
-    s.on('chat:message', (msg: ChatMsg) => setChats((c) => [...c.slice(-200), msg]))
+    s.on('chat:message', (msg: ChatMsg) => setChats((c) => {
+      // 동일 id / 짧은 시간 동일 본문 중복 방지 (본인 화면만 복제되는 현상)
+      if (c.some((x) => x.id === msg.id)) return c
+      const last = c[c.length - 1]
+      if (
+        last
+        && last.userId === msg.userId
+        && last.text === msg.text
+        && !!last.system === !!msg.system
+        && Math.abs((last.at || 0) - (msg.at || 0)) < 80
+      ) {
+        return c
+      }
+      return [...c.slice(-200), msg]
+    }))
     s.on('round:countdown', (payload: {
       seconds?: number
       endsAt?: number
@@ -882,12 +896,12 @@ export function GameProvider({ children }: { children: ReactNode }) {
       const s = getSocket()
       if (!s?.connected) return
       const t0 = Date.now()
-      s.timeout(4000).emit('ping:rtt', {}, (err: Error | null, res?: { t?: number }) => {
+      s.timeout(2500).emit('ping:rtt', {}, (err: Error | null, res?: { t?: number }) => {
         if (err) return
         const t1 = Date.now()
         const rtt = t1 - t0
-        setPingMs((prev) => (prev == null ? rtt : Math.round(prev * 0.55 + rtt * 0.45)))
-        // 시계 오프셋은 증강 선택 중에만 갱신 (재생 중 계속 맞추면 seek/끊김)
+        setPingMs((prev) => (prev == null ? rtt : Math.round(prev * 0.5 + rtt * 0.5)))
+        // 재생 중에도 오프셋은 갱신(다음 곡에 반영). seek는 플레이어가 serverNow만 쓰므로 지금 곡은 안 건드림.
         if (updateClock && typeof res?.t === 'number') {
           if (applyClockSample(t0, res.t, t1)) {
             setClockSamples((n) => n + 1)
@@ -896,14 +910,13 @@ export function GameProvider({ children }: { children: ReactNode }) {
       })
     }
     if (augmentOffer) {
-      // 증강 선택 페이즈: 이때만 시계 정렬
       measure(true)
-      const id = window.setInterval(() => measure(true), 700)
+      const id = window.setInterval(() => measure(true), 400)
       return () => window.clearInterval(id)
     }
-    // 플레이 중: 핑 표시만 (오프셋 고정) — 표시 주기도 조금 늘려 덜 깜빡이게
-    measure(false)
-    const id = window.setInterval(() => measure(false), 4000)
+    // 플레이 중: 오프셋도 계속 맞춤(다음 곡용) · 핑은 더 자주
+    measure(true)
+    const id = window.setInterval(() => measure(true), 1200)
     return () => window.clearInterval(id)
   }, [connected, augmentOffer])
 

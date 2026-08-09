@@ -875,7 +875,26 @@ function canJoinAsSpectator(room: Room) {
 
 /** 이미 증강 효과(활성·예약)가 걸린 대상 → 타겟 증강 추가 적용 불가 */
 function hasIncomingAugmentEffect(m: Member, room: Room): boolean {
-  if ((m.activeBuffs || []).some((b) => b.roundsLeft > 0)) return true
+  // 본인이 건 자기강화(점수배율 등)는 "피격 중복"으로 보지 않음 — 연타·핑차로 본인 사용이 막히던 완화
+  const selfBuffTypes = new Set([
+    'score_mult',
+    'score_mult_no_hint',
+    'score_mult_hint_only',
+    'score_bonus',
+    'combo_clear_double',
+    'water_ghost',
+    'hidden_run',
+    'early_chosung',
+    'know_but_cant',
+    'alien_qwerty',
+    'cha_cha_cha',
+    'reflect_debuff',
+  ])
+  if ((m.activeBuffs || []).some((b) => {
+    if (b.roundsLeft <= 0) return false
+    if (selfBuffTypes.has(b.effectType) && b.usedByNickname === m.nickname) return false
+    return true
+  })) return true
   if (m.chatMute && m.chatMute.roundsLeft > 0) return true
   if (m.chatMuteUntil && m.chatMuteUntil > Date.now()) return true
   if (m.answerDelay && m.answerDelay.roundsLeft > 0) return true
@@ -940,8 +959,9 @@ function emitPlayerChat(
     system?: boolean
   },
 ) {
+  const payload = { ...msg, id: nextChatId() }
   if (!isChatIsolateActive(room) || msg.system) {
-    io.to(room.id).emit('chat:message', msg)
+    io.to(room.id).emit('chat:message', payload)
     return
   }
   const iso = room.chatIsolate!
@@ -957,7 +977,7 @@ function emitPlayerChat(
   }
   for (const other of room.members.values()) {
     const og = iso.groupByUserId[other.userId]
-    if (og === group) io.to(other.socketId).emit('chat:message', msg)
+    if (og === group) io.to(other.socketId).emit('chat:message', payload)
   }
 }
 
@@ -2103,6 +2123,11 @@ function assignHeldFromOfferPick(
 const rooms = new Map<string, Room>()
 /** userId → roomId 빠른 조회 */
 const userRoomId = new Map<string, string>()
+let chatIdSeq = 0
+function nextChatId() {
+  chatIdSeq += 1
+  return Date.now() * 1000 + (chatIdSeq % 1000)
+}
 
 type CachedAugment = {
   id: string
@@ -6283,8 +6308,34 @@ export function registerSocket(io: Server) {
           imageUrl: pick.imageUrl,
           tier: pick.tier,
         }
+        // 대상/장르 선택이 더 필요하면 가호선택만 소모하고 실제 카드로 보관한 뒤 UI에서 이어서
+        const needsMorePick = TARGET_AUGMENT_TYPES.has(pick.effectType)
+          || GENRE_AUGMENT_TYPES.has(pick.effectType)
+        if (needsMorePick) {
+          m.usedAugments.push(aug.name)
+          setHeldAugment(m, pick)
+          m.gahoPickIds = null
+          io.to(m.socketId).emit('augment:hint', {
+            name: pick.name,
+            hint: TARGET_AUGMENT_TYPES.has(pick.effectType)
+              ? `[가호선택] ${pick.name} · 대상을 선택해 사용하세요`
+              : `[가호선택] ${pick.name} · 장르를 선택해 사용하세요`,
+            durationMs: 0,
+          })
+          io.to(room.id).emit('room:state', roomState(room))
+          return
+        }
         const result = await applyAugmentEffect(io, room, m, user, pickAug)
-        if (!result.ok) return
+        if (!result.ok) {
+          if (result.hint) {
+            io.to(m.socketId).emit('augment:hint', {
+              name: pick.name,
+              hint: result.hint,
+              durationMs: 0,
+            })
+          }
+          return
+        }
         m.usedAugments.push(aug.name)
         m.usedAugments.push(pick.name)
         clearHeldAugment(m)
