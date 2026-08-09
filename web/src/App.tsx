@@ -1120,19 +1120,21 @@ function LobbyScreen({ nav }: { nav: (s: Screen) => void }) {
             </div>
           )}
           {filtered.map(room => {
-            const pct = room.players / room.max
-            const full = pct >= 1
+            const playerFull = room.players >= room.max
+            const spectFull = (room.spectators ?? 0) >= (room.maxSpectators ?? 4)
+            const full = joinAsSpectator ? spectFull : playerFull
+            const canSpectFallback = !joinAsSpectator && playerFull && !spectFull
             return (
               <div
                 key={room.id}
-                onClick={() => !full && !busy && enter(room.id)}
+                onClick={() => !(full && !canSpectFallback) && !busy && enter(room.id)}
                 style={{
                   ...sk(),
                   backgroundColor: C.card,
                   padding: '16px 24px',
                   display: 'flex', alignItems: 'center', gap: 16,
-                  cursor: full ? 'not-allowed' : 'pointer',
-                  opacity: full ? 0.72 : 1,
+                  cursor: (full && !canSpectFallback) ? 'not-allowed' : 'pointer',
+                  opacity: (full && !canSpectFallback) ? 0.72 : 1,
                 }}
               >
                 <Tag color={C.blue}>{room.genre}</Tag>
@@ -1148,12 +1150,15 @@ function LobbyScreen({ nav }: { nav: (s: Screen) => void }) {
                 </div>
                 <span style={{
                   fontFamily: F.ui, fontSize: 15, fontWeight: 900,
-                  color: pct > 0.8 ? C.red : C.body, minWidth: 40, textAlign: 'right',
+                  color: room.players / room.max > 0.8 ? C.red : C.body, minWidth: 72, textAlign: 'right',
                 }}>
                   {room.players}/{room.max}
+                  {(room.spectators ?? 0) > 0 ? ` · 관${room.spectators}` : ''}
                 </span>
-                <Btn size="sm" variant={full ? 'default' : 'primary'} disabled={full || busy}>
-                  {full ? '가득 참' : (joinAsSpectator ? '관전' : '입장')}
+                <Btn size="sm" variant={(full && !canSpectFallback) ? 'default' : 'primary'} disabled={(full && !canSpectFallback) || busy}>
+                  {(full && !canSpectFallback)
+                    ? '가득 참'
+                    : (joinAsSpectator || canSpectFallback ? '관전' : '입장')}
                 </Btn>
               </div>
             )
@@ -1167,10 +1172,11 @@ function LobbyScreen({ nav }: { nav: (s: Screen) => void }) {
 // ── Waiting ────────────────────────────────────────────────────
 
 function WaitingScreen({ nav }: { nav: (s: Screen) => void }) {
-  const { user, room, roomCode, chats, setReady, updateSettings, startGame, sendChat, leaveRoom } = useGame()
+  const { user, room, roomCode, chats, setReady, setSpectator, updateSettings, startGame, sendChat, leaveRoom } = useGame()
   const [chatInput, setChatInput] = useState('')
   const [err, setErr] = useState('')
   const [leaveOpen, setLeaveOpen] = useState(false)
+  const [roleBusy, setRoleBusy] = useState(false)
   const chatRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -1191,7 +1197,23 @@ function WaitingScreen({ nav }: { nav: (s: Screen) => void }) {
   const players = room.members
   const me = players.find(p => p.userId === user.id)
   const isHost = room.hostId === user.id
+  const playerList = players.filter((p) => !p.isSpectator)
+  const spectatorList = players.filter((p) => p.isSpectator)
+  const maxSpectators = room.maxSpectators ?? 4
   const qCount = PLAYABLE_GENRES.reduce((sum, g) => sum + (room.genreCounts[g] || 0), 0)
+
+  const onToggleSpectator = async () => {
+    if (!me || roleBusy) return
+    setErr('')
+    setRoleBusy(true)
+    try {
+      await setSpectator(!me.isSpectator)
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : '역할 변경 실패')
+    } finally {
+      setRoleBusy(false)
+    }
+  }
 
   const send = () => {
     if (!chatInput.trim()) return
@@ -1236,14 +1258,16 @@ function WaitingScreen({ nav }: { nav: (s: Screen) => void }) {
         <div style={{ fontFamily: F.ui, fontSize: 20, fontWeight: 900, flex: 1, color: C.body }}>{room.name}</div>
         {roomCode && <div style={{ fontFamily: F.ui, fontSize: 14, color: C.blue }}>코드: {roomCode}</div>}
         <div style={{ fontFamily: F.ui, fontSize: 14, fontWeight: 700, color: C.muted }}>
-          {players.filter(p => !p.isSpectator && p.ready).length}/{players.filter(p => !p.isSpectator).length} 준비 · 관전 {players.filter(p => p.isSpectator).length}
+          {playerList.filter(p => p.ready).length}/{playerList.length} 준비 · 관전 {spectatorList.length}/{maxSpectators}
         </div>
       </div>
 
       <div style={{ maxWidth: 1020, margin: '0 auto', padding: '24px', display: 'grid', gridTemplateColumns: '1fr 300px', gap: 22 }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
           <NoteCard>
-            <div style={{ fontFamily: F.ui, fontSize: 18, fontWeight: 900, marginBottom: 16, color: C.body }}>참가자 ({players.length}/{room.maxPlayers})</div>
+            <div style={{ fontFamily: F.ui, fontSize: 18, fontWeight: 900, marginBottom: 16, color: C.body }}>
+              참가자 ({playerList.length}/{room.maxPlayers}) · 관전 ({spectatorList.length}/{maxSpectators})
+            </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10 }}>
               {players.map(p => (
                 <div key={p.userId} style={{
@@ -1413,12 +1437,20 @@ function WaitingScreen({ nav }: { nav: (s: Screen) => void }) {
           </NoteCard>
 
           {err && <div style={{ fontFamily: F.ui, color: C.red }}>{err}</div>}
+          <Btn
+            fullWidth
+            disabled={roleBusy}
+            onClick={onToggleSpectator}
+            variant={me?.isSpectator ? 'primary' : 'default'}
+          >
+            {me?.isSpectator ? '플레이어로 참가' : '관전으로 전환'}
+          </Btn>
           {me?.isSpectator ? (
             <div style={{
               fontFamily: F.ui, fontSize: 14, fontWeight: 700, color: C.muted, textAlign: 'center',
               padding: '12px 8px', lineHeight: 1.5,
             }}>
-              관전 중 · 채팅만 가능 · 점수·증강·정답 미참여
+              관전 중 · 채팅만 · 방장도 설정·시작 가능
             </div>
           ) : (
             <Btn variant={me?.ready ? 'default' : 'primary'} fullWidth onClick={setReady}>

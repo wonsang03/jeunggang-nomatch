@@ -855,6 +855,24 @@ function playerCount(room: Room) {
   return playerMembers(room).length
 }
 
+const MAX_SPECTATORS = 4
+
+function spectatorMembers(room: Room) {
+  return [...room.members.values()].filter((m) => m.isSpectator)
+}
+
+function spectatorCount(room: Room) {
+  return spectatorMembers(room).length
+}
+
+function canJoinAsPlayer(room: Room) {
+  return playerCount(room) < room.maxPlayers
+}
+
+function canJoinAsSpectator(room: Room) {
+  return spectatorCount(room) < MAX_SPECTATORS
+}
+
 /** 이미 증강 효과(활성·예약)가 걸린 대상 → 타겟 증강 추가 적용 불가 */
 function hasIncomingAugmentEffect(m: Member, room: Room): boolean {
   if ((m.activeBuffs || []).some((b) => b.roundsLeft > 0)) return true
@@ -2124,8 +2142,10 @@ function publicRooms() {
     .map((r) => ({
       id: r.id,
       name: r.name,
-      players: r.members.size,
+      players: playerCount(r),
+      spectators: spectatorCount(r),
       max: r.maxPlayers,
+      maxSpectators: MAX_SPECTATORS,
       priv: r.isPrivate,
       genre: Object.keys(r.genreCounts)[0] || '전체',
       gameMode: r.gameMode || 'nomatch',
@@ -2139,6 +2159,7 @@ function roomState(room: Room, viewerUserId?: string) {
     hostId: room.hostId,
     status: room.status,
     maxPlayers: room.maxPlayers,
+    maxSpectators: MAX_SPECTATORS,
     genreCounts: room.genreCounts,
     genreBankCounts: room.genreBankCounts || {},
     answerMode: room.answerMode || 'title_artist',
@@ -5141,13 +5162,19 @@ export function registerSocket(io: Server) {
       }
       if (!room) return cb?.({ ok: false, error: '방을 찾을 수 없습니다' })
       if (room.status !== 'lobby') return cb?.({ ok: false, error: '이미 시작된 방입니다' })
-      if (room.members.size >= room.maxPlayers) return cb?.({ ok: false, error: '방이 가득 찼습니다' })
+      const wantSpectator = !!payload.asSpectator
+      let joinAsSpectator = wantSpectator
+      if (wantSpectator) {
+        if (!canJoinAsSpectator(room)) return cb?.({ ok: false, error: '관전 자리가 가득 찼습니다' })
+      } else if (!canJoinAsPlayer(room)) {
+        if (!canJoinAsSpectator(room)) return cb?.({ ok: false, error: '방이 가득 찼습니다' })
+        joinAsSpectator = true
+      }
 
       const profile = await loadMemberProfile(user.id, user.nickname)
       room.genreBankCounts = await loadGenreBankCounts()
       room.genreCounts = await clampGenreCounts(room.genreCounts)
-      const asSpectator = !!payload.asSpectator
-      attachMember(room, emptyMember(user.id, profile.nickname, profile.avatarUrl, socket.id, { spectator: asSpectator }))
+      attachMember(room, emptyMember(user.id, profile.nickname, profile.avatarUrl, socket.id, { spectator: joinAsSpectator }))
       socket.join(room.id)
       io.to(room.id).emit('room:state', roomState(room))
       io.emit('lobby:rooms', publicRooms())
@@ -5178,6 +5205,35 @@ export function registerSocket(io: Server) {
       if (!m || m.isSpectator) return
       m.ready = !m.ready
       io.to(room.id).emit('room:state', roomState(room))
+    })
+
+    socket.on('room:set_spectator', (payload: { spectator?: boolean }, cb?: (res: unknown) => void) => {
+      const room = findRoomByUser(user.id)
+      if (!room) return cb?.({ ok: false, error: '방 없음' })
+      if (room.status !== 'lobby') return cb?.({ ok: false, error: '대기실에서만 변경할 수 있습니다' })
+      const m = room.members.get(user.id)
+      if (!m) return cb?.({ ok: false, error: '멤버 없음' })
+      const wantSpectator = !!payload?.spectator
+      if (m.isSpectator === wantSpectator) {
+        return cb?.({ ok: true, room: roomState(room) })
+      }
+      if (wantSpectator) {
+        if (!canJoinAsSpectator(room)) {
+          return cb?.({ ok: false, error: '관전 자리가 가득 찼습니다' })
+        }
+        m.isSpectator = true
+        m.ready = false
+        clearHeldAugment(m)
+      } else {
+        if (!canJoinAsPlayer(room)) {
+          return cb?.({ ok: false, error: '플레이어 자리가 가득 찼습니다' })
+        }
+        m.isSpectator = false
+        m.ready = false
+      }
+      io.to(room.id).emit('room:state', roomState(room))
+      io.emit('lobby:rooms', publicRooms())
+      cb?.({ ok: true, room: roomState(room) })
     })
 
     socket.on('room:settings', async (payload: {

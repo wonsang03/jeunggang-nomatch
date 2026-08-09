@@ -43,6 +43,8 @@ export type PublicRoom = {
   name: string
   players: number
   max: number
+  spectators?: number
+  maxSpectators?: number
   priv: boolean
   genre: string
   gameMode?: GameMode
@@ -214,6 +216,7 @@ export type RoomState = {
   hostId: string
   status: 'lobby' | 'playing' | 'revealing' | 'augment' | 'countdown' | 'duel' | 'ended'
   maxPlayers: number
+  maxSpectators?: number
   genreCounts: Record<string, number>
   /** 문제은행 장르별 보유 수 — 대기실 슬라이더 max */
   genreBankCounts?: Record<string, number>
@@ -371,6 +374,7 @@ type GameCtx = {
   joinRoom: (opts: { roomId?: string; code?: string; asSpectator?: boolean }) => Promise<void>
   leaveRoom: () => void
   setReady: () => void
+  setSpectator: (spectator: boolean) => Promise<void>
   updateSettings: (payload: {
     genreCounts?: Record<string, number>
     maxPlayers?: number
@@ -1026,6 +1030,11 @@ export function GameProvider({ children }: { children: ReactNode }) {
   }
 
   const setReady = () => getSocket()?.emit('room:ready')
+  const setSpectator = async (spectator: boolean) => {
+    const res = await emitAck<{ ok: boolean; room?: RoomState; error?: string }>('room:set_spectator', { spectator })
+    if (!res.ok) throw new Error(res.error || '역할 변경 실패')
+    if (res.room) setRoom(res.room)
+  }
   const updateSettings = (payload: {
     genreCounts?: Record<string, number>
     maxPlayers?: number
@@ -1170,6 +1179,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
       joinRoom,
       leaveRoom,
       setReady,
+      setSpectator,
       updateSettings,
       startGame,
       sendChat,
