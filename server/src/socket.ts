@@ -1,4 +1,4 @@
-import type { Server, Socket } from 'socket.io'
+﻿import type { Server, Socket } from 'socket.io'
 import { randomInt } from 'node:crypto'
 import { prisma } from './config.js'
 import { verifyToken, type AuthUser } from './auth.js'
@@ -70,6 +70,8 @@ type Member = {
   ready: boolean
   score: number
   socketId: string
+  /** 관전: 채팅만 · 점수/증강/정답 미참여 */
+  isSpectator: boolean
   heldAugmentId: string | null
   heldAugmentName: string | null
   heldAugmentDescription: string | null
@@ -834,11 +836,68 @@ function isChatMuted(m: Member, roundIndex: number, _room?: Room | null) {
   return !!(m.chatMute && roundIndex >= m.chatMute.startIndex && m.chatMute.roundsLeft > 0)
 }
 
-/** 스킵 필요 인원: 방 인원의 절반 (홀수는 올림) · 최소 1 */
+/** 스킵 필요 인원: 플레이어 수의 절반 (홀수는 올림) · 최소 1 */
 function skipVotesNeeded(memberCount: number) {
   const n = Math.max(0, Math.floor(memberCount))
   if (n <= 0) return 1
   return Math.max(1, Math.ceil(n / 2))
+}
+
+function isPlayingMember(m: Member) {
+  return !m.isSpectator
+}
+
+function playerMembers(room: Room) {
+  return [...room.members.values()].filter(isPlayingMember)
+}
+
+function playerCount(room: Room) {
+  return playerMembers(room).length
+}
+
+/** 이미 증강 효과(활성·예약)가 걸린 대상 → 타겟 증강 추가 적용 불가 */
+function hasIncomingAugmentEffect(m: Member, room: Room): boolean {
+  if ((m.activeBuffs || []).some((b) => b.roundsLeft > 0)) return true
+  if (m.chatMute && m.chatMute.roundsLeft > 0) return true
+  if (m.chatMuteUntil && m.chatMuteUntil > Date.now()) return true
+  if (m.answerDelay && m.answerDelay.roundsLeft > 0) return true
+  if (m.politeSuffix && m.politeSuffix.roundsLeft > 0) return true
+  if (m.answerBlock && m.answerBlock.roundsLeft > 0) return true
+  if (m.answerBlockUntil && m.answerBlockUntil > Date.now()) return true
+  if (m.audioDelayUntil && m.audioDelayUntil > Date.now()) return true
+  if (m.accuseMark) return true
+  if (m.gabuki && m.gabuki.roundsLeft > 0) return true
+  if (m.answerProxy && m.answerProxy.roundsLeft > 0) return true
+  if (m.sakuraDecoy && m.sakuraDecoy.roundsLeft > 0) return true
+  if (m.flameKim && m.flameKim.roundsLeft > 0) return true
+  if (m.songMuteUntil && m.songMuteUntil > Date.now()) return true
+  if (room.pendingDuel && (room.pendingDuel.challengerId === m.userId || room.pendingDuel.opponentId === m.userId)) {
+    return true
+  }
+  if (room.duel && (room.duel.challengerId === m.userId || room.duel.opponentId === m.userId)) {
+    return true
+  }
+  return false
+}
+
+/** 타겟 증강 지목 가능 (플레이어 + 효과 없음) */
+function canReceiveTargetAugment(m: Member, room: Room) {
+  return isPlayingMember(m) && !hasIncomingAugmentEffect(m, room)
+}
+
+function rejectBusyTarget(
+  intended: Member | null | undefined,
+  selfId: string,
+  room: Room,
+): { ok: false; hint: string | null; chatText: null } | null {
+  if (!intended || intended.userId === selfId) return { ok: false, hint: null, chatText: null }
+  if (intended.isSpectator) {
+    return { ok: false, hint: '관전자에게는 증강을 사용할 수 없습니다', chatText: null }
+  }
+  if (hasIncomingAugmentEffect(intended, room)) {
+    return { ok: false, hint: '이미 증강이 적용 중인 대상입니다', chatText: null }
+  }
+  return null
 }
 
 function isChatIsolateActive(room: Room, roundIndex = room.index) {
@@ -1713,6 +1772,7 @@ function emptyMember(
   nickname: string,
   avatarUrl: string | null,
   socketId: string,
+  opts?: { spectator?: boolean },
 ): Member {
   return {
     userId,
@@ -1721,6 +1781,7 @@ function emptyMember(
     ready: false,
     score: 0,
     socketId,
+    isSpectator: !!opts?.spectator,
     heldAugmentId: null,
     heldAugmentName: null,
     heldAugmentDescription: null,
@@ -2117,11 +2178,13 @@ function roomState(room: Room, viewerUserId?: string) {
       nickname: m.nickname,
       avatarUrl: m.avatarUrl,
       ready: m.ready,
-      score: displayScoreOf(m, room.index),
-      scoreReal: m.score,
+      score: m.isSpectator ? 0 : displayScoreOf(m, room.index),
+      scoreReal: m.isSpectator ? 0 : m.score,
       isHost: m.userId === room.hostId,
-      heldAugmentId: m.heldAugmentId,
-      heldAugmentName: m.heldAugmentName,
+      isSpectator: !!m.isSpectator,
+      augmentBusy: !m.isSpectator && hasIncomingAugmentEffect(m, room),
+      heldAugmentId: m.isSpectator ? null : m.heldAugmentId,
+      heldAugmentName: m.isSpectator ? null : m.heldAugmentName,
       heldAugmentDescription: m.heldAugmentDescription,
       heldAugmentImageUrl: m.heldAugmentImageUrl,
       heldAugmentEffectType: m.heldAugmentEffectType,
@@ -2989,6 +3052,24 @@ async function applyAugmentEffect(
   const rounds = Number(value.rounds) || 0
   const defaultChat = `${user.nickname}님이 증강 [${aug.name}]을(를) 사용했습니다`
 
+  if (m.isSpectator) {
+    return { ok: false, hint: '관전자는 증강을 사용할 수 없습니다', chatText: null }
+  }
+
+  if (TARGET_AUGMENT_TYPES.has(aug.effectType)) {
+    if (aug.effectType === 'sakura_decoy' && targetUserIds?.length) {
+      for (const id of targetUserIds) {
+        const t = room.members.get(id)
+        const bad = rejectBusyTarget(t, m.userId, room)
+        if (bad) return bad
+      }
+    } else if (targetUserId) {
+      const t = room.members.get(targetUserId)
+      const bad = rejectBusyTarget(t, m.userId, room)
+      if (bad) return bad
+    }
+  }
+
   if (aug.effectType === 'mute_chat') {
     const intended = targetUserId ? room.members.get(targetUserId) : null
     if (!intended || intended.userId === m.userId) return { ok: false, hint: null, chatText: null }
@@ -3064,7 +3145,10 @@ async function applyAugmentEffect(
   if (aug.effectType === 'chat_isolate') {
     const isoRounds = rounds > 0 ? rounds : 2
     const startIndex = room.index + 1
-    const ids = shuffleArray([...room.members.keys()])
+    const ids = shuffleArray(playerMembers(room).map((p) => p.userId))
+    if (ids.length < 2) {
+      return { ok: false, hint: `[${aug.name}] 격리할 플레이어가 부족합니다`, chatText: null }
+    }
     const groupByUserId: Record<string, number> = {}
     ids.forEach((id, i) => {
       groupByUserId[id] = i % 2
@@ -3076,7 +3160,7 @@ async function applyAugmentEffect(
       byNickname: user.nickname,
       groupByUserId,
     }
-    for (const other of room.members.values()) {
+    for (const other of playerMembers(room)) {
       other.activeBuffs = other.activeBuffs.filter((b) => b.effectType !== 'chat_isolate')
       other.activeBuffs.push({
         name: aug.name,
@@ -3105,11 +3189,13 @@ async function applyAugmentEffect(
     let hit = 0
     for (const other of room.members.values()) {
       if (other.userId === m.userId) continue
+      if (!canReceiveTargetAugment(other, room)) continue
       other.songMuteUntil = until
       hit += 1
       // 즉시 하드컷 (room:state 대기 없이)
       io.to(other.socketId).emit('song:power_off', { until, seconds })
     }
+    if (!hit) return { ok: false, hint: `[${aug.name}] 적용 가능한 대상이 없습니다`, chatText: null }
     const t = setTimeout(() => {
       for (const x of room.members.values()) {
         if (x.songMuteUntil && x.songMuteUntil <= Date.now()) x.songMuteUntil = null
@@ -3135,6 +3221,7 @@ async function applyAugmentEffect(
     let hit = 0
     for (const other of room.members.values()) {
       if (other.userId === m.userId) continue
+      if (!canReceiveTargetAugment(other, room)) continue
       other.activeBuffs = other.activeBuffs.filter((b) => b.effectType !== 'party_music_others')
       other.activeBuffs.push({
         name: aug.name,
@@ -3247,7 +3334,7 @@ async function applyAugmentEffect(
     const blockMsRaw = Number(value.blockMs)
     const blockMs = Number.isFinite(blockMsRaw) && blockMsRaw > 0 ? Math.floor(blockMsRaw) : 10000
     const domainRounds = rounds > 0 ? rounds : 3
-    const higherNow = [...room.members.values()].some(
+    const higherNow = playerMembers(room).some(
       (other) => other.userId !== m.userId && other.score > m.score,
     )
     if (!higherNow) {
@@ -3818,6 +3905,8 @@ async function applyAugmentEffect(
     const songLabel = String(value.songLabel || '').trim() || titleKey
     let applied = 0
     for (const other of room.members.values()) {
+      if (other.userId === m.userId) continue
+      if (!canReceiveTargetAugment(other, room)) continue
       // 트루먼 환상 곡과 가짜 정답 슬롯의 싱크를 깨지 않는다.
       if (other.sakuraDecoy?.mode === 'truman' && other.sakuraDecoy.roundsLeft > 0) continue
       other.sakuraDecoy = {
@@ -3984,9 +4073,12 @@ async function applyAugmentEffect(
     if (hasReplaceAudioConflict(room, startIndex)) {
       return { ok: false, hint: `[${aug.name}] 이미 다른 노래 교체 증강이 적용 중입니다`, chatText: null }
     }
+    let hit = 0
     for (const other of room.members.values()) {
-      other.activeBuffs = other.activeBuffs.filter((b) => b.effectType !== 'mud_fight')
+      if (!isPlayingMember(other)) continue
       const isCaster = other.userId === m.userId
+      if (!isCaster && !canReceiveTargetAugment(other, room)) continue
+      other.activeBuffs = other.activeBuffs.filter((b) => b.effectType !== 'mud_fight')
       other.activeBuffs.push({
         name: aug.name,
         description: aug.description,
@@ -4002,11 +4094,13 @@ async function applyAugmentEffect(
         startIndex,
         roundsLeft: mudRounds,
       })
+      hit += 1
     }
+    if (!hit) return { ok: false, hint: `[${aug.name}] 적용 가능한 대상이 없습니다`, chatText: null }
     return {
       ok: true,
-      hint: `[${aug.name}] 다음 ${mudRounds}R · 전원 BGM·초성 · 본인 정답 +${bonus}`,
-      chatText: `${user.nickname}님이 [${aug.name}]! 다음 ${mudRounds}R 전원 노래 대신 BGM·초성 · ${user.nickname}님만 정답 시 +${bonus}`,
+      hint: `[${aug.name}] 다음 ${mudRounds}R · ${hit}명 BGM·초성 · 본인 정답 +${bonus}`,
+      chatText: `${user.nickname}님이 [${aug.name}]! 다음 ${mudRounds}R ${hit}명 노래 대신 BGM·초성 · ${user.nickname}님만 정답 시 +${bonus}`,
     }
   }
 
@@ -4787,13 +4881,13 @@ async function applyAugmentEffect(
 }
 
 function pickRandomOtherMember(room: Room, selfId: string): Member | null {
-  const others = [...room.members.values()].filter((x) => x.userId !== selfId)
+  const others = playerMembers(room).filter((x) => x.userId !== selfId && canReceiveTargetAugment(x, room))
   if (!others.length) return null
-  return others[Math.floor(Math.random() * others.length)]
+  return others[pickRandomIndex(others.length)]
 }
 
 function pickRandomOtherMembers(room: Room, selfId: string, count: number): Member[] {
-  const others = [...room.members.values()].filter((x) => x.userId !== selfId)
+  const others = playerMembers(room).filter((x) => x.userId !== selfId && canReceiveTargetAugment(x, room))
   if (!others.length || count <= 0) return []
   const shuffled = shuffleArray(others)
   return shuffled.slice(0, Math.min(count, shuffled.length))
@@ -5038,7 +5132,7 @@ export function registerSocket(io: Server) {
       socket.emit('room:state', roomState(room))
     })
 
-    socket.on('room:join', async (payload: { roomId?: string; code?: string }, cb?: (res: unknown) => void) => {
+    socket.on('room:join', async (payload: { roomId?: string; code?: string; asSpectator?: boolean }, cb?: (res: unknown) => void) => {
       let room: Room | undefined
       if (payload.code) {
         room = [...rooms.values()].find((r) => r.code === payload.code!.toUpperCase())
@@ -5052,7 +5146,8 @@ export function registerSocket(io: Server) {
       const profile = await loadMemberProfile(user.id, user.nickname)
       room.genreBankCounts = await loadGenreBankCounts()
       room.genreCounts = await clampGenreCounts(room.genreCounts)
-      attachMember(room, emptyMember(user.id, profile.nickname, profile.avatarUrl, socket.id))
+      const asSpectator = !!payload.asSpectator
+      attachMember(room, emptyMember(user.id, profile.nickname, profile.avatarUrl, socket.id, { spectator: asSpectator }))
       socket.join(room.id)
       io.to(room.id).emit('room:state', roomState(room))
       io.emit('lobby:rooms', publicRooms())
@@ -5080,7 +5175,7 @@ export function registerSocket(io: Server) {
       const room = findRoomByUser(user.id)
       if (!room || room.status !== 'lobby') return
       const m = room.members.get(user.id)
-      if (!m) return
+      if (!m || m.isSpectator) return
       m.ready = !m.ready
       io.to(room.id).emit('room:state', roomState(room))
     })
@@ -5173,6 +5268,18 @@ export function registerSocket(io: Server) {
         })
         return
       }
+      // 방 관전 멤버: 전원에게 보이되 spectator 표시
+      if (m?.isSpectator) {
+        io.to(room.id).emit('chat:message', {
+          id: Date.now(),
+          userId: user.id,
+          nickname: user.nickname,
+          text,
+          at: Date.now(),
+          spectator: true,
+        })
+        return
+      }
       emitPlayerChat(io, room, {
         id: Date.now(),
         userId: user.id,
@@ -5217,10 +5324,10 @@ export function registerSocket(io: Server) {
       if (!room) return cb?.({ ok: false, error: '방 없음' })
       if (room.hostId !== user.id) return cb?.({ ok: false, error: '방장만 시작 가능' })
       if (room.status !== 'lobby') return cb?.({ ok: false, error: '이미 시작된 방입니다' })
-      if (room.gameMode === 'reading' && room.members.size < 2) {
-        return cb?.({ ok: false, error: '리딩방은 최소 2명 필요합니다' })
+      if (room.gameMode === 'reading' && playerCount(room) < 2) {
+        return cb?.({ ok: false, error: '리딩방은 플레이어 최소 2명 필요합니다' })
       }
-      if (room.members.size < 1) return cb?.({ ok: false, error: '인원 부족' })
+      if (playerCount(room) < 1) return cb?.({ ok: false, error: '플레이어가 없습니다' })
 
       room.genreBankCounts = await loadGenreBankCounts()
       room.genreCounts = await clampGenreCounts(room.genreCounts)
@@ -5294,6 +5401,30 @@ export function registerSocket(io: Server) {
       if (!text) return
       const room = findRoomByUser(user.id)
       if (!room || (room.status !== 'playing' && room.status !== 'duel')) return
+      const self = room.members.get(user.id)
+      if (!self) return
+      // 관전: 채팅만 (정답 판정 없음)
+      if (self.isSpectator) {
+        if (room.status === 'duel' && room.duel) {
+          emitSpectatorChat(io, room, {
+            id: Date.now(),
+            userId: user.id,
+            nickname: user.nickname,
+            text,
+            at: Date.now(),
+          })
+        } else {
+          io.to(room.id).emit('chat:message', {
+            id: Date.now(),
+            userId: user.id,
+            nickname: user.nickname,
+            text,
+            at: Date.now(),
+            spectator: true,
+          })
+        }
+        return
+      }
 
       if (room.gameMode === 'reading' && room.reading) {
         io.to(room.id).emit('chat:message', {
@@ -5841,9 +5972,11 @@ export function registerSocket(io: Server) {
     socket.on('round:skip', () => {
       const room = findRoomByUser(user.id)
       if (!room || room.status !== 'playing') return
+      const self = room.members.get(user.id)
+      if (!self || self.isSpectator) return
       if (room.skipVotes.has(user.id)) return
       room.skipVotes.add(user.id)
-      const need = skipVotesNeeded(room.members.size)
+      const need = skipVotesNeeded(playerCount(room))
       io.to(room.id).emit('round:skip_update', { votes: room.skipVotes.size, need })
       if (room.skipVotes.size >= need) {
         endRound(io, room, 'skip')
@@ -5946,6 +6079,7 @@ export function registerSocket(io: Server) {
       const room = findRoomByUser(user.id)
       if (!room || room.status !== 'playing') return
       const m = room.members.get(user.id)
+      if (!m || m.isSpectator) return
       if (!m?.heldAugmentId || !m.heldAugmentName || !m.heldAugmentEffectType) return
       // 자동 사용 / 피격 자동 발동 증강은 수동 사용 불가
       if (
@@ -5990,6 +6124,7 @@ export function registerSocket(io: Server) {
           if (TARGET_AUGMENT_TYPES.has(pick.effectType)) {
             const eligible = [...room.members.values()].filter((other) => (
               other.userId !== m.userId
+              && canReceiveTargetAugment(other, room)
               && (pick.effectType !== 'steal_held_augment' || !!other.heldAugmentId)
             ))
             const other = eligible.length
@@ -6122,7 +6257,7 @@ export function registerSocket(io: Server) {
             : !!payload?.targetUserId
           if (!hasTarget) {
             // 불꽃남자: 혼자면 대상 없이 사용 가능
-            if (!(aug.effectType === 'flame_kim' && room.members.size < 2)) return
+            if (!(aug.effectType === 'flame_kim' && playerCount(room) < 2)) return
           }
         }
         if (GENRE_AUGMENT_TYPES.has(aug.effectType)) {
@@ -6514,7 +6649,7 @@ function resumeMainRoundAfterDuel(
     forceSettleAnswerProxies(io, room)
     room.status = 'ended'
     io.to(room.id).emit('game:end', {
-      results: [...room.members.values()]
+      results: playerMembers(room)
         .map((m) => ({ nickname: m.nickname, score: m.score, userId: m.userId }))
         .sort((a, b) => b.score - a.score),
     })
@@ -6581,7 +6716,7 @@ function resumeMainRoundAfterDuel(
       artistChosung: q.artistChosung,
       slots: publicSlots,
     })
-    io.to(room.id).emit('round:skip_update', { votes: 0, need: skipVotesNeeded(room.members.size) })
+    io.to(room.id).emit('round:skip_update', { votes: 0, need: skipVotesNeeded(playerCount(room)) })
     for (const m of room.members.values()) {
       if (isTrumanIllusion(m, room.index)) emitIllusionRound(io, m)
     }
@@ -6607,7 +6742,7 @@ function startRound(io: Server, room: Room) {
     forceSettleAnswerProxies(io, room)
     room.status = 'ended'
     io.to(room.id).emit('game:end', {
-      results: [...room.members.values()]
+      results: playerMembers(room)
         .map((m) => ({ nickname: m.nickname, score: m.score, userId: m.userId }))
         .sort((a, b) => b.score - a.score),
     })
@@ -6629,6 +6764,7 @@ function startRound(io: Server, room: Room) {
       for (const m of room.members.values()) {
         // 미사용 보관 증강 소멸(임시 규칙)
         clearHeldAugment(m)
+        if (m.isSpectator) continue
         // 새 증강 페이즈 → 리롤 시야 초기화 (이전에 뜬 카드는 다시 가능, 사용 증강은 계속 제외)
         m.offerSeenAugmentIds = []
         m.lastOfferCandidateIds = []
@@ -6656,6 +6792,7 @@ function startRound(io: Server, room: Room) {
         const all = await getEnabledAugments()
         const byId = new Map(all.map((a) => [a.id, a]))
         for (const m of room.members.values()) {
+          if (m.isSpectator) continue
           if (m.heldAugmentId) continue
           const fromOffer = (m.lastOfferCandidateIds || [])
             .map((id) => byId.get(id))
@@ -6781,7 +6918,7 @@ function startRound(io: Server, room: Room) {
     forceSettleAnswerProxies(io, room)
     room.status = 'ended'
     io.to(room.id).emit('game:end', {
-      results: [...room.members.values()]
+      results: playerMembers(room)
         .map((m) => ({ nickname: m.nickname, score: m.score, userId: m.userId }))
         .sort((a, b) => b.score - a.score),
     })
@@ -6818,7 +6955,7 @@ function startRound(io: Server, room: Room) {
       artistChosung: q.artistChosung,
       slots: publicSlots,
     })
-    io.to(room.id).emit('round:skip_update', { votes: 0, need: skipVotesNeeded(room.members.size) })
+    io.to(room.id).emit('round:skip_update', { votes: 0, need: skipVotesNeeded(playerCount(room)) })
     for (const m of room.members.values()) {
       if (isTrumanIllusion(m, room.index)) emitIllusionRound(io, m)
     }
@@ -6873,7 +7010,7 @@ function endRound(io: Server, room: Room, reason: 'cleared' | 'skip' | 'timeout'
     forceSettleTrumanIllusions(io, room)
     forceSettleAnswerProxies(io, room)
     io.to(room.id).emit('game:end', {
-      results: [...room.members.values()]
+      results: playerMembers(room)
         .map((m) => ({ nickname: m.nickname, score: m.score, userId: m.userId }))
         .sort((a, b) => b.score - a.score),
     })
@@ -6894,7 +7031,7 @@ function endRound(io: Server, room: Room, reason: 'cleared' | 'skip' | 'timeout'
   const reveal = buildRevealSlots(room, q, reason)
 
   io.to(room.id).emit('round:reveal', { reason, slots: reveal, pauseSec: 3 })
-  io.to(room.id).emit('round:skip_update', { votes: 0, need: skipVotesNeeded(room.members.size) })
+  io.to(room.id).emit('round:skip_update', { votes: 0, need: skipVotesNeeded(playerCount(room)) })
   // 맞췄죠?/대리 결산 점수 즉시 반영
   io.to(room.id).emit('room:state', roomState(room))
   room.index += 1
@@ -6909,7 +7046,7 @@ function beginRoundCountdown(io: Server, room: Room) {
     forceSettleAnswerProxies(io, room)
     room.status = 'ended'
     io.to(room.id).emit('game:end', {
-      results: [...room.members.values()]
+      results: playerMembers(room)
         .map((m) => ({ nickname: m.nickname, score: m.score, userId: m.userId }))
         .sort((a, b) => b.score - a.score),
     })
@@ -6944,7 +7081,7 @@ function beginRoundCountdown(io: Server, room: Room) {
 async function finishAugmentIfReady(io: Server, room: Room) {
   // 중복 호출 방지 (전원 선택 동시 / 타임아웃 레이스)
   if (room.status !== 'augment') return
-  const allPicked = [...room.members.values()].every((x) => x.heldAugmentId)
+  const allPicked = playerMembers(room).every((x) => x.heldAugmentId)
   if (!allPicked) {
     io.to(room.id).emit('room:state', roomState(room))
     return

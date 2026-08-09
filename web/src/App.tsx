@@ -963,6 +963,8 @@ function LobbyScreen({ nav }: { nav: (s: Screen) => void }) {
   const [busy, setBusy] = useState(false)
   const filtered = rooms.filter(r => r.name.includes(search) || r.genre.includes(search))
 
+  const [joinAsSpectator, setJoinAsSpectator] = useState(false)
+
   useEffect(() => {
     if (!user) nav('login')
   }, [user, nav])
@@ -979,7 +981,7 @@ function LobbyScreen({ nav }: { nav: (s: Screen) => void }) {
   const enter = async (roomId: string) => {
     setBusy(true); setErr('')
     try {
-      await joinRoom({ roomId })
+      await joinRoom({ roomId, asSpectator: joinAsSpectator })
       nav('waiting')
     } catch (e) { setErr(e instanceof Error ? e.message : '실패') }
     finally { setBusy(false) }
@@ -989,7 +991,7 @@ function LobbyScreen({ nav }: { nav: (s: Screen) => void }) {
     if (!code.trim()) return
     setBusy(true); setErr('')
     try {
-      await joinRoom({ code: code.trim() })
+      await joinRoom({ code: code.trim(), asSpectator: joinAsSpectator })
       nav('waiting')
     } catch (e) { setErr(e instanceof Error ? e.message : '실패') }
     finally { setBusy(false) }
@@ -1058,13 +1060,41 @@ function LobbyScreen({ nav }: { nav: (s: Screen) => void }) {
       <div style={{ maxWidth: 920, margin: '0 auto', padding: '28px 24px 40px', position: 'relative', zIndex: 1 }}>
         <div style={{ display: 'flex', gap: 10, marginBottom: 24, flexWrap: 'wrap', alignItems: 'center' }}>
           <Btn variant="primary" size="md" onClick={makeRoom} disabled={busy || !connected}>+ 방 만들기</Btn>
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            <button
+              type="button"
+              onClick={() => setJoinAsSpectator(false)}
+              style={{
+                ...sk(!joinAsSpectator ? C.blue : C.graphite, true),
+                backgroundColor: !joinAsSpectator ? C.blueLight : C.card,
+                color: !joinAsSpectator ? C.blue : C.body,
+                fontFamily: F.ui, fontSize: 13, fontWeight: 800, padding: '6px 12px', cursor: 'pointer',
+              }}
+            >
+              플레이어
+            </button>
+            <button
+              type="button"
+              onClick={() => setJoinAsSpectator(true)}
+              style={{
+                ...sk(joinAsSpectator ? C.blue : C.graphite, true),
+                backgroundColor: joinAsSpectator ? C.blueLight : C.card,
+                color: joinAsSpectator ? C.blue : C.body,
+                fontFamily: F.ui, fontSize: 13, fontWeight: 800, padding: '6px 12px', cursor: 'pointer',
+              }}
+            >
+              관전
+            </button>
+          </div>
           <div style={{ display: 'flex', gap: 8, flex: 1, minWidth: 200 }}>
             <SketchInput
               value={code} onChange={setCode}
               placeholder="초대 코드 입력..."
               style={{ flex: 1, fontSize: '15px', padding: '10px 14px', fontWeight: 700 }}
             />
-            <Btn onClick={enterCode} disabled={busy || !connected}>코드 입장</Btn>
+            <Btn onClick={enterCode} disabled={busy || !connected}>
+              {joinAsSpectator ? '관전 입장' : '코드 입장'}
+            </Btn>
           </div>
           <SketchInput
             value={search} onChange={setSearch}
@@ -1123,7 +1153,7 @@ function LobbyScreen({ nav }: { nav: (s: Screen) => void }) {
                   {room.players}/{room.max}
                 </span>
                 <Btn size="sm" variant={full ? 'default' : 'primary'} disabled={full || busy}>
-                  {full ? '가득 참' : '입장'}
+                  {full ? '가득 참' : (joinAsSpectator ? '관전' : '입장')}
                 </Btn>
               </div>
             )
@@ -1206,7 +1236,7 @@ function WaitingScreen({ nav }: { nav: (s: Screen) => void }) {
         <div style={{ fontFamily: F.ui, fontSize: 20, fontWeight: 900, flex: 1, color: C.body }}>{room.name}</div>
         {roomCode && <div style={{ fontFamily: F.ui, fontSize: 14, color: C.blue }}>코드: {roomCode}</div>}
         <div style={{ fontFamily: F.ui, fontSize: 14, fontWeight: 700, color: C.muted }}>
-          {players.filter(p => p.ready).length}/{players.length} 준비 완료
+          {players.filter(p => !p.isSpectator && p.ready).length}/{players.filter(p => !p.isSpectator).length} 준비 · 관전 {players.filter(p => p.isSpectator).length}
         </div>
       </div>
 
@@ -1217,13 +1247,18 @@ function WaitingScreen({ nav }: { nav: (s: Screen) => void }) {
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10 }}>
               {players.map(p => (
                 <div key={p.userId} style={{
-                  ...sk(p.ready ? C.green : C.graphite, true),
-                  backgroundColor: p.ready ? C.greenLight : C.card,
+                  ...sk(p.isSpectator ? C.muted : (p.ready ? C.green : C.graphite), true),
+                  backgroundColor: p.isSpectator ? '#F0EEE8' : (p.ready ? C.greenLight : C.card),
                   padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 10,
                 }}>
                   <Avatar name={p.nickname} url={p.avatarUrl} size={32} host={p.isHost} />
-                  <div style={{ flex: 1, fontFamily: F.ui, fontSize: 15, fontWeight: 800 }}>{p.nickname}{p.isHost ? ' 👑' : ''}</div>
-                  <div style={{ fontFamily: F.ui, fontSize: 13, color: p.ready ? C.green : C.muted }}>{p.ready ? '준비' : '대기'}</div>
+                  <div style={{ flex: 1, fontFamily: F.ui, fontSize: 15, fontWeight: 800 }}>
+                    {p.nickname}{p.isHost ? ' 👑' : ''}
+                    {p.isSpectator ? ' · 관전' : ''}
+                  </div>
+                  <div style={{ fontFamily: F.ui, fontSize: 13, color: p.isSpectator ? C.muted : (p.ready ? C.green : C.muted) }}>
+                    {p.isSpectator ? '관전' : (p.ready ? '준비' : '대기')}
+                  </div>
                 </div>
               ))}
             </div>
@@ -1378,9 +1413,18 @@ function WaitingScreen({ nav }: { nav: (s: Screen) => void }) {
           </NoteCard>
 
           {err && <div style={{ fontFamily: F.ui, color: C.red }}>{err}</div>}
-          <Btn variant={me?.ready ? 'default' : 'primary'} fullWidth onClick={setReady}>
-            {me?.ready ? '준비 취소' : '준비하기'}
-          </Btn>
+          {me?.isSpectator ? (
+            <div style={{
+              fontFamily: F.ui, fontSize: 14, fontWeight: 700, color: C.muted, textAlign: 'center',
+              padding: '12px 8px', lineHeight: 1.5,
+            }}>
+              관전 중 · 채팅만 가능 · 점수·증강·정답 미참여
+            </div>
+          ) : (
+            <Btn variant={me?.ready ? 'default' : 'primary'} fullWidth onClick={setReady}>
+              {me?.ready ? '준비 취소' : '준비하기'}
+            </Btn>
+          )}
           {isHost && (
             <Btn variant="primary" fullWidth size="lg" onClick={onStart}>게임 시작</Btn>
           )}
@@ -1664,7 +1708,7 @@ function GahoCutscene({
 
 
 function GameScreen({ nav }: { nav: (s: Screen) => void }) {
-  const { user, room, chats, round, skip, skipVoted, augmentHint, startCountdown, musicVolume, setMusicVolume, sfxVolume, setSfxVolume, submitAnswer, voteSkip, useAugment, fetchGahoCandidates, leaveRoom, connected, pingMs, readingAccept, readingPass, readingClaim, readingVote } = useGame()
+  const { user, room, chats, round, skip, skipVoted, augmentHint, startCountdown, musicVolume, setMusicVolume, sfxVolume, setSfxVolume, submitAnswer, sendChat, voteSkip, useAugment, fetchGahoCandidates, leaveRoom, connected, pingMs, readingAccept, readingPass, readingClaim, readingVote } = useGame()
   const [input, setInput] = useState('')
   const [showUsedList, setShowUsedList] = useState(false)
   const [augHover, setAugHover] = useState(false)
@@ -1746,6 +1790,7 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
   if (!room || !user) return null
 
   const me = room.members.find(m => m.userId === user.id)
+  const isSpectator = !!me?.isSpectator
   const timer = round ? Math.max(0, Math.ceil((round.endsAt - now) / 1000)) : 0
   const maxTime = round?.duration || 40
   const openSlots = (round?.slots || []).filter(s => !s.hidden)
@@ -1779,7 +1824,10 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
   const hoveredChatCard = chatCardHover != null
     ? visibleChats.find((c) => c.id === chatCardHover)?.augmentCard
     : null
-  const ranked = [...room.members].sort((a, b) => b.score - a.score)
+  const ranked = [...room.members]
+    .filter((m) => !m.isSpectator)
+    .sort((a, b) => b.score - a.score)
+  const spectators = room.members.filter((m) => m.isSpectator)
   const myBuffs = me?.activeBuffs || []
   const deafMode = myBuffs.some(b => b.active && (
     b.effectType === 'score_mult_hint_only' || b.effectType === 'mud_fight'
@@ -1789,7 +1837,7 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
   const songPlaybackRate = (!inDuel && me?.playbackRate && me.playbackRate > 0 && me.playbackRate !== 1)
     ? me.playbackRate
     : 1
-  const needsTargetPick =
+  const needsTargetPick = !isSpectator && (
     me?.heldAugmentEffectType === 'soft_chat_mute'
     || me?.heldAugmentEffectType === 'slow_playback'
     || me?.heldAugmentEffectType === 'answer_proxy'
@@ -1803,23 +1851,31 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
     || me?.heldAugmentEffectType === 'score_steal'
     || me?.heldAugmentEffectType === 'accuse_sleep'
     || me?.heldAugmentEffectType === 'gabuki_mark'
-    || (me?.heldAugmentEffectType === 'flame_kim' && room.members.length >= 2)
+    || (me?.heldAugmentEffectType === 'flame_kim' && room.members.filter((m) => !m.isSpectator).length >= 2)
     || me?.heldAugmentEffectType === 'steal_held_augment'
     || me?.heldAugmentEffectType === 'hide_hints'
     || me?.heldAugmentEffectType === 'audio_stutter'
     || me?.heldAugmentEffectType === 'score_share'
+  )
   const isTrumanTargetPick = me?.heldAugmentEffectType === 'sakura_decoy'
   const targetCandidates = room.members.filter((player) => (
     player.userId !== user.id
+    && !player.isSpectator
+    && !player.augmentBusy
     && (me?.heldAugmentEffectType !== 'steal_held_augment' || !!player.heldAugmentId)
+  ))
+  const busyTargets = room.members.filter((player) => (
+    player.userId !== user.id
+    && !player.isSpectator
+    && !!player.augmentBusy
   ))
   const isAutoAugment = me?.heldAugmentEffectType === 'water_ghost'
     || me?.heldAugmentEffectType === 'combo_clear_double'
   const isPassiveHeld = me?.heldAugmentEffectType === 'reflect_debuff'
   const isAutoTriggerHeld = me?.heldAugmentEffectType === 'cha_cha_cha'
-  const useLocked = isAutoAugment || isPassiveHeld || isAutoTriggerHeld
-  const needsGahoPick = me?.heldAugmentEffectType === 'gaho_select'
-  const needsGenrePick = me?.heldAugmentEffectType === 'ban_genre'
+  const useLocked = isSpectator || isAutoAugment || isPassiveHeld || isAutoTriggerHeld
+  const needsGahoPick = !isSpectator && me?.heldAugmentEffectType === 'gaho_select'
+  const needsGenrePick = !isSpectator && me?.heldAugmentEffectType === 'ban_genre'
   const upcomingGenreEntries = Object.entries(room.upcomingGenreCounts || {})
     .filter(([, c]) => c > 0)
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'ko'))
@@ -2017,9 +2073,10 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
   const displayCountdown = (startCountdown != null && startCountdown > 0)
     ? startCountdown
     : (readingPreSolveCd != null && readingPreSolveCd > 0 ? readingPreSolveCd : null)
-  const showAugmentSide = isReading || room.augmentsEnabled !== false
-  const isReadingOffered = !!(reading && reading.offeredUserId === user.id)
-  const canReadingVote = !!(reading && reading.phase === 'vote' && !isReadingSolver)
+  // 리딩은 관전도 진행 패널 표시 · 노맞 증강 패널만 관전 숨김
+  const showAugmentSide = isReading || (!isSpectator && room.augmentsEnabled !== false)
+  const isReadingOffered = !!(reading && reading.offeredUserId === user.id && !isSpectator)
+  const canReadingVote = !!(reading && reading.phase === 'vote' && !isReadingSolver && !isSpectator)
   const readingTurnCycle = (reading?.turnOrder || []).map((uid, i) => {
     const nick = room.members.find((m) => m.userId === uid)?.nickname || '?'
     const current = reading ? (i === (reading.turnIndex % reading.turnOrder.length)) : false
@@ -2031,7 +2088,9 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
     if (me?.chatMuted) return
     if (me?.answerDelayUnlockAt && now < me.answerDelayUnlockAt) return
     if (!input.trim()) return
-    submitAnswer(input.trim())
+    const text = input.trim()
+    if (isSpectator) sendChat(text)
+    else submitAnswer(text)
     setInput('')
   }
 
@@ -2227,6 +2286,19 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
                 </div>
               )
             })}
+            {spectators.length > 0 && (
+              <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1.5px dashed ${C.graphite}55` }}>
+                <div style={{ fontFamily: F.ui, fontSize: 13, color: C.muted, marginBottom: 6 }}>관전</div>
+                {spectators.map((s) => (
+                  <div key={s.userId} style={{
+                    display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', opacity: 0.85,
+                  }}>
+                    <Avatar name={s.nickname} url={s.avatarUrl} size={24} />
+                    <span style={{ fontFamily: F.ui, fontSize: 14, color: C.muted }}>{s.nickname}</span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 
@@ -2509,40 +2581,46 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
                     </div>
                   ) : null}
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8, width: '100%' }}>
-                    {reading.phase === 'decide' && isReadingOffered && (
+                    {isSpectator ? (
+                      <div style={{ fontFamily: F.ui, fontSize: 14, color: C.muted }}>관전 중 · 채팅만 가능</div>
+                    ) : (
                       <>
-                        <Btn variant="primary" fullWidth onClick={readingAccept}>도전 (+3/−3)</Btn>
-                        <Btn variant="danger" fullWidth onClick={readingPass}>포기 (−1)</Btn>
+                        {reading.phase === 'decide' && isReadingOffered && (
+                          <>
+                            <Btn variant="primary" fullWidth onClick={readingAccept}>도전 (+3/−3)</Btn>
+                            <Btn variant="danger" fullWidth onClick={readingPass}>포기 (−1)</Btn>
+                          </>
+                        )}
+                        {reading.phase === 'decide' && !isReadingOffered && (
+                          <div style={{ fontFamily: F.ui, fontSize: 14, color: C.muted }}>
+                            {reading.offeredNickname}님 선택 대기…
+                          </div>
+                        )}
+                        {reading.phase === 'claim' && !isReadingOffered && (
+                          <Btn variant="primary" fullWidth onClick={readingClaim}>참가</Btn>
+                        )}
+                        {reading.phase === 'claim' && isReadingOffered && (
+                          <div style={{ fontFamily: F.ui, fontSize: 14, color: C.muted }}>참가자 대기…</div>
+                        )}
+                        {canReadingVote && (
+                          <>
+                            <Btn variant="primary" fullWidth onClick={() => readingVote('yes')}>맞힐듯</Btn>
+                            <Btn fullWidth onClick={() => readingVote('no')}>못맞힐듯</Btn>
+                          </>
+                        )}
+                        {reading.phase === 'vote' && isReadingSolver && (
+                          <div style={{ fontFamily: F.ui, fontSize: 14, color: C.muted }}>투표 대기… (미리듣기 없음)</div>
+                        )}
+                        {reading.phase === 'pre_solve' && (
+                          <div style={{ fontFamily: F.ui, fontSize: 14, color: C.muted }}>곧 풀이 시작</div>
+                        )}
+                        {reading.phase === 'solve' && isReadingSolver && (
+                          <div style={{ fontFamily: F.ui, fontSize: 14, color: C.muted }}>아래 입력창에 제목 제출</div>
+                        )}
+                        {reading.phase === 'solve' && !isReadingSolver && (
+                          <div style={{ fontFamily: F.ui, fontSize: 14, color: C.muted }}>같이 들으며 관전</div>
+                        )}
                       </>
-                    )}
-                    {reading.phase === 'decide' && !isReadingOffered && (
-                      <div style={{ fontFamily: F.ui, fontSize: 14, color: C.muted }}>
-                        {reading.offeredNickname}님 선택 대기…
-                      </div>
-                    )}
-                    {reading.phase === 'claim' && !isReadingOffered && (
-                      <Btn variant="primary" fullWidth onClick={readingClaim}>참가</Btn>
-                    )}
-                    {reading.phase === 'claim' && isReadingOffered && (
-                      <div style={{ fontFamily: F.ui, fontSize: 14, color: C.muted }}>참가자 대기…</div>
-                    )}
-                    {canReadingVote && (
-                      <>
-                        <Btn variant="primary" fullWidth onClick={() => readingVote('yes')}>맞힐듯</Btn>
-                        <Btn fullWidth onClick={() => readingVote('no')}>못맞힐듯</Btn>
-                      </>
-                    )}
-                    {reading.phase === 'vote' && isReadingSolver && (
-                      <div style={{ fontFamily: F.ui, fontSize: 14, color: C.muted }}>투표 대기… (미리듣기 없음)</div>
-                    )}
-                    {reading.phase === 'pre_solve' && (
-                      <div style={{ fontFamily: F.ui, fontSize: 14, color: C.muted }}>곧 풀이 시작</div>
-                    )}
-                    {reading.phase === 'solve' && isReadingSolver && (
-                      <div style={{ fontFamily: F.ui, fontSize: 14, color: C.muted }}>아래 입력창에 제목 제출</div>
-                    )}
-                    {reading.phase === 'solve' && !isReadingSolver && (
-                      <div style={{ fontFamily: F.ui, fontSize: 14, color: C.muted }}>같이 들으며 관전</div>
                     )}
                   </div>
                 </div>
@@ -2953,7 +3031,14 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
                 <div style={{ fontFamily: F.ui, fontSize: 15, color: C.muted }}>
                   {me?.heldAugmentEffectType === 'steal_held_augment'
                     ? '증강을 보유한 다른 플레이어가 없습니다'
-                    : '선택할 대상이 없습니다'}
+                    : busyTargets.length > 0
+                      ? '이미 증강이 적용 중인 대상만 있어 사용할 수 없습니다'
+                      : '선택할 대상이 없습니다'}
+                </div>
+              )}
+              {busyTargets.length > 0 && targetCandidates.length > 0 && (
+                <div style={{ fontFamily: F.ui, fontSize: 13, color: C.muted, marginTop: 4 }}>
+                  증강 적용 중(선택 불가): {busyTargets.map((p) => p.nickname).join(', ')}
                 </div>
               )}
             </div>
@@ -3141,6 +3226,8 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
                 ? `${me?.answerDelayBy || '잠깐만요'} · ${answerDelayLeftSec}초 후 입력 가능`
                 : duelSpectating
                   ? '관전 채팅 · 대결 당사자에겐 안 보여요'
+                  : isSpectator
+                    ? '관전 중 · 채팅만 가능'
                   : inDuel
                     ? '야차룰 · 제목만 맞히세요!'
                     : '정답 여러 번 제출 가능 · 제목/가수 둘 다 맞혀도 OK'
@@ -3157,10 +3244,12 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
         />
         <Btn
           variant="danger"
-          disabled={isReading || skipVoted || room.status !== 'playing' || inDuel}
+          disabled={isSpectator || isReading || skipVoted || room.status !== 'playing' || inDuel}
           onClick={voteSkip}
         >
-          {isReading
+          {isSpectator
+            ? '관전'
+            : isReading
             ? '리딩방'
             : inDuel
             ? '야차룰 중'
@@ -3170,7 +3259,9 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
                 ? '대기 중'
                 : `스킵 ${skip.votes}/${skip.need}`}
         </Btn>
-        <Btn variant="primary" disabled={submitBlocked} onClick={send}>제출</Btn>
+        <Btn variant="primary" disabled={submitBlocked} onClick={send}>
+          {isSpectator ? '채팅' : '제출'}
+        </Btn>
       </div>
 
       {queueHover && (

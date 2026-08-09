@@ -73,6 +73,10 @@ export type RoomMember = {
   ready: boolean
   score: number
   isHost: boolean
+  /** 관전: 채팅만 */
+  isSpectator?: boolean
+  /** 이미 증강 효과 적용 중 → 타겟 불가 */
+  augmentBusy?: boolean
   heldAugmentId: string | null
   heldAugmentName: string | null
   heldAugmentDescription?: string | null
@@ -364,7 +368,7 @@ type GameCtx = {
     readingTargetScore?: number
     recentSongPenalty?: number
   }) => Promise<void>
-  joinRoom: (opts: { roomId?: string; code?: string }) => Promise<void>
+  joinRoom: (opts: { roomId?: string; code?: string; asSpectator?: boolean }) => Promise<void>
   leaveRoom: () => void
   setReady: () => void
   updateSettings: (payload: {
@@ -1001,7 +1005,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
     setResults(null)
   }
 
-  const joinRoom = async (opts: { roomId?: string; code?: string }) => {
+  const joinRoom = async (opts: { roomId?: string; code?: string; asSpectator?: boolean }) => {
     const res = await emitAck<{ ok: boolean; room?: RoomState; error?: string }>('room:join', opts)
     if (!res.ok || !res.room) throw new Error(res.error || '입장 실패')
     setRoom(res.room)

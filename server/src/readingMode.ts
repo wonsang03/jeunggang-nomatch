@@ -57,6 +57,7 @@ export type ReadingRoomLike = {
     nickname: string
     socketId: string
     score: number
+    isSpectator?: boolean
   }>
   reading: ReadingState | null
   revealed: Record<string, { answer: string; by: string; userId: string }>
@@ -158,6 +159,7 @@ function endReadingGame(
   room.status = 'ended'
   room.reading = null
   const results = [...room.members.values()]
+    .filter((m) => !m.isSpectator)
     .map((m) => ({ userId: m.userId, nickname: m.nickname, score: m.score }))
     .sort((a, b) => b.score - a.score)
   io.to(room.id).emit('game:end', { results })
@@ -168,6 +170,7 @@ function endReadingGame(
 function reachedTarget(room: ReadingRoomLike) {
   const target = room.readingTargetScore || 50
   for (const m of room.members.values()) {
+    if (m.isSpectator) continue
     if (m.score >= target) return m
   }
   return null
@@ -357,7 +360,9 @@ function beginVotePhase(
   room.roundStartedAt = Date.now()
 
   const hear = new Set(
-    [...room.members.keys()].filter((id) => id !== r.solverId),
+    [...room.members.values()]
+      .filter((m) => !m.isSpectator && m.userId !== r.solverId)
+      .map((m) => m.userId),
   )
   const solverNick = room.members.get(r.solverId)?.nickname || '?'
   emitSystem(io, room, `투표! ${solverNick}님이 이 노래를 맞힐 수 있을까요? (유권자 미리듣기 · ${VOTE_SEC}초)`)
@@ -519,7 +524,13 @@ export function startReadingGame(
   room: ReadingRoomLike,
   roomState: (r: ReadingRoomLike, viewerUserId?: string) => unknown,
 ) {
-  const turnOrder = [...room.members.keys()]
+  const turnOrder = [...room.members.values()]
+    .filter((m) => !m.isSpectator)
+    .map((m) => m.userId)
+  if (!turnOrder.length) {
+    room.status = 'ended'
+    return
+  }
   room.reading = {
     turnOrder,
     turnIndex: 0,
@@ -585,6 +596,7 @@ export function readingClaim(
   if (!r || r.phase !== 'claim') return { ok: false, error: '지금은 참가할 수 없습니다' }
   if (userId === r.offeredUserId) return { ok: false, error: '포기한 턴에는 참가할 수 없습니다' }
   if (!room.members.has(userId)) return { ok: false, error: '멤버 아님' }
+  if (room.members.get(userId)?.isSpectator) return { ok: false, error: '관전자는 참가할 수 없습니다' }
   r.solverId = userId
   const nick = room.members.get(userId)?.nickname || '?'
   emitSystem(io, room, `${nick}님이 참가합니다!`)
@@ -603,11 +615,14 @@ export function readingVote(
   if (!r || r.phase !== 'vote') return { ok: false, error: '투표 시간이 아닙니다' }
   if (userId === r.solverId) return { ok: false, error: '풀이자는 투표할 수 없습니다' }
   if (!room.members.has(userId)) return { ok: false, error: '멤버 아님' }
+  if (room.members.get(userId)?.isSpectator) return { ok: false, error: '관전자는 투표할 수 없습니다' }
   r.votes[userId] = vote
   emitReadingRoomState(io, room, roomState)
 
   // 전원 투표 완료 시 즉시 풀이
-  const voters = [...room.members.keys()].filter((id) => id !== r.solverId)
+  const voters = [...room.members.values()]
+    .filter((m) => !m.isSpectator && m.userId !== r.solverId)
+    .map((m) => m.userId)
   if (voters.length > 0 && voters.every((id) => r.votes[id])) {
     beginSolveCountdown(io, room, roomState)
   }
