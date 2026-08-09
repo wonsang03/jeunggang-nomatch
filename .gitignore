@@ -24,6 +24,13 @@ web/dist/
 # uploads (runtime)
 server/uploads/avatars/*
 !server/uploads/avatars/.gitignore
+server/uploads/augments/*
+!server/uploads/augments/.gitkeep
+
+# 증강 이미지 (비공개 · 로컬/서버에만 보관)
+web/public/augments/*
+!web/public/augments/.gitkeep
+가호사진/
 
 # logs & OS
 logs/
