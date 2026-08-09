@@ -3,7 +3,7 @@ import { z } from 'zod'
 import type { Request } from 'express'
 import { prisma } from '../config.js'
 import { adminMiddleware, authMiddleware, type AuthUser } from '../auth.js'
-import { GENRES } from '../genres.js'
+import { BANK_GENRES } from '../genres.js'
 import { extractYoutubeId, normalizeAnswer, parseAcceptList, expandArtistAccepts, splitDuoArtists } from '../answer.js'
 import { normalizeSongTags, parseTagsJson, tagsToJson, SONG_TAGS } from '../tags.js'
 
@@ -61,21 +61,34 @@ questionRouter.get('/', authMiddleware, async (req, res) => {
   const q = String(req.query.q || '').trim()
   const genreName = String(req.query.genre || '').trim()
   const tag = String(req.query.tag || '').trim()
+  const hiddenRaw = String(req.query.hidden || '').trim().toLowerCase()
+  const hiddenFilter = hiddenRaw === '1' || hiddenRaw === 'true' || hiddenRaw === 'yes'
+    ? true
+    : hiddenRaw === '0' || hiddenRaw === 'false' || hiddenRaw === 'no'
+      ? false
+      : null
 
   const where: {
     enabled: boolean
     genre?: { name: string }
     tags?: { contains: string }
     OR?: Array<Record<string, unknown>>
+    slots?: { some: { hidden: true } } | { none: { hidden: true } }
   } = { enabled: true }
 
-  if (genreName && (GENRES as readonly string[]).includes(genreName)) {
+  if (genreName && (BANK_GENRES as readonly string[]).includes(genreName)) {
     where.genre = { name: genreName }
   }
 
   if (tag) {
     // JSON 배열 문자열 안 부분 매칭
     where.tags = { contains: tag }
+  }
+
+  if (hiddenFilter === true) {
+    where.slots = { some: { hidden: true } }
+  } else if (hiddenFilter === false) {
+    where.slots = { none: { hidden: true } }
   }
 
   if (q) {
@@ -127,7 +140,7 @@ const createSchema = z.object({
   youtubeUrl: z.string().min(1),
   startSec: z.number().int().min(0),
   endSec: z.number().int().min(1),
-  genreName: z.enum(GENRES),
+  genreName: z.enum(BANK_GENRES),
   tags: z.array(z.string()).optional().default([]),
   slots: z.array(z.object({
     label: z.string().min(1),
@@ -294,7 +307,7 @@ questionRouter.post('/', authMiddleware, adminMiddleware, async (req, res) => {
   const parsed = createSchema.safeParse(req.body)
   if (!parsed.success) {
     return res.status(400).json({
-      error: `입력값을 확인해주세요 (장르: ${GENRES.join(', ')})`,
+      error: `입력값을 확인해주세요 (장르: ${BANK_GENRES.join(', ')})`,
       detail: parsed.error.flatten(),
     })
   }
@@ -310,7 +323,7 @@ questionRouter.patch('/:id', authMiddleware, adminMiddleware, async (req, res) =
   const parsed = createSchema.safeParse(req.body)
   if (!parsed.success) {
     return res.status(400).json({
-      error: `입력값을 확인해주세요 (장르: ${GENRES.join(', ')})`,
+      error: `입력값을 확인해주세요 (장르: ${BANK_GENRES.join(', ')})`,
       detail: parsed.error.flatten(),
     })
   }

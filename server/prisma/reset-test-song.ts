@@ -1,10 +1,10 @@
 import { PrismaClient } from '@prisma/client'
-import { GENRES } from '../src/genres.js'
+import { BANK_GENRES } from '../src/genres.js'
 
 const prisma = new PrismaClient()
 
 async function main() {
-  for (const name of GENRES) {
+  for (const name of BANK_GENRES) {
     await prisma.genre.upsert({ where: { name }, update: {}, create: { name } })
   }
 

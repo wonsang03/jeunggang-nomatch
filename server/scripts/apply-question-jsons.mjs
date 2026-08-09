@@ -32,7 +32,7 @@ const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application
 async function loadExistingMap() {
   const by = new Map()
   // 장르별 + 전체
-  const genres = ['', '한국노래', '일본노래', '해외노래', '애니', '클래식', '버튜버', '게임', '기타']
+  const genres = ['', '한국노래', '일본노래', '해외노래', '애니', '버튜버', '게임', '기타']
   for (const g of genres) {
     const url = g
       ? `${BASE}/api/questions?limit=200&genre=${encodeURIComponent(g)}`

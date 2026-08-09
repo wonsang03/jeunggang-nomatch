@@ -114,6 +114,19 @@ async function main() {
     }
   }
   console.log(`sync ok · updated ${updated} · created ${created} · seed ${augs.length}`)
+
+  // seed에 없는 증강은 비활성 (삭제 대신 enabled=false)
+  const seedKeys = new Set(augs.map((a) => `${a.name}::${a.tier}`))
+  const all = await prisma.augment.findMany({ select: { id: true, name: true, tier: true, enabled: true } })
+  let disabled = 0
+  for (const row of all) {
+    const key = `${row.name}::${row.tier}`
+    if (!seedKeys.has(key) && row.enabled) {
+      await prisma.augment.update({ where: { id: row.id }, data: { enabled: false } })
+      disabled += 1
+    }
+  }
+  if (disabled) console.log(`disabled ${disabled} augments not in seed`)
 }
 
 main()

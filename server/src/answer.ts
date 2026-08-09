@@ -96,9 +96,18 @@ export function expandArtistAccepts(answer: string, accepts: string[] = []): str
 
 const CHO = ['ㄱ', 'ㄲ', 'ㄴ', 'ㄷ', 'ㄸ', 'ㄹ', 'ㅁ', 'ㅂ', 'ㅃ', 'ㅅ', 'ㅆ', 'ㅇ', 'ㅈ', 'ㅉ', 'ㅊ', 'ㅋ', 'ㅌ', 'ㅍ', 'ㅎ']
 
+/** 초성·힌트용: 괄호(및 유사 괄호)와 그 안 내용 제거 */
+export function stripParenSections(text: string) {
+  return text
+    .replace(/[(\[\{（［｛][^)\]\}）］｝]*[)\]\}）］｝]/g, ' ')
+    .replace(/[(\[\{（［｛][^)\]\}）］｝]*$/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
 /** 한글 음절 → 초성 (공백으로 구분). 비한글은 건너뜀 */
 export function chosung(text: string) {
-  return [...text]
+  return [...stripParenSections(text)]
     .map((ch) => {
       const code = ch.charCodeAt(0)
       if (code >= 0xac00 && code <= 0xd7a3) return CHO[Math.floor((code - 0xac00) / 588)]
@@ -268,23 +277,40 @@ export function toKoreanPronunciation(text: string) {
 /**
  * 힌트용 발음 소스: 한글 인정답을 우선, 없으면 발음 변환
  * (제목/가수 공통)
+ * 초성 띄어쓰기를 위해, 한글 비중이 같으면 공백이 있는 표기를 우선한다.
  */
 export function pickPronunciationSource(answer: string, accepts: string[] = []): string {
   const candidates = [answer, ...accepts].map((s) => s.trim()).filter(Boolean)
-  // 한글 비중이 높은 후보 우선
+  const spaceCount = (s: string) => (s.match(/[\s\u3000]/g) || []).length
+
+  // 한글 비중이 높은 후보 우선 · 동점이면 띄어쓰기 많은 쪽
   let best: string | null = null
   let bestScore = -1
+  let bestSpaces = -1
   for (const c of candidates) {
     const chars = [...c.replace(/[\s\d._\-'".,!&/]/g, '')]
     if (!chars.length) continue
     const hangulN = chars.filter((ch) => /[가-힣]/.test(ch)).length
+    if (hangulN <= 0) continue
     const score = hangulN / chars.length
-    if (hangulN > 0 && score > bestScore) {
+    const spaces = spaceCount(c)
+    if (score > bestScore || (score === bestScore && spaces > bestSpaces)) {
       bestScore = score
+      bestSpaces = spaces
       best = c
     }
   }
-  if (best && bestScore >= 0.4) return best
+  if (best && bestScore >= 0.4) {
+    // 같은 정답(정규화)인데 붙여쓰기만 골랐다면 → 띄어쓰기 있는 표기로 교체
+    if (bestSpaces === 0) {
+      const norm = normalizeAnswer(best)
+      const spaced = candidates.find(
+        (c) => spaceCount(c) > 0 && hasHangul(c) && normalizeAnswer(c) === norm,
+      )
+      if (spaced) return spaced
+    }
+    return best
+  }
 
   // 듀오면 각 이름을 발음 변환해 이어붙임
   if (!isFeaturingCredit(answer)) {
@@ -301,11 +327,47 @@ export function pickPronunciationSource(answer: string, accepts: string[] = []):
   return toKoreanPronunciation(answer)
 }
 
-/** 한국어 발음 → 초성 힌트 */
+/**
+ * 제목(띄어쓰기 있는 표기)의 단어 경계를 초성 문자열에 반영.
+ * 제목이 한글이면 제목 자체의 초성을 쓰고,
+ * 아니면 발음 초성을 제목 단어별 음절 수에 맞춰 끊는다.
+ * (괄호 안은 제외)
+ */
+function chosungWithTitleSpacing(spacedTitle: string, pronounced: string): string {
+  const title = stripParenSections(spacedTitle)
+  const titleChars = [...title.replace(/[\s\d._\-'".,!&/]/g, '')]
+  const titleHangulN = titleChars.filter((ch) => /[가-힣]/.test(ch)).length
+  if (titleChars.length && titleHangulN / titleChars.length >= 0.4) {
+    return chosung(title)
+  }
+
+  const flat = chosung(pronounced).replace(/\s+/g, '')
+  if (!flat) return chosung(pronounced)
+
+  const words = title.split(/[\s\u3000]+/).filter(Boolean)
+  const parts: string[] = []
+  let pos = 0
+  for (const w of words) {
+    const n = [...w].filter((ch) => /[가-힣ㄱ-ㅎ]/.test(ch)).length
+    if (n <= 0) continue
+    parts.push(flat.slice(pos, pos + n))
+    pos += n
+  }
+  if (pos < flat.length) parts.push(flat.slice(pos))
+  return parts.filter(Boolean).join(' ')
+}
+
+/** 한국어 발음 → 초성 힌트 (띄어쓰기는 제목 표기 기준 · 괄호 안 제외) */
 export function hintChosung(answer: string, accepts: string[] = []): string {
   const src = pickPronunciationSource(answer, accepts)
   const pronounced = hasHangul(src) ? src : toKoreanPronunciation(src)
-  return chosung(pronounced)
+  const title = stripParenSections(answer.trim())
+  // 초성 띄어쓰기 근거 = 제목만. 제목에 공백이 있을 때만 반영
+  if (title && /[\s\u3000]/.test(title)) {
+    return chosungWithTitleSpacing(title, pronounced)
+  }
+  // 제목이 붙여쓰기면 초성도 붙여쓰기 (중복정답의 띄어쓰기는 무시)
+  return chosung(pronounced.replace(/[\s\u3000]+/g, ''))
 }
 
 /** 두벌식 한글 → 한영키 안 누른 영타 (정답 → wjdekq) */

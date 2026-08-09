@@ -1,6 +1,6 @@
 import { PrismaClient } from '@prisma/client'
 import bcrypt from 'bcryptjs'
-import { GENRES } from '../src/genres.js'
+import { BANK_GENRES } from '../src/genres.js'
 
 const prisma = new PrismaClient()
 
@@ -30,7 +30,7 @@ async function main() {
   })
 
   const genreIds: Record<string, string> = {}
-  for (const name of GENRES) {
+  for (const name of BANK_GENRES) {
     const g = await prisma.genre.upsert({
       where: { name },
       update: {},
@@ -52,8 +52,19 @@ async function main() {
     if (oldName === newName) continue
     const old = await prisma.genre.findUnique({ where: { name: oldName } })
     if (!old) continue
-    await prisma.question.updateMany({ where: { genreId: old.id }, data: { genreId: genreIds[newName] } })
+    const targetId = genreIds[newName]
+    if (!targetId) continue
+    await prisma.question.updateMany({ where: { genreId: old.id }, data: { genreId: targetId } })
     await prisma.genre.delete({ where: { id: old.id } }).catch(() => {})
+  }
+
+  // 클래식: 장르·곡 모두 삭제 (야차/기타로 옮기지 않음)
+  {
+    const classic = await prisma.genre.findUnique({ where: { name: '클래식' } })
+    if (classic) {
+      await prisma.question.deleteMany({ where: { genreId: classic.id } })
+      await prisma.genre.delete({ where: { id: classic.id } }).catch(() => {})
+    }
   }
 
   const existing = await prisma.question.count()
@@ -134,7 +145,7 @@ async function main() {
     },
     {
       name: '신창섭의 가호',
-      description: '모든 플레이어 점수를 통일합니다',
+      description: '모든 플레이어의 점수를 현재 평균값으로 통일합니다.',
       effectType: 'equalize_scores',
       effectValue: '{}',
       tier: '가호',
@@ -166,23 +177,23 @@ async function main() {
     },
     {
       name: '서상원의 가호',
-      description: '시작 3초 뒤 정답을 2초 동안 보여줍니다 (사용 즉시부터 8라운드)',
+      description: '시작 10초 뒤 정답을 1초 동안 보여줍니다 (사용 즉시부터 8라운드)',
       effectType: 'flash_answer',
-      effectValue: JSON.stringify({ delaySec: 3, ms: 2000, rounds: 8 }),
+      effectValue: JSON.stringify({ delaySec: 10, ms: 1000, rounds: 8 }),
       tier: '가호',
       imageUrl: '/augments/seosangwon-gaho.jpg',
     },
     {
       name: '신동혁의 가호',
-      description: '시작 5초 뒤부터 답이 한 글자씩 공개됩니다 (괄호 안 제외 · 한글 1자/초, 알파벳 2자/초 · 사용 즉시부터 8라운드)',
+      description: '시작 7초 뒤부터 답이 한 글자씩 공개됩니다 (괄호 안 제외 · 한글 1자/초, 알파벳 2자/초 · 사용 즉시부터 8라운드)',
       effectType: 'delayed_answer',
-      effectValue: JSON.stringify({ delaySec: 5, rounds: 8, charIntervalMs: 1000 }),
+      effectValue: JSON.stringify({ delaySec: 7, rounds: 8, charIntervalMs: 1000 }),
       tier: '가호',
       imageUrl: '/augments/sindonghyeok-gaho.jpg',
     },
     {
       name: '미룬이의 가호',
-      description: '다음 5라운드 동안 다른 사람이 먼저 맞힌 정답도 라운드를 스킵하기 전까지 제출하면 정답으로 인정됩니다.',
+      description: '다음 라운드부터 5라운드 동안 다른 사람이 먼저 맞힌 정답도 라운드를 스킵하기 전까지 제출하면 정답으로 인정됩니다.',
       effectType: 'late_answer',
       effectValue: JSON.stringify({ rounds: 5 }),
       tier: '가호',
@@ -197,14 +208,6 @@ async function main() {
       imageUrl: '/augments/kimdongju-gaho.jpg',
     },
     {
-      name: '감옥',
-      description: '선택한 플레이어가 다음 2라운드 동안 채팅·정답 제출을 할 수 없습니다',
-      effectType: 'mute_chat',
-      effectValue: JSON.stringify({ rounds: 2 }),
-      tier: 'gold',
-      imageUrl: null,
-    },
-    {
       name: '예의바른청년',
       description:
         '플레이어를 지목합니다. 다음 3라운드 동안 그 플레이어는 답 끝에 「입니다」를 붙여야 정답으로 인정됩니다.',
@@ -216,9 +219,9 @@ async function main() {
     {
       name: '쉬었음청년',
       description:
-        '플레이어를 지목합니다. 다음 2라운드 동안 그 플레이어의 정답이 인정되지 않습니다. (채팅은 가능 · 감옥보다 약함)',
-      effectType: 'answer_block',
-      effectValue: JSON.stringify({ rounds: 2 }),
+        '플레이어를 지목합니다. 다음 3라운드 동안 매 라운드 시작 시 5초간 채팅·제출이 막힙니다.',
+      effectType: 'soft_chat_mute',
+      effectValue: JSON.stringify({ rounds: 3, muteSec: 5 }),
       tier: 'silver',
       imageUrl: '/augments/rested-youth.jpg',
     },
@@ -261,7 +264,7 @@ async function main() {
     {
       name: '혼돈',
       description:
-        '랜덤한 증강 2개의 효과를 즉시 사용합니다. 대상 지정형은 대상도 랜덤입니다. (혼돈·야차룰·가호선택·전환·가호 등급은 제외)',
+        '가호를 제외한 모든 등급에서 랜덤한 증강 2개의 효과를 즉시 사용합니다. 대상 지정형은 대상도 랜덤입니다. (혼돈·가호선택·전환 제외)',
       effectType: 'chaos_cast',
       effectValue: '{}',
       tier: 'gold',
@@ -270,17 +273,17 @@ async function main() {
     {
       name: '트루먼쇼',
       description:
-        '본인을 제외한 방 인원의 절반을 몰래 「트루먼」으로 만듭니다. 다음 2라운드 동안 그 사람들만 같은 장르의 다른 노래·정답을 듣고, 맞히면 채팅·점수판에 +1처럼 보이지만 가짜입니다. 사용·대상은 공개되지 않고, 끝나면 「당신은 트루먼이었습니다」가 공개됩니다.',
+        '본인을 제외한 플레이어를 1~2명 직접 골라 몰래 「트루먼」으로 만듭니다. 다음 2라운드 동안 그 사람들만 같은 장르의 다른 노래·정답을 듣고, 맞히면 채팅·점수판에 +1처럼 보이지만 가짜입니다. 다른 증강은 그대로 사용할 수 있으며, 사용·대상은 공개되지 않고 끝나면 「당신은 트루먼이었습니다」가 공개됩니다.',
       effectType: 'sakura_decoy',
-      effectValue: JSON.stringify({ rounds: 2, targetHalf: true }),
+      effectValue: JSON.stringify({ rounds: 2, targetSelection: 'multiple', minTargets: 1, maxTargets: 2 }),
       tier: 'gold',
       imageUrl: '/augments/truman-show.jpg',
     },
     {
       name: '점수가 2배',
-      description: '지금부터 4라운드 동안 점수를 2배로 얻습니다.',
+      description: '지금부터 4라운드 동안 일반 슬롯 점수를 2배로 얻습니다. (히든 슬롯에는 적용되지 않습니다)',
       effectType: 'score_mult',
-      effectValue: JSON.stringify({ mult: 2, rounds: 4 }),
+      effectValue: JSON.stringify({ mult: 2, rounds: 4, excludeHidden: true }),
       tier: 'gold',
       imageUrl: null,
     },
@@ -296,16 +299,16 @@ async function main() {
     {
       name: '맞췄죠?',
       description:
-        '지금부터 1라운드 동안 정답을 맞히면 +5점, 못 맞히면 −5점입니다. (슬롯을 하나라도 맞히면 성공)',
+        '지금부터 1라운드 동안 정답을 하나라도 맞히면 +5점입니다. (실패해도 감점 없음)',
       effectType: 'wager_answer',
-      effectValue: JSON.stringify({ rounds: 1, bonus: 5, penalty: 5 }),
+      effectValue: JSON.stringify({ rounds: 1, bonus: 5, penalty: 0 }),
       tier: 'gold',
       imageUrl: '/augments/got-it-right.jpg',
     },
     {
       name: '히든런',
       description:
-        '지금부터 3라운드 동안 히든 문제를 맞히면 점수가 ×3이지만, 일반 문제(제목·가수 등)를 맞춰도 점수를 얻지 않습니다.',
+        '지금부터 3라운드 동안 히든 ×3 · 일반 슬롯 0점. 시전자만 히든을 즉시 보고 맞힐 수 있으며, 다른 사람은 일반 슬롯을 모두 맞춰야 히든이 열립니다.',
       effectType: 'hidden_run',
       effectValue: JSON.stringify({ rounds: 3, mult: 3 }),
       tier: 'gold',
@@ -323,7 +326,7 @@ async function main() {
     {
       name: '풍악을 울려라',
       description:
-        '다음 3라운드 동안 본인을 제외한 모든 플레이어에게 지정된 풍악 영상이 방 노래 대신 재생됩니다. 정답은 원래 문제 기준입니다.',
+        '다음 3라운드 동안 본인을 제외한 모든 플레이어에게 방 노래와 풍악이 같이 들립니다. 정답은 원래 문제 기준입니다.',
       effectType: 'party_music_others',
       effectValue: JSON.stringify({ rounds: 3, youtubeUrl: 'https://www.youtube.com/watch?v=xAMsfKTCxpg', startSec: 0 }),
       tier: 'gold',
@@ -332,9 +335,9 @@ async function main() {
     {
       name: '야차룰',
       description:
-        '플레이어 한 명을 지목해 1대1을 예약합니다. 현재 라운드가 끝나면 다음 라운드에 새 노래를 뽑아 제목만 맞히며, 먼저 못 맞힌 쪽이 −5점입니다.',
+        '플레이어 한 명을 지목해 1대1을 예약합니다. 컷신 후 제목만 맞히며 패자 −5점. 시전자는 초성 선공개, 대상은 노래가 5초 늦게 들립니다.',
       effectType: 'yacha_duel',
-      effectValue: JSON.stringify({ penalty: 5 }),
+      effectValue: JSON.stringify({ penalty: 5, casterEarlyChosung: true, targetAudioDelaySec: 5 }),
       tier: 'gold',
       imageUrl: '/augments/yacha-rule.jpg',
     },
@@ -359,18 +362,18 @@ async function main() {
     {
       name: '물귀신',
       description:
-        '선택 시 자동 적용. 이번 라운드에서 점수를 전부 맞히지 못하면, 맞춘 플레이어들의 점수가 각 1점씩 깎입니다.',
+        '선택 시 자동 적용. 이번 라운드에서 모든 정답을 혼자 맞히지 못하면, 정답을 맞힌 다른 플레이어들은 각 −2점이고 본인은 +1점을 얻습니다.',
       effectType: 'water_ghost',
-      effectValue: JSON.stringify({ rounds: 1, penalty: 1 }),
+      effectValue: JSON.stringify({ rounds: 1, penalty: 2, gain: 1 }),
       tier: 'silver',
       imageUrl: null,
     },
     {
       name: '콤보',
       description:
-        '선택 시 자동 적용. 이번 라운드의 모든 문제를 본인이 맞히면 그 라운드에 얻은 점수가 2배가 됩니다.',
+        '선택 시 자동 적용. 최대 3라운드 동안 매 라운드 1회 이상 정답해야 유지되며, 기간 종료 시 그동안 얻은 점수가 한 번 더 더해집니다(×2). 한 라운드라도 미득점이면 즉시 종료.',
       effectType: 'combo_clear_double',
-      effectValue: JSON.stringify({ rounds: 1 }),
+      effectValue: JSON.stringify({ rounds: 3 }),
       tier: 'silver',
       imageUrl: null,
     },
@@ -384,11 +387,99 @@ async function main() {
       imageUrl: '/augments/throw-rock.jpg',
     },
     {
-      name: '꽁돈',
-      description: '즉시 점수를 1점 얻습니다.',
-      effectType: 'score_flat',
-      effectValue: JSON.stringify({ amount: 1 }),
+      name: '넘어가요!',
+      description: '사용하면 지금 재생 중인 문제를 강제 스킵합니다. (1회 · 플레이 중에만)',
+      effectType: 'force_skip',
+      effectValue: JSON.stringify({ charges: 1 }),
       tier: 'bronze',
+      imageUrl: null,
+    },
+    {
+      name: '넘어가요!!',
+      description: '사용하면 지금 재생 중인 문제를 강제 스킵합니다. (2회 · 플레이 중에만)',
+      effectType: 'force_skip',
+      effectValue: JSON.stringify({ charges: 2 }),
+      tier: 'silver',
+      imageUrl: null,
+    },
+    {
+      name: '넘어가요!!!!',
+      description: '사용하면 지금 재생 중인 문제를 강제 스킵합니다. (3회 · 플레이 중에만)',
+      effectType: 'force_skip',
+      effectValue: JSON.stringify({ charges: 3 }),
+      tier: 'gold',
+      imageUrl: null,
+    },
+    {
+      name: '기생수',
+      description:
+        '플레이어 한 명을 지목합니다. 다음 5라운드 동안 서로 정답으로 얻은 점수가 같이 오릅니다.',
+      effectType: 'score_share',
+      effectValue: JSON.stringify({ rounds: 5 }),
+      tier: 'gold',
+      imageUrl: null,
+    },
+    {
+      name: '피치카토!',
+      description:
+        '플레이어를 지목합니다. 다음 1라운드 동안 그 플레이어에게 노래가 1초 들리고 1초 안 들리기를 반복합니다.',
+      effectType: 'audio_stutter',
+      effectValue: JSON.stringify({ rounds: 1, onMs: 1000, offMs: 1000 }),
+      tier: 'bronze',
+      imageUrl: null,
+    },
+    {
+      name: '마르카토!!',
+      description:
+        '플레이어를 지목합니다. 다음 3라운드 동안 그 플레이어에게 노래가 1초 들리고 1초 안 들리기를 반복합니다.',
+      effectType: 'audio_stutter',
+      effectValue: JSON.stringify({ rounds: 3, onMs: 1000, offMs: 1000 }),
+      tier: 'silver',
+      imageUrl: null,
+    },
+    {
+      name: '스타카토!!!',
+      description:
+        '플레이어를 지목합니다. 다음 5라운드 동안 그 플레이어에게 노래가 1초 들리고 1초 안 들리기를 반복합니다.',
+      effectType: 'audio_stutter',
+      effectValue: JSON.stringify({ rounds: 5, onMs: 1000, offMs: 1000 }),
+      tier: 'gold',
+      imageUrl: null,
+    },
+    {
+      name: '알레그로',
+      description:
+        '플레이어를 지목합니다. 다음 4라운드 동안 그 플레이어의 노래 배속이 2~3배 중 랜덤으로 빨라집니다.',
+      effectType: 'slow_playback',
+      effectValue: JSON.stringify({ rounds: 4, rateMin: 2, rateMax: 3 }),
+      tier: 'gold',
+      imageUrl: null,
+    },
+    {
+      name: '눈찌르기!',
+      description:
+        '플레이어를 지목합니다. 다음 1라운드 동안 그 플레이어는 장르·초성 등 힌트를 볼 수 없습니다.',
+      effectType: 'hide_hints',
+      effectValue: JSON.stringify({ rounds: 1 }),
+      tier: 'bronze',
+      imageUrl: null,
+    },
+    {
+      name: '눈찌르기!!',
+      description:
+        '플레이어를 지목합니다. 다음 3라운드 동안 그 플레이어는 장르·초성 등 힌트를 볼 수 없습니다.',
+      effectType: 'hide_hints',
+      effectValue: JSON.stringify({ rounds: 3 }),
+      tier: 'silver',
+      imageUrl: null,
+    },
+    {
+      name: '눈찌르기!!!',
+      description:
+        '플레이어를 지목합니다. 다음 5라운드 동안 그 플레이어는 장르·초성 등 힌트를 볼 수 없습니다.',
+      effectType: 'hide_hints',
+      effectValue: JSON.stringify({ rounds: 5 }),
+      tier: 'gold',
       imageUrl: null,
     },
     {
@@ -401,50 +492,34 @@ async function main() {
       imageUrl: '/augments/convert.png',
     },
     {
-      name: '복권',
-      description: '50% 확률로 2점을 얻습니다. 꽝이면 아무것도 없습니다.',
-      effectType: 'coin_flip',
-      effectValue: JSON.stringify({ win: 2 }),
-      tier: 'bronze',
-      imageUrl: null,
-    },
-    {
-      name: '꼴찌의 반란',
-      description: '현재 공동 꼴찌이면 즉시 3점을 얻습니다. 꼴찌가 아니면 발동하지 않습니다.',
-      effectType: 'last_place_bonus',
-      effectValue: JSON.stringify({ bonus: 3 }),
-      tier: 'bronze',
-      imageUrl: '/augments/last-place-revolt.jpg',
-    },
-    {
       name: '한입만',
-      description: '지금부터 1라운드 동안 정답을 맞히면 +2점, 못 맞히면(스킵·시간 종료 포함) −2점입니다.',
-      effectType: 'wager_answer',
-      effectValue: JSON.stringify({ rounds: 1, bonus: 2, penalty: 2 }),
+      description: '사용 시 아직 공개되지 않은 슬롯 1개를 자동으로 맞힌 것으로 처리합니다. (일반 점수 지급)',
+      effectType: 'auto_reveal_slot',
+      effectValue: '{}',
       tier: 'bronze',
       imageUrl: '/augments/one-bite.jpg',
     },
     {
       name: '잠깐만요',
       description:
-        '플레이어 한 명을 선택합니다. 다음 1라운드 동안 그 플레이어는 라운드 시작 3초 뒤에만 정답을 입력할 수 있습니다.',
+        '플레이어 한 명을 선택합니다. 다음 1라운드 동안 그 플레이어는 라운드 시작 5초 뒤에만 정답을 입력할 수 있습니다.',
       effectType: 'answer_delay',
-      effectValue: JSON.stringify({ rounds: 1, delaySec: 3 }),
+      effectValue: JSON.stringify({ rounds: 1, delaySec: 5 }),
       tier: 'bronze',
       imageUrl: '/augments/wait-a-moment.jpg',
     },
     {
-      name: '삥뜯기',
-      description: '플레이어를 지목해 1점을 뺏습니다. (본인 +1, 대상 −1)',
-      effectType: 'score_steal',
-      effectValue: JSON.stringify({ amount: 1 }),
+      name: '내친구 진석이',
+      description: '사용하면 채팅에 「{nick}님의 친구 중에 진석이가 있답니다!」를 남깁니다.',
+      effectType: 'flavor_announce',
+      effectValue: JSON.stringify({ message: '{nick}님의 친구 중에 진석이가 있답니다!' }),
       tier: 'bronze',
-      imageUrl: '/augments/shake-down.jpg',
+      imageUrl: '/augments/friend-jinseok.png',
     },
     {
       name: '나이거 뭔지 알아',
       description:
-        '지금부터 1라운드 동안 제목과 가수를 알 수 있지만, 정답은 제출해도 인정되지 않습니다.',
+        '지금부터 1라운드 동안 제목과 가수를 알 수 있지만, 정답은 인정되지 않습니다. (채팅은 가능)',
       effectType: 'know_but_cant',
       effectValue: JSON.stringify({ rounds: 1 }),
       tier: 'bronze',
@@ -453,28 +528,11 @@ async function main() {
     {
       name: '범인은 당신이야!',
       description:
-        '플레이어를 지목합니다. 다음 라운드에 그 플레이어가 문제를 맞히면, 맞힌 라운드 기준 다음 라운드에 수면(정답 불가)이 걸립니다.',
+        '플레이어를 지목합니다. 대상에게는 알리지 않고, 다른 사람에게만 감시가 걸렸다고 알려줍니다. 다음 라운드에 그 플레이어가 문제를 맞히면, 맞힌 라운드 기준 다음 라운드에 수면이 걸립니다. (정답 인정 안 됨 · 채팅은 가능 · 못 맞히면 수면 없음)',
       effectType: 'accuse_sleep',
       effectValue: '{}',
       tier: 'bronze',
       imageUrl: '/augments/you-are-the-culprit.jpg',
-    },
-    {
-      name: '내친구 진석이',
-      description: '내 친구 중에 진석이가 있다는 걸 알려줍니다.',
-      effectType: 'flavor_announce',
-      effectValue: JSON.stringify({ message: '{nick}님의 친구 중에 진석이가 있답니다!' }),
-      tier: 'bronze',
-      imageUrl: '/augments/friend-jinseok.png',
-    },
-    {
-      name: '신 강림',
-      description:
-        '노맞의 신을 강림시킵니다. 성공 확률 10% — 성공 시 본인 점수 ×2, 실패 시 신에게 뺨을 맞습니다.',
-      effectType: 'god_descend',
-      effectValue: JSON.stringify({ chance: 0.1 }),
-      tier: 'bronze',
-      imageUrl: '/augments/god-descent.jpg',
     },
     {
       name: '엿보기 구멍',
@@ -509,19 +567,21 @@ async function main() {
       imageUrl: '/augments/whatever.png',
     },
     {
-      name: '올인',
-      description: '지금부터 1라운드 동안 정답을 맞히면 +3점, 못 맞히면 −3점입니다.',
-      effectType: 'wager_answer',
-      effectValue: JSON.stringify({ rounds: 1, bonus: 3, penalty: 3 }),
-      tier: 'silver',
+      name: '코로나',
+      description:
+        '이런 코로나가 이방에 터졌습니다! 격리 해야겠지? 다음 2라운드 동안 채팅방이 두 격리조로 분리되어, 같은 조 채팅만 보입니다. (정답·시스템 알림은 전원 공유)',
+      effectType: 'chat_isolate',
+      effectValue: JSON.stringify({ rounds: 2 }),
+      tier: 'bronze',
       imageUrl: null,
     },
     {
-      name: '같이가',
-      description: '플레이어를 지목해 그 사람과 점수를 평균으로 맞춥니다.',
-      effectType: 'pair_average',
-      effectValue: '{}',
-      tier: 'gold',
+      name: '올인',
+      description:
+        '다음 1라운드 동안 초성이 즉시 공개됩니다. 하나라도 맞히면 +3점, 전부 못 맞히면 −3점입니다.',
+      effectType: 'wager_answer',
+      effectValue: JSON.stringify({ rounds: 1, bonus: 3, penalty: 3, nextRound: true, earlyChosung: true }),
+      tier: 'silver',
       imageUrl: null,
     },
     {
@@ -535,10 +595,9 @@ async function main() {
     },
     {
       name: '보너스 타임',
-      description:
-        '지금부터 2라운드 동안, 다른 사람이 정답을 맞힌 뒤 2초 안에 같은 답을 치면 본인도 정답으로 인정됩니다.',
-      effectType: 'follow_answer',
-      effectValue: JSON.stringify({ rounds: 2, windowMs: 2000 }),
+      description: '지금부터 3라운드 동안 본인에게만 초성이 즉시 공개됩니다.',
+      effectType: 'early_chosung',
+      effectValue: JSON.stringify({ rounds: 3 }),
       tier: 'silver',
       imageUrl: null,
     },
@@ -568,25 +627,24 @@ async function main() {
     {
       name: '기부천사',
       description:
-        '랜덤한 다른 플레이어 최대 3명에게서 각 1점을 기부받습니다. (깎인 만큼 본인 점수 증가)',
+        '랜덤한 다른 플레이어 최대 5명의 점수를 각 1점씩 깎고, 본인은 총 +1점을 얻습니다.',
       effectType: 'donate_from_random',
-      effectValue: JSON.stringify({ count: 3, amount: 1 }),
+      effectValue: JSON.stringify({ count: 5, amount: 1, gain: 1 }),
       tier: 'gold',
       imageUrl: null,
     },
     {
       name: '밴픽',
-      description:
-        '장르를 고릅니다. 50%로 그 장르를 밴(잔량 다른 장르 배분). 실패 시 「밴픽에 실패했습니다! 미안하다 함지자가 발동됩니다」— 나머지 장르 합의 20%만큼 밴하려던 장르에 추가하고 다른 장르에서 비율대로 뺍니다.',
+      description: '장르를 고르면 그 장르 잔량을 밴하고 다른 장르로 랜덤 배분합니다. (항상 성공)',
       effectType: 'ban_genre',
-      effectValue: JSON.stringify({ hitChance: 0.5, missBoostRatio: 0.2 }),
+      effectValue: '{}',
       tier: 'gold',
       imageUrl: null,
     },
     {
       name: '가호선택',
       description:
-        '선택 시 가호 3장 중 하나를 골라 보관합니다. 리롤·설명 없음. 남은 선택 시간 안에 고르고, 시간이 끝나면 후보 중 랜덤 배정됩니다.',
+        '선택 시 가호 3장 중 하나를 골라 보관합니다. 리롤 없음 · 이름·사진만(효과는 선택 후 확인). 시간이 끝나면 후보 중 랜덤 배정됩니다.',
       effectType: 'gaho_select',
       effectValue: '{}',
       tier: 'gold',
@@ -618,9 +676,9 @@ async function main() {
     {
       name: '미래시',
       description:
-        '이번 라운드 동안 앞으로 나올 3라운드 문제의 제목·가수를 미리 확인합니다. 순서는 랜덤이며, 이번 라운드가 끝나면 사라집니다.',
+        '앞으로 나올 5라운드 중 3곡의 제목·가수를 미리 확인합니다. 순서는 랜덤이며, 이번 라운드가 끝나면 사라집니다.',
       effectType: 'future_sight',
-      effectValue: JSON.stringify({ lookAhead: 3 }),
+      effectValue: JSON.stringify({ lookAhead: 5, pick: 3 }),
       tier: 'gold',
       imageUrl: null,
     },
@@ -635,16 +693,25 @@ async function main() {
     {
       name: '진흙탕 싸움',
       description:
-        '다음 1라운드 동안 모든 플레이어에게 노래 대신 BGM이 재생되고 초성만 보입니다. 본인이 정답을 맞히면 +3점입니다.',
+        '다음 1라운드 동안 모든 플레이어에게 노래 대신 BGM이 재생되고 초성만 보입니다. 본인이 정답을 맞히면 +5점입니다.',
       effectType: 'mud_fight',
       effectValue: JSON.stringify({
         rounds: 1,
-        bonus: 3,
+        bonus: 5,
         bgmUrl: 'https://www.youtube.com/watch?v=ZzHYbM0l4ec',
         bgmStartSec: 0,
       }),
       tier: 'gold',
       imageUrl: '/augments/mudfight.jpg',
+    },
+    {
+      name: '차차차',
+      description:
+        '자동 사용. 거의 동시에 정답이 나와 중복 처리될 때(약 0.5초), 본인에게 우선권이 있습니다. (5회)',
+      effectType: 'cha_cha_cha',
+      effectValue: JSON.stringify({ charges: 5, windowMs: 500 }),
+      tier: 'gold',
+      imageUrl: null,
     },
     {
       name: '전환',
@@ -654,14 +721,6 @@ async function main() {
       effectValue: JSON.stringify({ higherTiers: ['gold'] }),
       tier: 'silver',
       imageUrl: '/augments/convert.png',
-    },
-    {
-      name: '홀/짝',
-      description: '홀짝을 맞힙니다. 50% 확률로 3점을 얻습니다. 틀리면 아무것도 없습니다.',
-      effectType: 'coin_flip',
-      effectValue: JSON.stringify({ win: 3 }),
-      tier: 'silver',
-      imageUrl: null,
     },
     {
       name: '삼연 보너스',
@@ -692,9 +751,9 @@ async function main() {
     {
       name: '영역전개',
       description:
-        '다음 2라운드 동안 다른 플레이어들의 정답이 인정되지 않습니다. (채팅은 가능 · 본인은 정상)',
+        '플레이어를 지목하지 않습니다. 다음 라운드부터 3라운드 동안 매 라운드 시작 시 본인보다 점수가 높은 플레이어는 10초간 정답이 인정되지 않습니다. (채팅은 가능 · 본인은 정상)',
       effectType: 'answer_block_others',
-      effectValue: JSON.stringify({ rounds: 2 }),
+      effectValue: JSON.stringify({ rounds: 3, blockMs: 10000 }),
       tier: 'silver',
       imageUrl: '/augments/domain-expansion.png',
     },

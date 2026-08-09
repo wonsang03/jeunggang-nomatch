@@ -13,6 +13,31 @@ import { connectSocket, disconnectSocket, getSocket } from './socket'
 import { playSfx, setSfxVolume as applySfxVolume } from './sfx'
 import { applyClockSample, resetClockSync, serverNow } from './clockSync'
 
+export type GameMode = 'nomatch' | 'reading'
+
+export type ReadingPublic = {
+  phase: 'decide' | 'claim' | 'vote' | 'pre_solve' | 'solve' | 'reveal'
+  turnIndex: number
+  turnOrder: string[]
+  offeredUserId: string
+  offeredNickname: string
+  solverId: string | null
+  solverNickname: string | null
+  phaseEndsAt: number
+  votersHear: boolean
+  solverHears: boolean
+  voteCounts: { yes: number; no: number } | null
+  lastResult: {
+    solved: boolean
+    solverNickname: string
+    title: string
+    voterPayouts: Array<{ userId: string; nickname: string; vote: 'yes' | 'no'; odds: '정배' | '역배' | '동배'; gain: number }>
+  } | null
+  questionIndex: number
+  questionTotal: number
+  targetScore?: number
+}
+
 export type PublicRoom = {
   id: string
   name: string
@@ -20,6 +45,7 @@ export type PublicRoom = {
   max: number
   priv: boolean
   genre: string
+  gameMode?: GameMode
 }
 
 export type ActiveBuffPublic = {
@@ -55,12 +81,25 @@ export type RoomMember = {
   heldAugmentTier?: string | null
   usedAugments: string[]
   activeBuffs?: ActiveBuffPublic[]
-  /** 감옥 등 */
+  /** 쉬었음청년 등: 채팅·제출 차단 */
   chatMuted?: boolean
   chatMutePending?: boolean
   chatMuteBy?: string | null
   chatMuteByNickname?: string | null
   chatMuteStartIndex?: number | null
+  chatMuteUntil?: number | null
+  /** 영역전개 등: 시한 정답 차단 종료 시각 */
+  answerBlockUntil?: number | null
+  /** 코로나: 채팅방 분리(격리) */
+  chatIsolated?: boolean
+  chatIsolatePending?: boolean
+  chatIsolateGroup?: number | null
+  chatIsolateBy?: string | null
+  chatIsolateRoundsLeft?: number | null
+  /** 보너스 타임·올인: 본인만 초성 즉시 */
+  earlyChosungActive?: boolean
+  /** 히든런: 시전자만 히든 미리보기 */
+  hiddenPreview?: boolean
   /** 님아 매너좀 */
   answerDelayed?: boolean
   answerDelaySec?: number | null
@@ -103,8 +142,13 @@ export type RoomMember = {
   flameKimRoundsLeft?: number | null
   flameKimTarget?: string | null
   flameKimBy?: string | null
-  /** 산데비스탄 등: 현재 라운드 재생 배속 */
+  /** 산데비스탄·알레그로 등: 현재 라운드 재생 배속 */
   playbackRate?: number | null
+  /** 스타카토 계열: 1초 켜 / 1초 꺼 */
+  audioStutter?: { onMs: number; offMs: number; byName?: string } | null
+  /** 눈찌르기·리신: 힌트 숨김 */
+  hintsHidden?: boolean
+  hintsHiddenBy?: string | null
   /** 슬로우 스타터: 라운드 시작 후 N초 동안 무음 */
   audioDelaySec?: number | null
   audioDelayUntil?: number | null
@@ -113,7 +157,7 @@ export type RoomMember = {
   /**
    * 방 노래와 분리된 증강 트릭 오디오
    * - replace: 세노·트루먼·진흙탕 등 (방 곡 음소거 + 트릭만)
-   * - overlay: 불꽃남자 등 (방 곡 + 트릭 동시)
+   * - overlay: 불꽃남자·풍악 등 (방 곡 + 트릭 동시)
    */
   audioTrick?: {
     mode: 'replace' | 'overlay'
@@ -169,6 +213,15 @@ export type RoomState = {
   genreCounts: Record<string, number>
   /** 문제은행 장르별 보유 수 — 대기실 슬라이더 max */
   genreBankCounts?: Record<string, number>
+  /** 제목만 | 제목+가수 */
+  answerMode?: 'title' | 'title_artist'
+  /** false면 증강 선택 없음 */
+  augmentsEnabled?: boolean
+  gameMode?: GameMode
+  readingTargetScore?: number
+  /** 0=끔 · >0=최근곡 제외 (기본 1) */
+  recentSongPenalty?: number
+  reading?: ReadingPublic | null
   /** 앞으로 나올 곡(현재 제외) 장르별 잔량 */
   upcomingGenreCounts?: Record<string, number>
   members: RoomMember[]
@@ -189,7 +242,7 @@ export type RoomState = {
     penalty: number
     byName: string
   } | null
-  /** 트루먼쇼로 방 전체 증강 시간 정지 중 */
+  /** 이전 클라이언트 호환용. 트루먼쇼는 더 이상 다른 증강을 정지하지 않음 */
   augmentPaused?: boolean
 }
 
@@ -201,6 +254,8 @@ export type RoundSlot = {
   unlocked?: boolean
   answer?: string
   by?: string
+  /** 초성 힌트 (슬롯 단위 · 라벨 키워드 무관) */
+  chosung?: string
 }
 
 export type RoundInfo = {
@@ -222,6 +277,8 @@ export type RoundInfo = {
   duelPenalty?: number
   duelChallenger?: string
   duelOpponent?: string
+  reading?: boolean
+  readingMuted?: boolean
 }
 
 export type AugmentItem = {
@@ -296,18 +353,41 @@ type GameCtx = {
   updateProfile: (nickname: string) => Promise<void>
   uploadAvatar: (imageBase64: string) => Promise<void>
   removeAvatar: () => Promise<void>
-  createRoom: (opts?: { name?: string; isPrivate?: boolean; maxPlayers?: number; genreCounts?: Record<string, number> }) => Promise<void>
+  createRoom: (opts?: {
+    name?: string
+    isPrivate?: boolean
+    maxPlayers?: number
+    genreCounts?: Record<string, number>
+    answerMode?: 'title' | 'title_artist'
+    augmentsEnabled?: boolean
+    gameMode?: GameMode
+    readingTargetScore?: number
+    recentSongPenalty?: number
+  }) => Promise<void>
   joinRoom: (opts: { roomId?: string; code?: string }) => Promise<void>
   leaveRoom: () => void
   setReady: () => void
-  updateSettings: (payload: { genreCounts?: Record<string, number>; maxPlayers?: number; name?: string }) => void
+  updateSettings: (payload: {
+    genreCounts?: Record<string, number>
+    maxPlayers?: number
+    name?: string
+    answerMode?: 'title' | 'title_artist'
+    augmentsEnabled?: boolean
+    gameMode?: GameMode
+    readingTargetScore?: number
+    recentSongPenalty?: number
+  }) => void
   startGame: () => Promise<void>
   sendChat: (text: string) => void
   submitAnswer: (text: string) => void
+  readingAccept: () => void
+  readingPass: () => void
+  readingClaim: () => void
+  readingVote: (vote: 'yes' | 'no') => void
   voteSkip: () => void
   pickAugment: (augmentId: string | null, gahoAugmentId?: string | null) => void
   rerollAugment: () => Promise<void>
-  useAugment: (payload?: { targetUserId?: string; gahoAugmentId?: string; genreName?: string }) => void
+  useAugment: (payload?: { targetUserId?: string; targetUserIds?: string[]; gahoAugmentId?: string; genreName?: string }) => void
   fetchGahoCandidates: () => Promise<{
     candidates: Array<AugmentItem & { description?: string }>
     endsAt: number | null
@@ -547,8 +627,16 @@ export function GameProvider({ children }: { children: ReactNode }) {
       illusionActiveRef.current = false
       setStartCountdown(null)
       setCountdownEndsAt(null)
+      // room:state 지연 시 countdown vol=0이 남는 것 방지 — status를 먼저 playing으로
+      setRoom((r) => {
+        const count = r?.members?.length ?? 1
+        // skip_update 오기 전에도 절반(올림) 기준으로 표시
+        setSkip({ votes: 0, need: Math.max(1, Math.ceil(count / 2)) })
+        if (!r || r.status === 'lobby' || r.status === 'ended') return r
+        if (r.status === 'playing' || r.status === 'duel') return r
+        return { ...r, status: 'playing' }
+      })
       setRound(info)
-      setSkip({ votes: 0, need: 1 })
       setSkipVoted(false)
       setAugmentOffer(null)
       setAugmentHint(null)
@@ -934,7 +1022,16 @@ export function GameProvider({ children }: { children: ReactNode }) {
   }
 
   const setReady = () => getSocket()?.emit('room:ready')
-  const updateSettings = (payload: { genreCounts?: Record<string, number>; maxPlayers?: number; name?: string }) =>
+  const updateSettings = (payload: {
+    genreCounts?: Record<string, number>
+    maxPlayers?: number
+    name?: string
+    answerMode?: 'title' | 'title_artist'
+    augmentsEnabled?: boolean
+    gameMode?: GameMode
+    readingTargetScore?: number
+    recentSongPenalty?: number
+  }) =>
     getSocket()?.emit('room:settings', payload)
 
   const startGame = async () => {
@@ -944,6 +1041,34 @@ export function GameProvider({ children }: { children: ReactNode }) {
 
   const sendChat = (text: string) => getSocket()?.emit('chat:message', { text })
   const submitAnswer = (text: string) => getSocket()?.emit('answer:submit', { text })
+  const readingAccept = () => {
+    const s = getSocket()
+    if (!s) return
+    s.emit('reading:accept', {}, (res?: { ok?: boolean; error?: string }) => {
+      if (res && res.ok === false) console.warn('[reading]', res.error)
+    })
+  }
+  const readingPass = () => {
+    const s = getSocket()
+    if (!s) return
+    s.emit('reading:pass', {}, (res?: { ok?: boolean; error?: string }) => {
+      if (res && res.ok === false) console.warn('[reading]', res.error)
+    })
+  }
+  const readingClaim = () => {
+    const s = getSocket()
+    if (!s) return
+    s.emit('reading:claim', {}, (res?: { ok?: boolean; error?: string }) => {
+      if (res && res.ok === false) console.warn('[reading]', res.error)
+    })
+  }
+  const readingVote = (vote: 'yes' | 'no') => {
+    const s = getSocket()
+    if (!s) return
+    s.emit('reading:vote', { vote }, (res?: { ok?: boolean; error?: string }) => {
+      if (res && res.ok === false) console.warn('[reading]', res.error)
+    })
+  }
   const voteSkip = () => {
     if (skipVoted) return
     if (room?.status !== 'playing') return
@@ -975,7 +1100,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
       )
     }
   }
-  const useAugment = (payload?: { targetUserId?: string; gahoAugmentId?: string; genreName?: string }) =>
+  const useAugment = (payload?: { targetUserId?: string; targetUserIds?: string[]; gahoAugmentId?: string; genreName?: string }) =>
     getSocket()?.emit('augment:use', payload || {})
   const fetchGahoCandidates = async () => {
     const res = await emitAck<{
@@ -1045,6 +1170,10 @@ export function GameProvider({ children }: { children: ReactNode }) {
       startGame,
       sendChat,
       submitAnswer,
+      readingAccept,
+      readingPass,
+      readingClaim,
+      readingVote,
       voteSkip,
       pickAugment,
       rerollAugment,
