@@ -4,6 +4,7 @@ import type { Request } from 'express'
 import { prisma } from '../config.js'
 import { adminMiddleware, authMiddleware, type AuthUser } from '../auth.js'
 import { BANK_GENRES } from '../genres.js'
+import { invalidateBankCache } from '../bankCache.js'
 import { extractYoutubeId, normalizeAnswer, parseAcceptList, expandArtistAccepts, splitDuoArtists } from '../answer.js'
 import { normalizeSongTags, parseTagsJson, tagsToJson, SONG_TAGS } from '../tags.js'
 
@@ -130,6 +131,7 @@ questionRouter.delete('/:id', authMiddleware, adminMiddleware, async (req, res) 
   const id = req.params.id
   try {
     await prisma.question.delete({ where: { id } })
+    invalidateBankCache()
     res.json({ ok: true })
   } catch {
     res.status(404).json({ error: '문제를 찾을 수 없습니다' })
@@ -240,7 +242,7 @@ async function createOneQuestion(data: z.infer<typeof createSchema>) {
     update: {},
     create: { name: data.genreName },
   })
-  return prisma.question.create({
+  const created = await prisma.question.create({
     data: {
       youtubeUrl: data.youtubeUrl,
       startSec: data.startSec,
@@ -259,6 +261,10 @@ async function createOneQuestion(data: z.infer<typeof createSchema>) {
     },
     include: { genre: true, slots: true },
   })
+  // 쓰기가 끝난 뒤에 비운다. 먼저 비우면 이어지는 await 사이에 소켓 핸들러가
+  // 끼어들어 쓰기 이전 DB로 캐시를 다시 채우고, 그 스냅샷이 TTL 내내 고정된다.
+  invalidateBankCache()
+  return created
 }
 
 async function updateOneQuestion(id: string, data: z.infer<typeof createSchema>) {
@@ -296,6 +302,8 @@ async function updateOneQuestion(id: string, data: z.infer<typeof createSchema>)
       },
     }),
   ])
+  // createOneQuestion과 같은 이유로 쓰기 뒤에 비운다.
+  invalidateBankCache()
 
   return prisma.question.findUniqueOrThrow({
     where: { id },

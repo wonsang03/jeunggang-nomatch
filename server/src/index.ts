@@ -30,9 +30,22 @@ if (fs.existsSync(publicRoot)) {
   })
 }
 
+// 소켓 핸들러 하나가 실패해도 게임 서버 전체가 죽지 않게 한다
+process.on('unhandledRejection', (reason) => {
+  console.error('[unhandledRejection]', reason)
+})
+// uncaughtException은 삼키면 안 된다. 스택이 중간에 끊긴 프로세스를 계속 굴리면
+// 채점 도중 터진 방이 "점수만 깎이고 정답 처리는 안 된" 상태로 계속 서빙된다.
+// pm2가 재시작해주므로 로그만 남기고 죽는 편이 안전하다.
+process.on('uncaughtException', (err) => {
+  console.error('[uncaughtException] 프로세스를 종료합니다', err)
+  process.exit(1)
+})
+
 const httpServer = createServer(app)
 const io = new Server(httpServer, {
   cors: { origin: corsOrigin, credentials: true },
+  maxHttpBufferSize: 1e6,
 })
 registerSocket(io)
 

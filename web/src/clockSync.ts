@@ -62,7 +62,12 @@ export function applyClockSample(t0: number, tServer: number, t1: number): boole
 
   // 지터/스파이크: 최근 best 대비 너무 느리면 오프셋 무시 (핑 UI만 갱신)
   const rttLimit = Math.max(120, (bestRttMs ?? rtt) * 1.8)
-  if (rtt > rttLimit || rtt > 450) {
+  // 절대 상한을 450ms로 고정하면 회선이 원래 느린 사람(모바일·해외)은 모든 샘플이
+  // 걸러져 오프셋이 영영 0(=보정 없는 로컬 시계)에 묶인다. PC 시계가 몇 초라도
+  // 틀어져 있으면 노래 싱크가 통째로 어긋나므로, 기준 RTT가 느리면 상한도 같이 올린다.
+  // 스파이크 차단은 위의 상대 기준(rttLimit)이 이미 담당한다.
+  const absoluteCap = Math.max(450, (bestRttMs ?? rtt) * 1.5)
+  if (rtt > rttLimit || rtt > absoluteCap) {
     return false
   }
 
@@ -70,8 +75,9 @@ export function applyClockSample(t0: number, tServer: number, t1: number): boole
   while (goodOffsets.length > GOOD_CAP) goodOffsets.shift()
 
   const target = median(goodOffsets)
-  // 한 번에 많이 안 움직임 (사람마다 다르게 튀는 것 방지)
-  // 재생 중에도 샘플은 모으되, 한 번에 크게 안 움직임(다음 곡에서만 체감)
+  // 한 번에 크게 안 움직이게 감쇠 (사람마다 다르게 튀는 것 방지).
+  // maxStep까지는 그대로 따라가고 초과분은 12%만 반영하므로, 실제 이동량은
+  // maxStep보다 조금 더 크다 (delta 1초일 때 약 160ms).
   const maxStep = sampleCount < 3 ? 160 : 48
   const delta = target - offsetMs
   if (sampleCount === 0) {

@@ -141,7 +141,7 @@ async function main() {
       effectType: 'score_mult_hint_only',
       effectValue: JSON.stringify({ mult: 2, rounds: 3 }),
       tier: 'gold',
-      imageUrl: null,
+      imageUrl: '/augments/hearing-x.jpg',
     },
     {
       name: '신창섭의 가호',
@@ -259,7 +259,7 @@ async function main() {
       effectType: 'answer_proxy',
       effectValue: JSON.stringify({ rounds: 3 }),
       tier: 'gold',
-      imageUrl: null,
+      imageUrl: '/augments/proxy-answer.jpg',
     },
     {
       name: '혼돈',
@@ -268,7 +268,7 @@ async function main() {
       effectType: 'chaos_cast',
       effectValue: '{}',
       tier: 'gold',
-      imageUrl: null,
+      imageUrl: '/augments/chaos.jpg',
     },
     {
       name: '트루먼쇼',
@@ -285,7 +285,7 @@ async function main() {
       effectType: 'score_mult',
       effectValue: JSON.stringify({ mult: 2, rounds: 4, excludeHidden: true }),
       tier: 'gold',
-      imageUrl: null,
+      imageUrl: '/augments/score-double.jpg',
     },
     {
       name: '님아 매너좀',
@@ -294,7 +294,7 @@ async function main() {
       effectType: 'answer_delay',
       effectValue: JSON.stringify({ rounds: 5, delaySec: 5 }),
       tier: 'gold',
-      imageUrl: null,
+      imageUrl: '/augments/answer-delay.jpg',
     },
     {
       name: '맞췄죠?',
@@ -312,7 +312,7 @@ async function main() {
       effectType: 'hidden_run',
       effectValue: JSON.stringify({ rounds: 3, mult: 3 }),
       tier: 'gold',
-      imageUrl: null,
+      imageUrl: '/augments/hidden-run.png',
     },
     {
       name: '슬로우 스타터',
@@ -321,7 +321,7 @@ async function main() {
       effectType: 'slow_starter',
       effectValue: JSON.stringify({ rounds: 3, delaySec: 7, bonus: 2 }),
       tier: 'gold',
-      imageUrl: null,
+      imageUrl: '/augments/slow-starter.jpg',
     },
     {
       name: '풍악을 울려라',
@@ -366,7 +366,7 @@ async function main() {
       effectType: 'water_ghost',
       effectValue: JSON.stringify({ rounds: 1, penalty: 2, gain: 1 }),
       tier: 'silver',
-      imageUrl: null,
+      imageUrl: '/augments/water-ghost.jpg',
     },
     {
       name: '콤보',
@@ -375,7 +375,7 @@ async function main() {
       effectType: 'combo_clear_double',
       effectValue: JSON.stringify({ rounds: 3 }),
       tier: 'silver',
-      imageUrl: null,
+      imageUrl: '/augments/combo.jpg',
     },
     {
       name: '습박 돌던져',
@@ -392,7 +392,7 @@ async function main() {
       effectType: 'force_skip',
       effectValue: JSON.stringify({ charges: 1 }),
       tier: 'bronze',
-      imageUrl: null,
+      imageUrl: '/augments/skip.png',
     },
     {
       name: '넘어가요!!',
@@ -400,7 +400,7 @@ async function main() {
       effectType: 'force_skip',
       effectValue: JSON.stringify({ charges: 2 }),
       tier: 'silver',
-      imageUrl: null,
+      imageUrl: '/augments/skip.png',
     },
     {
       name: '넘어가요!!!!',
@@ -408,16 +408,16 @@ async function main() {
       effectType: 'force_skip',
       effectValue: JSON.stringify({ charges: 3 }),
       tier: 'gold',
-      imageUrl: null,
+      imageUrl: '/augments/skip.png',
     },
     {
       name: '기생수',
       description:
-        '플레이어 한 명을 지목합니다. 다음 5라운드 동안 서로 정답으로 얻은 점수가 같이 오릅니다.',
+        '플레이어 한 명을 지목합니다. 다음 5라운드 동안 그 사람이 정답으로 얻는 점수만큼 나도 같이 얻습니다. (상대는 손해도 이득도 없음)',
       effectType: 'score_share',
       effectValue: JSON.stringify({ rounds: 5 }),
       tier: 'gold',
-      imageUrl: null,
+      imageUrl: '/augments/parasite.jpg',
     },
     {
       name: '피치카토!',
@@ -426,7 +426,7 @@ async function main() {
       effectType: 'audio_stutter',
       effectValue: JSON.stringify({ rounds: 1, onMs: 1000, offMs: 1000 }),
       tier: 'bronze',
-      imageUrl: null,
+      imageUrl: '/augments/pizzicato.png',
     },
     {
       name: '마르카토!!',
@@ -435,7 +435,7 @@ async function main() {
       effectType: 'audio_stutter',
       effectValue: JSON.stringify({ rounds: 3, onMs: 1000, offMs: 1000 }),
       tier: 'silver',
-      imageUrl: null,
+      imageUrl: '/augments/marcato.png',
     },
     {
       name: '스타카토!!!',
@@ -444,7 +444,7 @@ async function main() {
       effectType: 'audio_stutter',
       effectValue: JSON.stringify({ rounds: 5, onMs: 1000, offMs: 1000 }),
       tier: 'gold',
-      imageUrl: null,
+      imageUrl: '/augments/staccato.png',
     },
     {
       name: '알레그로',
@@ -453,7 +453,7 @@ async function main() {
       effectType: 'slow_playback',
       effectValue: JSON.stringify({ rounds: 4, rateMin: 2, rateMax: 3 }),
       tier: 'gold',
-      imageUrl: null,
+      imageUrl: '/augments/allegro.jpg',
     },
     {
       name: '눈찌르기!',
@@ -462,7 +462,7 @@ async function main() {
       effectType: 'hide_hints',
       effectValue: JSON.stringify({ rounds: 1 }),
       tier: 'bronze',
-      imageUrl: null,
+      imageUrl: '/augments/eye-poke.jpg',
     },
     {
       name: '눈찌르기!!',
@@ -471,7 +471,7 @@ async function main() {
       effectType: 'hide_hints',
       effectValue: JSON.stringify({ rounds: 3 }),
       tier: 'silver',
-      imageUrl: null,
+      imageUrl: '/augments/eye-poke.jpg',
     },
     {
       name: '눈찌르기!!!',
@@ -480,7 +480,7 @@ async function main() {
       effectType: 'hide_hints',
       effectValue: JSON.stringify({ rounds: 5 }),
       tier: 'gold',
-      imageUrl: null,
+      imageUrl: '/augments/eye-poke.jpg',
     },
     {
       name: '전환',
@@ -540,7 +540,7 @@ async function main() {
       effectType: 'peek_next_hint',
       effectValue: '{}',
       tier: 'bronze',
-      imageUrl: null,
+      imageUrl: '/augments/peephole.jpg',
     },
     {
       name: '전원을 꺼봤습니다',
@@ -573,7 +573,7 @@ async function main() {
       effectType: 'chat_isolate',
       effectValue: JSON.stringify({ rounds: 2 }),
       tier: 'bronze',
-      imageUrl: null,
+      imageUrl: '/augments/corona.png',
     },
     {
       name: '올인',
@@ -582,7 +582,7 @@ async function main() {
       effectType: 'wager_answer',
       effectValue: JSON.stringify({ rounds: 1, bonus: 3, penalty: 3, nextRound: true, earlyChosung: true }),
       tier: 'silver',
-      imageUrl: null,
+      imageUrl: '/augments/all-in.jpg',
     },
     {
       name: '셔플',
@@ -591,7 +591,7 @@ async function main() {
       effectType: 'equalize_genre_remaining',
       effectValue: '{}',
       tier: 'silver',
-      imageUrl: null,
+      imageUrl: '/augments/shuffle.jpg',
     },
     {
       name: '보너스 타임',
@@ -599,7 +599,7 @@ async function main() {
       effectType: 'early_chosung',
       effectValue: JSON.stringify({ rounds: 3 }),
       tier: 'silver',
-      imageUrl: null,
+      imageUrl: '/augments/bonus-time.jpg',
     },
     {
       name: '묻고 더블로가',
@@ -631,7 +631,7 @@ async function main() {
       effectType: 'donate_from_random',
       effectValue: JSON.stringify({ count: 5, amount: 1, gain: 1 }),
       tier: 'gold',
-      imageUrl: null,
+      imageUrl: '/augments/donation-angel.png',
     },
     {
       name: '밴픽',
@@ -639,7 +639,7 @@ async function main() {
       effectType: 'ban_genre',
       effectValue: '{}',
       tier: 'gold',
-      imageUrl: null,
+      imageUrl: '/augments/ban-pick.png',
     },
     {
       name: '가호선택',
@@ -648,7 +648,7 @@ async function main() {
       effectType: 'gaho_select',
       effectValue: '{}',
       tier: 'gold',
-      imageUrl: null,
+      imageUrl: '/augments/gaho-select.jpg',
     },
     {
       name: '가불기',
@@ -657,7 +657,7 @@ async function main() {
       effectType: 'gabuki_mark',
       effectValue: JSON.stringify({ rounds: 3, hitPenalty: 1, missPenalty: 2 }),
       tier: 'gold',
-      imageUrl: null,
+      imageUrl: '/augments/gabuki.jpg',
     },
     {
       name: '불꽃남자김상원',
@@ -680,7 +680,7 @@ async function main() {
       effectType: 'future_sight',
       effectValue: JSON.stringify({ lookAhead: 5, pick: 3 }),
       tier: 'gold',
-      imageUrl: null,
+      imageUrl: '/augments/future-sight.jpg',
     },
     {
       name: '조커뽑기',
@@ -711,7 +711,7 @@ async function main() {
       effectType: 'cha_cha_cha',
       effectValue: JSON.stringify({ charges: 5, windowMs: 500 }),
       tier: 'gold',
-      imageUrl: null,
+      imageUrl: '/augments/cha-cha-cha.jpg',
     },
     {
       name: '전환',
@@ -728,7 +728,7 @@ async function main() {
       effectType: 'score_bonus',
       effectValue: JSON.stringify({ rounds: 3, bonus: 1 }),
       tier: 'silver',
-      imageUrl: null,
+      imageUrl: '/augments/triple-bonus.png',
     },
     {
       name: '다요',
@@ -756,6 +756,99 @@ async function main() {
       effectValue: JSON.stringify({ rounds: 3, blockMs: 10000 }),
       tier: 'silver',
       imageUrl: '/augments/domain-expansion.png',
+    },
+    {
+      name: '1등만 기억하는 더러운 세상',
+      description: '현재 1등인 플레이어에게서 2점을 빼앗아 본인이 가져옵니다.',
+      effectType: 'steal_from_leader',
+      effectValue: JSON.stringify({ amount: 2 }),
+      tier: 'silver',
+      imageUrl: '/augments/first-place-only.png',
+    },
+    {
+      name: '어 인정',
+      description:
+        '지금부터 3라운드 동안, 다른 사람이 정답을 맞힌 뒤 2초 안에 같은 답을 내면 본인도 정답으로 인정됩니다.',
+      effectType: 'follow_answer',
+      effectValue: JSON.stringify({ rounds: 3, windowMs: 2000 }),
+      tier: 'bronze',
+      imageUrl: '/augments/acknowledge.jpg',
+    },
+    {
+      name: '5분만 더',
+      description: '지금 진행 중인 라운드의 제한 시간을 10초 늘립니다. (전원 공용 · 플레이 중에만)',
+      effectType: 'extend_round',
+      effectValue: JSON.stringify({ seconds: 10 }),
+      tier: 'silver',
+      imageUrl: '/augments/five-more-minutes.jpg',
+    },
+    {
+      name: '바꿔',
+      description: '플레이어 한 명을 지목해 그 사람과 점수를 통째로 맞바꿉니다. (즉시 1회)',
+      effectType: 'swap_scores',
+      effectValue: '{}',
+      tier: 'silver',
+      imageUrl: '/augments/swap-scores.png',
+    },
+    {
+      name: '주작',
+      description:
+        '본인을 제외한 전원 화면에만 가짜 정답 알림을 띄웁니다. 실제 점수·정답 공개는 전혀 바뀌지 않습니다. (플레이 중에만)',
+      effectType: 'fake_correct_alert',
+      effectValue: '{}',
+      tier: 'silver',
+      imageUrl: '/augments/jujak.jpg',
+    },
+    {
+      name: '내가 왕이 될 상인가',
+      description:
+        '지금부터 3라운드 뒤, 본인이 1등이면 +5점을 얻고 1등이 아니면 -3점을 잃습니다.',
+      effectType: 'crown_bet',
+      effectValue: JSON.stringify({ rounds: 3, win: 5, lose: 3 }),
+      tier: 'silver',
+      imageUrl: '/augments/crown-bet.jpg',
+    },
+    {
+      name: '어림도 없지',
+      description: '본인에게 걸려 있는 디버프를 즉시 전부 털어냅니다. (걸린 게 없으면 사용 실패)',
+      effectType: 'cleanse_debuff',
+      effectValue: '{}',
+      tier: 'silver',
+      imageUrl: '/augments/cleanse-shield.jpg',
+    },
+    {
+      name: '킹받네',
+      description:
+        '가장 최근에 본인에게 디버프를 건 플레이어에게서 2점을 되찾아옵니다. (걸린 디버프가 없으면 사용 실패)',
+      effectType: 'revenge_steal',
+      effectValue: JSON.stringify({ amount: 2 }),
+      tier: 'silver',
+      imageUrl: '/augments/king-rage.png',
+    },
+    {
+      name: '오히려 좋아',
+      description: '이번 라운드에 한 문제도 못 맞히면 오히려 +2점을 얻습니다. (맞히면 보너스 없음)',
+      effectType: 'fail_forward',
+      effectValue: JSON.stringify({ rounds: 1, bonus: 2 }),
+      tier: 'bronze',
+      imageUrl: '/augments/fail-forward.jpg',
+    },
+    {
+      name: '중요한 건 꺾이지 않는 마음',
+      description: '지금부터 2라운드 동안, 한 문제도 못 맞힌 라운드마다 +1점을 얻습니다.',
+      effectType: 'comeback_stack',
+      effectValue: JSON.stringify({ rounds: 2, bonus: 1 }),
+      tier: 'silver',
+      imageUrl: '/augments/unbroken-heart.png',
+    },
+    {
+      name: '몇 글자게?',
+      description:
+        '이번 라운드에서 아직 공개되지 않은 정답들의 글자 수를 본인만 확인합니다. (공백 제외 · 플레이 중에만)',
+      effectType: 'reveal_answer_length',
+      effectValue: '{}',
+      tier: 'bronze',
+      imageUrl: '/augments/count-letters.jpg',
     },
   ]
   for (const a of augments) {

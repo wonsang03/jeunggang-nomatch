@@ -1,803 +1,45 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
-import { createPortal } from 'react-dom'
-import { useGame } from './GameContext'
+import { useState, useEffect, useRef, useCallback, useMemo, memo } from 'react'
+import { useGame, type ChatMsg, type RoomMember } from './GameContext'
 import { api, avatarSrc } from './api'
 import { PLAYABLE_GENRES, BANK_GENRES, emptyGenreCounts, YACHA_GENRE, type GenreName, type BankGenreName } from './genres'
 import { normalizeSongTags } from './tags'
 import { playSfx } from './sfx'
 import { serverNow } from './clockSync'
 import { HiddenYouTube, FlameKimOverlayBgm, RoomSongPersistentBgm, ytId, loadYtApi, type YtPlayer } from './youtubePlayer'
+import {
+  AppliedAugmentChip,
+  AugmentNoPhoto,
+  Avatar,
+  Btn,
+  C,
+  CrumpleOverlay,
+  Equalizer,
+  F,
+  Field,
+  FitAnswer,
+  FloatingHoverPopup,
+  GenreIntroFly,
+  GenreSongCountRow,
+  HOSTILE_AUGMENT_TYPES,
+  MarginLine,
+  NoteCard,
+  PaperShell,
+  PencilFilters,
+  PrismKeyframes,
+  RoundTimer,
+  SketchInput,
+  Tag,
+  TimerRing,
+  crumpledPaper,
+  notebookLines,
+  prismBackdrop,
+  sk,
+  tierBorderColor,
+  tierDisplayName,
+} from './ui'
 
 // ── Types ─────────────────────────────────────────────────────
 type Screen = 'home' | 'login' | 'lobby' | 'waiting' | 'game' | 'augment' | 'result' | 'bank' | 'profile'
-
-// ── Design Tokens ─────────────────────────────────────────────
-// Soft blue + paper white (stationery aesthetic)
-const C = {
-  paper:      '#EEF3F8',
-  card:       '#F7FAFC',
-  panel:      '#F7FAFC',
-  graphite:   '#2A3340',
-  blue:       '#5D8CD7',
-  blueLight:  '#D6E8F7',
-  yellow:     '#F5E6A3',
-  red:        '#E05252',
-  redLight:   '#F8DADA',
-  green:      '#3D9E62',
-  greenLight: '#DAEEE5',
-  text:       '#1A1A1A',
-  body:       '#222831',
-  muted:      '#5A6570',
-  line:       '#C6DCE8',
-  margin:     '#C85040',
-  tierBronze: '#B87333',
-  tierSilver: '#6E7F8D',
-  tierGold:   '#C9A227',
-  tierGaho:   '#7B5EA7',
-}
-
-function tierBorderColor(tier?: string | null): string {
-  const t = (tier || '').toLowerCase()
-  if (t === 'bronze' || t === '브론즈') return C.tierBronze
-  if (t === 'silver' || t === '실버') return C.tierSilver
-  if (t === 'gold' || t === '골드') return C.tierGold
-  if (t === '가호' || t === 'gaho') return C.tierGaho
-  return C.graphite
-}
-
-function tierDisplayName(tier?: string | null): string {
-  const t = (tier || '').toLowerCase()
-  if (t === 'bronze' || t === '브론즈') return '브론즈'
-  if (t === 'silver' || t === '실버') return '실버'
-  if (t === 'gold' || t === '골드') return '골드'
-  if (t === '가호' || t === 'gaho') return '가호'
-  return tier || ''
-}
-
-/** 구겨진 종이 사진 배경 */
-const crumpledPaper: React.CSSProperties = {
-  backgroundColor: '#E8F1F7',
-  backgroundImage: 'url(/crumpled-paper.png)',
-  backgroundSize: 'cover',
-  backgroundPosition: 'center',
-  backgroundRepeat: 'no-repeat',
-  backgroundAttachment: 'fixed',
-  position: 'relative',
-}
-
-const notebookLines = crumpledPaper
-
-/** 가호 선택 프리즘 배경 */
-const prismBackdrop: React.CSSProperties = {
-  position: 'fixed',
-  inset: 0,
-  zIndex: 90,
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  padding: 24,
-  background:
-    'linear-gradient(125deg, rgba(255,130,190,0.55) 0%, rgba(120,190,255,0.55) 22%, rgba(190,130,255,0.5) 45%, rgba(110,240,200,0.48) 68%, rgba(255,220,130,0.52) 100%)',
-  backgroundSize: '220% 220%',
-  animation: 'prismShift 7s ease-in-out infinite',
-}
-
-function PrismKeyframes() {
-  return (
-    <style>{`
-      @keyframes prismShift {
-        0% { background-position: 0% 40%; }
-        50% { background-position: 100% 60%; }
-        100% { background-position: 0% 40%; }
-      }
-      @keyframes prismShine {
-        0%, 100% { opacity: 0.35; transform: translateX(-30%) rotate(12deg); }
-        50% { opacity: 0.55; transform: translateX(30%) rotate(12deg); }
-      }
-    `}</style>
-  )
-}
-
-function CrumpleOverlay() {
-  // 실 질감 이미지가 배경이므로 추가 CSS 구김 레이어는 쓰지 않음
-  return null
-}
-
-function PaperShell({
-  children,
-  style,
-  className,
-}: {
-  children: React.ReactNode
-  style?: React.CSSProperties
-  className?: string
-}) {
-  return (
-    <div className={className} style={{ ...crumpledPaper, ...style }}>
-      <CrumpleOverlay />
-      <div style={{ position: 'relative', zIndex: 1, height: '100%', display: 'contents' }}>
-        {children}
-      </div>
-    </div>
-  )
-}
-
-// Pencil-sketch border with layered graphite smudge shadow
-// small=true → 2-layer thin shadow for chips/tags
-function sk(border = C.graphite, small = false): React.CSSProperties {
-  const a = small
-    ? [`1.5px 1.5px 0 ${border}`, `2.5px 2.5px 0 ${border}70`, `3.5px 3.5px 0 ${border}28`]
-    : [`2.5px 2.5px 0 ${border}`, `4px 4px 0 ${border}60`,     `5.5px 5.5px 0 ${border}18`]
-  return {
-    border: `2.5px solid ${border}`,
-    borderRadius: '7px 5px 8px 4px / 5px 8px 5px 7px',
-    boxShadow: a.join(', '),
-    filter: 'url(#pencilRough)',
-  }
-}
-
-/** overflow에 잘리지 않도록 body에 fixed 팝업 */
-function FloatingHoverPopup({
-  anchor,
-  children,
-  width = 240,
-  borderColor = C.graphite,
-}: {
-  anchor: DOMRect | null
-  children: React.ReactNode
-  width?: number
-  borderColor?: string
-}) {
-  if (!anchor || typeof document === 'undefined') return null
-  const gap = 10
-  const estimatedH = 220
-  const placeAbove = anchor.top > estimatedH + gap + 24
-  const left = Math.min(
-    Math.max(width / 2 + 12, anchor.left + anchor.width / 2),
-    window.innerWidth - width / 2 - 12,
-  )
-  const top = placeAbove ? anchor.top - gap : anchor.bottom + gap
-  return createPortal(
-    <div
-      style={{
-        position: 'fixed',
-        left,
-        top,
-        transform: placeAbove ? 'translate(-50%, -100%)' : 'translate(-50%, 0)',
-        width,
-        maxWidth: 'min(90vw, 280px)',
-        zIndex: 400,
-        ...sk(borderColor, true),
-        backgroundColor: C.card,
-        padding: 12,
-        boxShadow: `0 8px 24px ${C.graphite}35`,
-        pointerEvents: 'none',
-        textAlign: 'left',
-        border: `2.5px solid ${borderColor}`,
-      }}
-    >
-      {children}
-    </div>,
-    document.body,
-  )
-}
-
-// ── SVG Filter Definitions ─────────────────────────────────────
-// Rendered once at app root; filter: url(#pencilRough) displaces
-// element edges by ~1px — visible on thin borders, imperceptible on text
-function PencilFilters() {
-  return (
-    <svg
-      aria-hidden="true"
-      focusable="false"
-      style={{ position: 'absolute', width: 0, height: 0, overflow: 'hidden' }}
-    >
-      <defs>
-        <filter
-          id="pencilRough"
-          x="-5%" y="-5%" width="110%" height="110%"
-          colorInterpolationFilters="sRGB"
-        >
-          <feTurbulence
-            type="fractalNoise"
-            baseFrequency="0.038 0.072"
-            numOctaves="3"
-            seed="11"
-            result="noise"
-          />
-          <feDisplacementMap
-            in="SourceGraphic"
-            in2="noise"
-            scale="1.1"
-            xChannelSelector="R"
-            yChannelSelector="G"
-          />
-        </filter>
-        <filter
-          id="paperCrumple"
-          x="-20%" y="-20%" width="140%" height="140%"
-          colorInterpolationFilters="sRGB"
-        >
-          <feTurbulence
-            type="fractalNoise"
-            baseFrequency="0.012 0.018"
-            numOctaves="3"
-            seed="7"
-            result="warp"
-          />
-          <feDisplacementMap
-            in="SourceGraphic"
-            in2="warp"
-            scale="28"
-            xChannelSelector="R"
-            yChannelSelector="G"
-          />
-        </filter>
-      </defs>
-    </svg>
-  )
-}
-
-// ── Typography helpers ─────────────────────────────────────────
-const F = {
-  brand: "'Gaegu', cursive",   // 타이틀·채팅 큰 글씨
-  chat:  "'Gaegu', cursive",
-  ui:    "'Jua', sans-serif",  // 작은 라벨·UI (비슷한 느낌, 작은 크기에서 더 또렷)
-}
-
-/** 사진 없는 증강 — 그 칸에 이름만 굵게 (사진처럼) */
-function AugmentNoPhoto({
-  name,
-  accent,
-  compact = false,
-}: {
-  name?: string | null
-  accent?: string
-  compact?: boolean
-}) {
-  const border = accent || C.graphite
-  const title = (name || '').trim() || '?'
-  const len = title.length
-  const size = compact
-    ? (len > 10 ? 13 : len > 6 ? 16 : 20)
-    : (len > 12 ? 18 : len > 8 ? 22 : len > 4 ? 28 : 34)
-  return (
-    <div style={{
-      width: '100%',
-      height: '100%',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      padding: compact ? 6 : 12,
-      boxSizing: 'border-box',
-      backgroundColor: '#E8EEF4',
-      backgroundImage:
-        `linear-gradient(135deg, ${border}18 0%, transparent 45%, ${border}10 100%)`,
-    }}>
-      <div style={{
-        fontFamily: F.brand,
-        fontSize: size,
-        fontWeight: 900,
-        color: C.graphite,
-        lineHeight: 1.15,
-        textAlign: 'center',
-        wordBreak: 'keep-all',
-        WebkitTextStroke: '0.55px currentColor',
-      }}>
-        {title}
-      </div>
-    </div>
-  )
-}
-
-/** 긴 제목/가수: 공개 전이면 초성 힌트(있으면) 또는 ？？？ */
-function FitAnswer({
-  label,
-  value,
-  hint,
-  revealed,
-}: {
-  label: string
-  value: string | null
-  hint?: string | null
-  revealed: boolean
-}) {
-  const shown = revealed ? (value?.trim() || null) : null
-  const text = shown || (!revealed ? (hint?.trim() || null) : null) || '？？？'
-  const isHint = !revealed && !shown && !!hint?.trim()
-  const len = text.length
-  const size = len > 24 ? 20 : len > 16 ? 24 : len > 10 ? 30 : 36
-  return (
-    <div style={{ width: '100%', textAlign: 'center', minWidth: 0 }}>
-      <div style={{ fontFamily: F.ui, fontSize: 17, fontWeight: 500, color: C.muted, marginBottom: 6 }}>{label}</div>
-      <div
-        title={shown || undefined}
-        style={{
-          fontFamily: F.brand,
-          fontSize: size,
-          fontWeight: 700,
-          color: shown ? C.body : isHint ? C.blue : C.line,
-          lineHeight: 1.25,
-          display: '-webkit-box',
-          WebkitLineClamp: 2,
-          WebkitBoxOrient: 'vertical',
-          overflow: 'hidden',
-          wordBreak: 'keep-all',
-          overflowWrap: 'anywhere',
-        }}
-      >
-        {text}
-      </div>
-    </div>
-  )
-}
-
-/** 라운드 시작: 장르를 크게 보여준 뒤 자리로 축소·페이드 인 */
-function GenreIntroFly({
-  text,
-  targetRef,
-  active,
-  onSettled,
-  color = C.blue,
-}: {
-  text: string
-  targetRef: React.RefObject<HTMLElement | null>
-  active: boolean
-  onSettled: () => void
-  color?: string
-}) {
-  const flyRef = useRef<HTMLDivElement>(null)
-  const [phase, setPhase] = useState<'off' | 'hold' | 'fly'>('off')
-
-  useEffect(() => {
-    if (!active || !text) {
-      setPhase('off')
-      return
-    }
-    setPhase('hold')
-    const holdT = window.setTimeout(() => setPhase('fly'), 850)
-    const doneT = window.setTimeout(() => onSettled(), 850 + 780)
-    return () => {
-      window.clearTimeout(holdT)
-      window.clearTimeout(doneT)
-    }
-  }, [active, text, onSettled])
-
-  useEffect(() => {
-    if (phase !== 'fly' || !flyRef.current) return
-    const el = flyRef.current
-    const dest = targetRef.current?.getBoundingClientRect()
-    if (!dest) return
-    const from = el.getBoundingClientRect()
-    const fromCx = from.left + from.width / 2
-    const fromCy = from.top + from.height / 2
-    const toCx = dest.left + dest.width / 2
-    const toCy = dest.top + dest.height / 2
-    const scale = Math.max(0.22, Math.min(0.4, dest.height / Math.max(from.height, 1)))
-    el.style.transition = 'transform 0.72s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.55s ease 0.15s'
-    el.style.transform = `translate(${toCx - fromCx}px, ${toCy - fromCy}px) scale(${scale})`
-    el.style.opacity = '0'
-  }, [phase, targetRef])
-
-  if (!active || phase === 'off' || !text) return null
-
-  return createPortal(
-    <div
-      style={{
-        position: 'fixed',
-        inset: 0,
-        zIndex: 55,
-        pointerEvents: 'none',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-      }}
-    >
-      <div
-        ref={flyRef}
-        style={{
-          fontFamily: F.brand,
-          fontSize: text.length > 8 ? 52 : 72,
-          fontWeight: 700,
-          color,
-          letterSpacing: '0.06em',
-          lineHeight: 1.1,
-          padding: '10px 22px',
-          backgroundColor: 'transparent',
-          border: `3px solid ${color}`,
-          borderRadius: '10px 7px 11px 6px / 7px 11px 7px 10px',
-          boxShadow: 'none',
-          textShadow: 'none',
-          WebkitTextStroke: '0',
-          transform: 'translate(0, 0) scale(1)',
-          opacity: 1,
-          willChange: 'transform, opacity',
-        }}
-      >
-        {text}
-      </div>
-    </div>,
-    document.body,
-  )
-}
-
-// ── Shared Components ─────────────────────────────────────────
-
-function Btn({
-  children, onClick, variant = 'default', size = 'md',
-  fullWidth = false, disabled = false,
-}: {
-  children: React.ReactNode
-  onClick?: () => void
-  variant?: 'default' | 'primary' | 'danger' | 'yellow' | 'ghost'
-  size?: 'sm' | 'md' | 'lg'
-  fullWidth?: boolean
-  disabled?: boolean
-}) {
-  const [p, setP] = useState(false)
-  const bg:    Record<string, string> = { default: C.card, primary: C.blue, danger: C.red, yellow: C.yellow, ghost: 'transparent' }
-  const col:   Record<string, string> = { default: C.body, primary: '#fff', danger: '#fff', yellow: C.body, ghost: C.body }
-  const pad:   Record<string, string> = { sm: '6px 16px', md: '11px 26px', lg: '14px 36px' }
-  const fs:    Record<string, string> = { sm: '16px', md: '18px', lg: '20px' }
-  const fw:    Record<string, number> = { sm: 700, md: 800, lg: 800 }
-
-  const borderC = disabled ? C.muted : C.graphite
-  const skStyle = sk(borderC, size === 'sm')
-
-  return (
-    <button
-      disabled={disabled}
-      onClick={disabled ? undefined : () => {
-        playSfx('click')
-        onClick?.()
-      }}
-      onMouseDown={() => !disabled && setP(true)}
-      onMouseUp={() => setP(false)}
-      onMouseLeave={() => setP(false)}
-      style={{
-        ...skStyle,
-        backgroundColor: disabled ? '#C9D5E0' : bg[variant],
-        color: disabled ? C.muted : col[variant],
-        fontFamily: F.ui,
-        fontSize: fs[size],
-        fontWeight: fw[size],
-        letterSpacing: '0.03em',
-        padding: pad[size],
-        cursor: disabled ? 'not-allowed' : 'pointer',
-        width: fullWidth ? '100%' : undefined,
-        display: 'inline-flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: '6px',
-        transform: p ? 'translate(2px,2px)' : undefined,
-        boxShadow: p
-          ? `1px 1px 0 ${borderC}`
-          : skStyle.boxShadow,
-        transition: 'transform 0.08s, box-shadow 0.08s',
-        outline: 'none',
-        whiteSpace: 'nowrap',
-      }}
-    >
-      {children}
-    </button>
-  )
-}
-
-function Field({ label, type = 'text', placeholder, value, onChange }: {
-  label?: string
-  type?: string
-  placeholder?: string
-  value: string
-  onChange: (v: string) => void
-}) {
-  return (
-    <div style={{ marginBottom: '24px' }}>
-      {label && (
-        <div style={{ fontFamily: F.ui, fontSize: '13px', fontWeight: 700, color: C.muted, marginBottom: '4px', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
-          {label}
-        </div>
-      )}
-      <input
-        type={type}
-        placeholder={placeholder}
-        value={value}
-        onChange={e => onChange(e.target.value)}
-        style={{
-          width: '100%',
-          background: 'transparent',
-          border: 'none',
-          borderBottom: `2.5px solid ${C.graphite}`,
-          outline: 'none',
-          fontFamily: F.ui,
-          fontSize: '18px',
-          fontWeight: 700,
-          color: C.body,
-          padding: '9px 4px 6px',
-          letterSpacing: '0.02em',
-        }}
-      />
-    </div>
-  )
-}
-
-/** 대기실: 장르별 출제 곡 수 — 슬라이더 + 숫자 입력 */
-function GenreSongCountRow({
-  genre,
-  value,
-  max = 999,
-  disabled,
-  onChange,
-}: {
-  genre: string
-  value: number
-  max?: number
-  disabled?: boolean
-  onChange: (n: number) => void
-}) {
-  const serverN = Math.max(0, Math.min(max, Math.floor(Number(value) || 0)))
-  const [local, setLocal] = useState(serverN)
-  const dragging = useRef(false)
-  // 슬라이더는 은행 max까지만 (0곡이면 0)
-  const sliderMax = Math.max(0, max)
-
-  useEffect(() => {
-    if (!dragging.current) setLocal(serverN)
-  }, [serverN])
-
-  const commit = (n: number) => {
-    const next = Math.max(0, Math.min(max, Math.floor(n)))
-    setLocal(next)
-    onChange(next)
-  }
-
-  return (
-    <div style={{ opacity: disabled ? 0.65 : 1 }}>
-      <div style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        gap: 8, marginBottom: 4,
-      }}>
-        <div style={{ fontFamily: F.ui, fontSize: 13, color: C.body, fontWeight: 800 }}>{genre}</div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-          <input
-            type="number"
-            min={0}
-            max={max}
-            step={1}
-            disabled={disabled}
-            value={local}
-            onChange={(e) => {
-              if (disabled) return
-              const raw = e.target.value
-              if (raw === '') {
-                setLocal(0)
-                return
-              }
-              const next = Math.floor(Number(raw))
-              if (!Number.isFinite(next)) return
-              commit(next)
-            }}
-            onBlur={() => commit(local)}
-            style={{
-              ...sk(C.graphite, true),
-              backgroundColor: C.card,
-              width: 64,
-              fontFamily: F.ui,
-              fontSize: 15,
-              fontWeight: 800,
-              textAlign: 'center',
-              padding: '4px 6px',
-              outline: 'none',
-              color: C.body,
-            }}
-          />
-          <span style={{ fontFamily: F.ui, fontSize: 12, color: C.muted, fontWeight: 700 }}>곡</span>
-        </div>
-      </div>
-      <input
-        type="range"
-        min={0}
-        max={sliderMax}
-        step={1}
-        disabled={disabled}
-        value={Math.min(local, sliderMax)}
-        onPointerDown={() => { dragging.current = true }}
-        onChange={(e) => {
-          if (disabled) return
-          setLocal(Number(e.target.value))
-        }}
-        onPointerUp={(e) => {
-          dragging.current = false
-          if (disabled) return
-          commit(Number((e.target as HTMLInputElement).value))
-          playSfx('click')
-        }}
-        onKeyUp={(e) => {
-          if (disabled) return
-          if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'Home' || e.key === 'End') {
-            commit(Number((e.target as HTMLInputElement).value))
-          }
-        }}
-        style={{ width: '100%', accentColor: C.blue, cursor: disabled ? 'default' : 'pointer' }}
-      />
-    </div>
-  )
-}
-
-function NoteCard({ children, style }: { children: React.ReactNode; style?: React.CSSProperties }) {
-  return (
-    <div style={{
-      ...sk(),
-      backgroundColor: C.panel,
-      padding: '24px',
-      ...style,
-    }}>
-      {children}
-    </div>
-  )
-}
-
-function Equalizer({ color = C.blue, h = 22 }: { color?: string; h?: number }) {
-  return (
-    <div style={{ display: 'flex', alignItems: 'flex-end', gap: '3px', height: `${h}px` }}>
-      {[65, 90, 50, 80, 45].map((pct, i) => (
-        <div key={i} style={{
-          width: '3px', backgroundColor: color, borderRadius: '2px',
-          height: `${pct}%`, transformOrigin: 'bottom',
-          animation: `eqBounce 0.55s ease-in-out ${i * 0.11}s infinite alternate`,
-        }} />
-      ))}
-    </div>
-  )
-}
-
-function TimerRing({ value, max = 40, size = 68 }: { value: number; max?: number; size?: number }) {
-  const r = (size - 10) / 2
-  const circ = 2 * Math.PI * r
-  const danger = value <= 10
-  return (
-    <div style={{ position: 'relative', width: size, height: size, flexShrink: 0 }}>
-      <svg width={size} height={size} style={{ transform: 'rotate(-90deg)' }}>
-        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={C.line} strokeWidth="5" />
-        <circle cx={size / 2} cy={size / 2} r={r} fill="none"
-          stroke={danger ? C.red : C.blue} strokeWidth="5" strokeLinecap="round"
-          strokeDasharray={circ} strokeDashoffset={circ * (1 - value / max)}
-          style={{ transition: 'stroke-dashoffset 1s linear, stroke 0.3s' }}
-        />
-      </svg>
-      <div style={{
-        position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
-        fontFamily: F.ui, fontSize: size * 0.28, fontWeight: 900, color: danger ? C.red : C.body,
-      }}>
-        {value}
-      </div>
-    </div>
-  )
-}
-
-/** 링만 250ms 갱신 — GameScreen 전체 리렌더 방지 */
-function RoundTimer({ endsAt, max = 40, size = 58 }: { endsAt: number; max?: number; size?: number }) {
-  const [left, setLeft] = useState(() => Math.max(0, Math.ceil((endsAt - serverNow()) / 1000)))
-  useEffect(() => {
-    const tick = () => setLeft(Math.max(0, Math.ceil((endsAt - serverNow()) / 1000)))
-    tick()
-    const t = setInterval(tick, 250)
-    return () => clearInterval(t)
-  }, [endsAt])
-  return <TimerRing value={left} max={max} size={size} />
-}
-
-function SketchInput({ value, onChange, onKeyDown, placeholder, style, noPaste }: {
-  value: string
-  onChange: (v: string) => void
-  onKeyDown?: (e: React.KeyboardEvent<HTMLInputElement>) => void
-  placeholder?: string
-  style?: React.CSSProperties
-  /** true면 붙여넣기/드롭 차단 */
-  noPaste?: boolean
-}) {
-  const blockPaste = (e: React.ClipboardEvent | React.DragEvent) => {
-    if (!noPaste) return
-    e.preventDefault()
-  }
-  return (
-    <input
-      value={value} placeholder={placeholder}
-      onChange={e => onChange(e.target.value)}
-      onPaste={blockPaste}
-      onDrop={blockPaste}
-      onBeforeInput={(e) => {
-        if (!noPaste) return
-        const ne = e.nativeEvent as InputEvent
-        if (ne.inputType === 'insertFromPaste' || ne.inputType === 'insertFromDrop') {
-          e.preventDefault()
-        }
-      }}
-      onKeyDown={e => {
-        if (noPaste && (e.ctrlKey || e.metaKey) && (e.key === 'v' || e.key === 'V')) {
-          e.preventDefault()
-          return
-        }
-        onKeyDown?.(e)
-      }}
-      autoComplete={noPaste ? 'off' : undefined}
-      style={{
-        ...sk(),
-        backgroundColor: C.card,
-        fontFamily: F.ui,
-        fontSize: '15px',
-        fontWeight: 700,
-        color: C.body,
-        padding: '9px 14px',
-        outline: 'none',
-        letterSpacing: '0.02em',
-        ...style,
-      }}
-    />
-  )
-}
-
-function MarginLine() {
-  return null
-}
-
-// Tag chip for genre labels, status badges
-function Tag({ children, color = C.blue, bg }: { children: React.ReactNode; color?: string; bg?: string }) {
-  const bgFallback = color === C.blue ? C.blueLight : color === C.green ? C.greenLight : '#FFF8DC'
-  return (
-    <div style={{
-      ...sk(color, true),
-      backgroundColor: bg ?? bgFallback,
-      color,
-      fontFamily: F.ui,
-      fontSize: '12px',
-      fontWeight: 800,
-      letterSpacing: '0.05em',
-      padding: '3px 10px',
-      display: 'inline-flex',
-      alignItems: 'center',
-    }}>
-      {children}
-    </div>
-  )
-}
-
-function Avatar({
-  name,
-  url,
-  size = 40,
-  host = false,
-}: {
-  name?: string | null
-  url?: string | null
-  size?: number
-  host?: boolean
-}) {
-  const src = avatarSrc(url)
-  const letter = (name || '?')[0]
-  return (
-    <div style={{
-      width: size,
-      height: size,
-      flexShrink: 0,
-      overflow: 'hidden',
-      ...sk(host ? C.yellow : C.blue, true),
-      backgroundColor: host ? C.yellow : C.blueLight,
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      fontFamily: F.ui,
-      fontSize: size * 0.4,
-      fontWeight: 900,
-      color: C.blue,
-    }}>
-      {src ? (
-        <img src={src} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-      ) : (
-        letter
-      )}
-    </div>
-  )
-}
 
 // ── Screens ───────────────────────────────────────────────────
 
@@ -1783,6 +1025,160 @@ function GahoCutscene({
 }
 
 
+/**
+ * 채팅 목록은 GameScreen의 1초 타이머 리렌더와 분리한다.
+ * props가 모두 안정적인 참조라 새 메시지가 올 때만 다시 그린다.
+ */
+/** 순위표도 시간과 무관하다 — room:state로 명단·점수가 바뀔 때만 다시 그린다. */
+const GameScoreboard = memo(function GameScoreboard({
+  ranked,
+  spectators,
+  selfId,
+}: {
+  ranked: RoomMember[]
+  spectators: RoomMember[]
+  selfId: string
+}) {
+  const surf = C.panel
+  return (
+    <div style={{
+      ...sk(), backgroundColor: surf, padding: '12px 14px',
+      display: 'flex', flexDirection: 'column', gap: 10, minHeight: 0, minWidth: 0,
+    }}>
+      <div style={{ fontFamily: F.ui, fontSize: 18, color: C.muted, textAlign: 'center' }}>전체 순위</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, overflowY: 'auto' }}>
+        {ranked.map((s, i) => {
+          const mine = s.userId === selfId
+          return (
+            <div key={s.userId} style={{
+              display: 'grid', gridTemplateColumns: '36px 32px 1fr auto', gap: 6, alignItems: 'center',
+              padding: '8px 8px', ...sk(mine ? C.blue : C.graphite, true),
+              backgroundColor: mine ? C.blueLight : surf,
+            }}>
+              <span style={{ fontFamily: F.ui, fontSize: 15, color: mine ? C.blue : C.body, textAlign: 'center' }}>{i + 1}</span>
+              <Avatar name={s.nickname} url={s.avatarUrl} size={28} />
+              <span style={{ fontFamily: F.ui, fontSize: 15, color: mine ? C.blue : C.body, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.nickname}</span>
+              <span style={{ fontFamily: F.ui, fontSize: 15 }}>{s.score}점</span>
+            </div>
+          )
+        })}
+        {spectators.length > 0 && (
+          <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1.5px dashed ${C.graphite}55` }}>
+            <div style={{ fontFamily: F.ui, fontSize: 13, color: C.muted, marginBottom: 6 }}>관전</div>
+            {spectators.map((s) => (
+              <div key={s.userId} style={{
+                display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', opacity: 0.85,
+              }}>
+                <Avatar name={s.nickname} url={s.avatarUrl} size={24} />
+                <span style={{ fontFamily: F.ui, fontSize: 14, color: C.muted }}>{s.nickname}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+})
+
+const GameChatList = memo(function GameChatList({
+  chats,
+  isDuelist,
+  selfId,
+  setChatCardHover,
+  setChatCardAnchor,
+}: {
+  chats: ChatMsg[]
+  isDuelist: boolean
+  selfId: string
+  setChatCardHover: (id: number | null) => void
+  setChatCardAnchor: (rect: DOMRect | null) => void
+}) {
+  return (
+    <>
+      {chats.filter((msg) => !(msg.spectator && isDuelist)).map(msg => {
+        if (msg.system) {
+          return (
+            <div
+              key={msg.id}
+              style={{ display: 'flex', justifyContent: 'center', position: 'relative', opacity: msg.spectator ? 0.55 : 1, minWidth: 0 }}
+              onMouseEnter={(e) => {
+                if (!msg.augmentCard) return
+                setChatCardHover(msg.id)
+                setChatCardAnchor(e.currentTarget.getBoundingClientRect())
+              }}
+              onMouseLeave={() => {
+                setChatCardHover(null)
+                setChatCardAnchor(null)
+              }}
+            >
+              <div style={{
+                ...sk(msg.augmentCard ? C.red : C.green, true),
+                backgroundColor: msg.augmentCard ? C.redLight : C.greenLight,
+                padding: '8px 16px', fontFamily: F.ui, fontSize: 17,
+                color: msg.augmentCard ? C.red : C.green, textAlign: 'center',
+                cursor: msg.augmentCard ? 'help' : undefined,
+                maxWidth: '100%',
+                boxSizing: 'border-box',
+                wordBreak: 'keep-all',
+                overflowWrap: 'anywhere',
+              }}>{msg.text}</div>
+            </div>
+          )
+        }
+        const self = msg.userId === selfId
+        const spect = !!msg.spectator
+        return (
+          <div
+            key={msg.id}
+            style={{
+              display: 'flex',
+              justifyContent: self ? 'flex-end' : 'flex-start',
+              gap: 8,
+              alignItems: 'flex-end',
+              opacity: spect ? 0.52 : 1,
+              minWidth: 0,
+              width: '100%',
+            }}
+          >
+            {!self && (
+              <div style={{
+                width: 34, height: 34, flexShrink: 0, ...sk(C.graphite, true),
+                backgroundColor: spect ? '#E8EEF3' : C.blueLight,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontFamily: F.ui, fontSize: 16, color: C.blue,
+              }}>{msg.nickname?.[0]}</div>
+            )}
+            <div style={{ maxWidth: 'min(72%, 100%)', minWidth: 0, boxSizing: 'border-box' }}>
+              {!self && (
+                <div style={{ fontFamily: F.ui, fontSize: 14, color: C.muted, marginBottom: 3 }}>
+                  {msg.nickname}{spect ? ' · 관전' : ''}
+                </div>
+              )}
+              <div style={{
+                ...sk(self ? C.blue : C.graphite, true),
+                backgroundColor: spect
+                  ? (self ? 'rgba(74, 144, 186, 0.22)' : 'rgba(255,255,255,0.45)')
+                  : (self ? C.blueLight : '#FFFFFF'),
+                padding: '10px 14px',
+                fontFamily: F.chat,
+                fontSize: 22,
+                fontWeight: 700,
+                color: C.body,
+                lineHeight: 1.45,
+                backdropFilter: spect ? 'blur(2px)' : undefined,
+                boxSizing: 'border-box',
+                maxWidth: '100%',
+                wordBreak: 'keep-all',
+                overflowWrap: 'anywhere',
+              }}>{msg.text}</div>
+            </div>
+          </div>
+        )
+      })}
+    </>
+  )
+})
+
 function GameScreen({ nav }: { nav: (s: Screen) => void }) {
   const { user, room, chats, round, skip, skipVoted, augmentHint, startCountdown, musicVolume, setMusicVolume, sfxVolume, setSfxVolume, submitAnswer, sendChat, voteSkip, useAugment, fetchGahoCandidates, leaveRoom, connected, pingMs, readingAccept, readingPass, readingClaim, readingVote } = useGame()
   const [input, setInput] = useState('')
@@ -1806,6 +1202,14 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
   const [gahoBusy, setGahoBusy] = useState(false)
   const [chatCardHover, setChatCardHover] = useState<number | null>(null)
   const [chatCardAnchor, setChatCardAnchor] = useState<DOMRect | null>(null)
+  const [appliedCardHover, setAppliedCardHover] = useState<{
+    name: string
+    description: string
+    imageUrl?: string | null
+    hostile: boolean
+    meta?: string
+  } | null>(null)
+  const [appliedCardAnchor, setAppliedCardAnchor] = useState<DOMRect | null>(null)
   const [now, setNow] = useState(() => serverNow())
   const [genreSettled, setGenreSettled] = useState(true)
   const [genreIntroActive, setGenreIntroActive] = useState(false)
@@ -1934,10 +1338,13 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
   const hoveredChatCard = chatCardHover != null
     ? visibleChats.find((c) => c.id === chatCardHover)?.augmentCard
     : null
-  const ranked = [...room.members]
-    .filter((m) => !m.isSpectator)
-    .sort((a, b) => b.score - a.score)
-  const spectators = room.members.filter((m) => m.isSpectator)
+  // 순위표 memo가 먹히도록 room:state가 올 때만 새 배열을 만든다
+  const members = room.members
+  const ranked = useMemo(
+    () => members.filter((m) => !m.isSpectator).sort((a, b) => b.score - a.score),
+    [members],
+  )
+  const spectators = useMemo(() => members.filter((m) => m.isSpectator), [members])
   const myBuffs = me?.activeBuffs || []
   const deafMode = myBuffs.some(b => b.active && (
     b.effectType === 'score_mult_hint_only' || b.effectType === 'mud_fight'
@@ -1966,19 +1373,24 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
     || me?.heldAugmentEffectType === 'hide_hints'
     || me?.heldAugmentEffectType === 'audio_stutter'
     || me?.heldAugmentEffectType === 'score_share'
+    || me?.heldAugmentEffectType === 'swap_scores'
+    || me?.heldAugmentEffectType === 'destroy_held_augment'
   )
   const isTrumanTargetPick = me?.heldAugmentEffectType === 'sakura_decoy'
+  const heldNeedsDebuffFree = !!(me?.heldAugmentEffectType && HOSTILE_AUGMENT_TYPES.has(me.heldAugmentEffectType))
   const targetCandidates = room.members.filter((player) => (
     player.userId !== user.id
     && !player.isSpectator
-    && !player.augmentBusy
+    && (!heldNeedsDebuffFree || !player.augmentBusy)
     && (me?.heldAugmentEffectType !== 'steal_held_augment' || !!player.heldAugmentId)
   ))
-  const busyTargets = room.members.filter((player) => (
-    player.userId !== user.id
-    && !player.isSpectator
-    && !!player.augmentBusy
-  ))
+  const busyTargets = heldNeedsDebuffFree
+    ? room.members.filter((player) => (
+      player.userId !== user.id
+      && !player.isSpectator
+      && !!player.augmentBusy
+    ))
+    : []
   const isAutoAugment = me?.heldAugmentEffectType === 'water_ghost'
     || me?.heldAugmentEffectType === 'combo_clear_double'
   const isPassiveHeld = me?.heldAugmentEffectType === 'reflect_debuff'
@@ -2115,7 +1527,16 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
     }
   })
 
-  const visibleBuffs = myBuffs.filter(b => b.active || b.pending || b.frozen)
+  // 다음 R 예약(pending) 적대 효과는 발동 전까지 적용 칸·요약에 안 보임 (대상 미리보기 방지).
+  // 단 내가 건 것(영역전개·코로나·진흙탕)은 남겨야 발동 여부를 확인할 수 있다.
+  const visibleBuffs = myBuffs.filter((b) => {
+    if (b.frozen || b.active) return true
+    if (b.pending) {
+      const fromOther = !!(b.usedByNickname && b.usedByNickname !== user.nickname)
+      return !HOSTILE_AUGMENT_TYPES.has(b.effectType) || !fromOther
+    }
+    return false
+  })
   const scoreMult = Math.max(
     1,
     ...myBuffs.filter(b => b.active && b.mult).map(b => b.mult || 1),
@@ -2132,44 +1553,27 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
       ? `${me.sakuraBy || '다른 곡'}${me.sakuraScoreMult && me.sakuraScoreMult > 1 ? ` · 정답×${me.sakuraScoreMult}` : ''} · 트릭곡만`
       : '',
     me?.flameKimActive
-      ? `${me.flameKimBy || '불꽃남자김상원'} · 방곡+트릭`
+      ? `${me.flameKimBy || '불꽃남자김상원'} ${me.flameKimRoundsLeft ?? '?'}R · ${me.flameKimTarget || '대상'} −1 · 방곡+트릭`
       : '',
-    me?.answerDelayPending
-      ? `${me.answerDelayBy || '잠깐만요'}(대기)`
-      : (me?.answerDelayRoundsLeft
-        ? `${me.answerDelayBy || '잠깐만요'} ${me.answerDelayRoundsLeft}R · ${me.answerDelaySec || 5}초 딜레이`
-        : ''),
-    me?.politePending
-      ? `${me.politeBy || '예의바른청년'}(대기)`
-      : (me?.politeActive
-        ? `${me.politeBy || '예의바른청년'} ${me.politeRoundsLeft ?? '?'}R · 「${me.politeSuffix || '입니다'}」${me.politeBonus && me.politeBonus > 0 ? ` · +${me.politeBonus}` : ''}`
-        : ''),
-    me?.answerBlockPending
-      ? `${me.answerBlockBy || '수면'}(대기)`
-      : (me?.answerBlocked
-        ? (me.answerBlockUntil
-          ? `${me.answerBlockBy || '영역전개'} · 잠시 정답 인정 안 됨`
-          : `${me.answerBlockBy || '수면'} ${me.answerBlockRoundsLeft ?? '?'}R · 정답 인정 안 됨`)
-        : ''),
-    me?.accuseWatchPending
-      ? `${me.accuseWatchBy || '범인은 당신이야!'}(감시 대기)`
-      : (me?.accuseWatchActive
-        ? `${me.accuseWatchBy || '범인은 당신이야!'} · 맞히면 다음 R 수면`
-        : ''),
-    me?.gabukiPending
-      ? `${me.gabukiBy || '가불기'}(대기)`
-      : (me?.gabukiActive
-        ? `${me.gabukiBy || '가불기'} ${me.gabukiRoundsLeft ?? '?'}R · 정답−1/미득점−2`
-        : ''),
-    me?.flameKimPending
-      ? `${me.flameKimBy || '불꽃남자김상원'}(대기)`
-      : (me?.flameKimActive
-        ? `${me.flameKimBy || '불꽃남자김상원'} ${me.flameKimRoundsLeft ?? '?'}R · ${me.flameKimTarget || '대상'} −1`
-        : ''),
-    me?.answerProxyActive
-      ? (me.answerProxyPending
-        ? `신속정확대리(대기)`
-        : `신속정확대리 ${me.answerProxyRoundsLeft ?? '?'}R · 적립 ${me.answerProxyPendingScore ?? 0}`)
+    (!me?.answerDelayPending && me?.answerDelayRoundsLeft)
+      ? `${me.answerDelayBy || '잠깐만요'} ${me.answerDelayRoundsLeft}R · ${me.answerDelaySec || 5}초 딜레이`
+      : '',
+    me?.politeActive
+      ? `${me.politeBy || '예의바른청년'} ${me.politeRoundsLeft ?? '?'}R · 「${me.politeSuffix || '입니다'}」${me.politeBonus && me.politeBonus > 0 ? ` · +${me.politeBonus}` : ''}`
+      : '',
+    me?.answerBlocked
+      ? (me.answerBlockUntil
+        ? `${me.answerBlockBy || '영역전개'} · 잠시 정답 인정 안 됨`
+        : `${me.answerBlockBy || '수면'} ${me.answerBlockRoundsLeft ?? '?'}R · 정답 인정 안 됨`)
+      : '',
+    me?.accuseWatchActive
+      ? `${me.accuseWatchBy || '범인은 당신이야!'} · 맞히면 다음 R 수면`
+      : '',
+    me?.gabukiActive
+      ? `${me.gabukiBy || '가불기'} ${me.gabukiRoundsLeft ?? '?'}R · 정답−1/미득점−2`
+      : '',
+    (me?.answerProxyActive && !me?.answerProxyPending)
+      ? `신속정확대리 ${me.answerProxyRoundsLeft ?? '?'}R · 적립 ${me.answerProxyPendingScore ?? 0}`
       : '',
   ].filter(Boolean).join(' · ')
 
@@ -2378,39 +1782,7 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
           : '200px minmax(0, 1fr)',
         gap: 14, padding: '14px 14px 0',
       }}>
-        <div style={{ ...panelBox, backgroundColor: surf }}>
-          <div style={{ fontFamily: F.ui, fontSize: 18, color: C.muted, textAlign: 'center' }}>전체 순위</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, overflowY: 'auto' }}>
-            {ranked.map((s, i) => {
-              const mine = s.userId === user.id
-              return (
-                <div key={s.userId} style={{
-                  display: 'grid', gridTemplateColumns: '36px 32px 1fr auto', gap: 6, alignItems: 'center',
-                  padding: '8px 8px', ...sk(mine ? C.blue : C.graphite, true),
-                  backgroundColor: mine ? C.blueLight : surf,
-                }}>
-                  <span style={{ fontFamily: F.ui, fontSize: 15, color: mine ? C.blue : C.body, textAlign: 'center' }}>{i + 1}</span>
-                  <Avatar name={s.nickname} url={s.avatarUrl} size={28} />
-                  <span style={{ fontFamily: F.ui, fontSize: 15, color: mine ? C.blue : C.body, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.nickname}</span>
-                  <span style={{ fontFamily: F.ui, fontSize: 15 }}>{s.score}점</span>
-                </div>
-              )
-            })}
-            {spectators.length > 0 && (
-              <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1.5px dashed ${C.graphite}55` }}>
-                <div style={{ fontFamily: F.ui, fontSize: 13, color: C.muted, marginBottom: 6 }}>관전</div>
-                {spectators.map((s) => (
-                  <div key={s.userId} style={{
-                    display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', opacity: 0.85,
-                  }}>
-                    <Avatar name={s.nickname} url={s.avatarUrl} size={24} />
-                    <span style={{ fontFamily: F.ui, fontSize: 14, color: C.muted }}>{s.nickname}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
+        <GameScoreboard ranked={ranked} spectators={spectators} selfId={user.id} />
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12, minHeight: 0, minWidth: 0 }}>
           <div style={{ ...sk(), backgroundColor: surf, padding: '14px 18px', textAlign: 'center', flexShrink: 0 }}>
@@ -2533,9 +1905,6 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
                   {me.chatIsolateRoundsLeft != null ? ` · ${me.chatIsolateRoundsLeft}R` : ''}
                 </span>
               )}
-              {me?.chatIsolatePending && !me?.chatIsolated && (
-                <span style={{ fontSize: 13, marginLeft: 6, opacity: 0.7 }}>· 다음 R부터 격리</span>
-              )}
             </div>
             <div style={{ position: 'relative', flex: 1, minHeight: 0, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
             <div
@@ -2555,86 +1924,13 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
                 scrollBehavior: 'auto',
               }}
             >
-              {visibleChats.map(msg => {
-                if (msg.system) {
-                  return (
-                    <div
-                      key={msg.id}
-                      style={{ display: 'flex', justifyContent: 'center', position: 'relative', opacity: msg.spectator ? 0.55 : 1, minWidth: 0 }}
-                      onMouseEnter={(e) => {
-                        if (!msg.augmentCard) return
-                        setChatCardHover(msg.id)
-                        setChatCardAnchor(e.currentTarget.getBoundingClientRect())
-                      }}
-                      onMouseLeave={() => {
-                        setChatCardHover(null)
-                        setChatCardAnchor(null)
-                      }}
-                    >
-                      <div style={{
-                        ...sk(msg.augmentCard ? C.red : C.green, true),
-                        backgroundColor: msg.augmentCard ? C.redLight : C.greenLight,
-                        padding: '8px 16px', fontFamily: F.ui, fontSize: 17,
-                        color: msg.augmentCard ? C.red : C.green, textAlign: 'center',
-                        cursor: msg.augmentCard ? 'help' : undefined,
-                        maxWidth: '100%',
-                        boxSizing: 'border-box',
-                        wordBreak: 'keep-all',
-                        overflowWrap: 'anywhere',
-                      }}>{msg.text}</div>
-                    </div>
-                  )
-                }
-                const self = msg.userId === user.id
-                const spect = !!msg.spectator
-                return (
-                  <div
-                    key={msg.id}
-                    style={{
-                      display: 'flex',
-                      justifyContent: self ? 'flex-end' : 'flex-start',
-                      gap: 8,
-                      alignItems: 'flex-end',
-                      opacity: spect ? 0.52 : 1,
-                      minWidth: 0,
-                      width: '100%',
-                    }}
-                  >
-                    {!self && (
-                      <div style={{
-                        width: 34, height: 34, flexShrink: 0, ...sk(C.graphite, true),
-                        backgroundColor: spect ? '#E8EEF3' : C.blueLight,
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        fontFamily: F.ui, fontSize: 16, color: C.blue,
-                      }}>{msg.nickname?.[0]}</div>
-                    )}
-                    <div style={{ maxWidth: 'min(72%, 100%)', minWidth: 0, boxSizing: 'border-box' }}>
-                      {!self && (
-                        <div style={{ fontFamily: F.ui, fontSize: 14, color: C.muted, marginBottom: 3 }}>
-                          {msg.nickname}{spect ? ' · 관전' : ''}
-                        </div>
-                      )}
-                      <div style={{
-                        ...sk(self ? C.blue : C.graphite, true),
-                        backgroundColor: spect
-                          ? (self ? 'rgba(74, 144, 186, 0.22)' : 'rgba(255,255,255,0.45)')
-                          : (self ? C.blueLight : '#FFFFFF'),
-                        padding: '10px 14px',
-                        fontFamily: F.chat,
-                        fontSize: 22,
-                        fontWeight: 700,
-                        color: C.body,
-                        lineHeight: 1.45,
-                        backdropFilter: spect ? 'blur(2px)' : undefined,
-                        boxSizing: 'border-box',
-                        maxWidth: '100%',
-                        wordBreak: 'keep-all',
-                        overflowWrap: 'anywhere',
-                      }}>{msg.text}</div>
-                    </div>
-                  </div>
-                )
-              })}
+              <GameChatList
+                chats={chats}
+                isDuelist={isDuelist}
+                selfId={user.id}
+                setChatCardHover={setChatCardHover}
+                setChatCardAnchor={setChatCardAnchor}
+              />
             </div>
               {chatHasNew && !chatStickBottom && (
                 <button
@@ -2903,137 +2199,148 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
               증강 적용{scoreMult > 1 ? ` · 점수 ×${scoreMult}` : ''}
             </div>
             <div style={{
-              flex: 1, ...sk(C.graphite, true), backgroundColor: C.card, padding: '12px 12px',
-              display: 'flex', flexDirection: 'column', gap: 10, minHeight: 0, overflowY: 'auto',
-              textAlign: 'left',
+              flex: 1, ...sk(C.graphite, true), backgroundColor: C.card, padding: '10px 10px',
+              display: 'flex', flexDirection: 'column', gap: 8, minHeight: 0, overflowY: 'auto',
             }}>
-              {visibleBuffs.length === 0 && !me?.answerProxyActive && !me?.sakuraActive && !me?.flameKimActive && !me?.answerDelayRoundsLeft && !me?.answerDelayPending && !augmentHint ? (
-                <div style={{
-                  flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  fontFamily: F.ui, fontSize: 15, color: C.muted, textAlign: 'center',
-                }}>
-                  적용 중인 증강이 없습니다
-                </div>
-              ) : (
-                <>
-                  {visibleBuffs.map((b, i) => (
-                    <div
-                      key={`${b.name}-${i}`}
-                      title={[
-                        b.description || '',
-                        b.usedByNickname ? `시전: ${b.usedByNickname}` : '',
-                        b.pending ? '다음 라운드부터' : `남은 ${b.roundsLeft}R`,
-                      ].filter(Boolean).join('\n')}
-                      style={{ display: 'flex', flexDirection: 'column', gap: 4, cursor: 'help' }}
-                    >
-                      <div style={{ fontFamily: F.ui, fontSize: 14, fontWeight: 800, color: C.blue }}>
-                        {b.name}
-                        {b.usedByNickname ? ` · ${b.usedByNickname}` : ''}
-                        {b.pending ? ' · 다음부터' : ` · ${b.roundsLeft}R`}
-                        {b.mult && b.mult > 1 ? ` · ×${b.mult}` : ''}
-                      </div>
-                      {b.description && (
-                        <div style={{ fontFamily: F.ui, fontSize: 13, color: C.muted, lineHeight: 1.4 }}>
-                          올려보면 설명 · {b.description.length > 36 ? `${b.description.slice(0, 36)}…` : b.description}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                  {me?.sakuraActive && (
-                    <div
-                      title={`${me.sakuraBy || '다른 곡'}\n지금 들리는 곡은 실제 문제와 다릅니다.`}
-                      style={{ display: 'flex', flexDirection: 'column', gap: 4, cursor: 'help' }}
-                    >
-                      <div style={{ fontFamily: F.ui, fontSize: 14, fontWeight: 800, color: C.blue }}>
-                        {me.sakuraBy || '다른 곡'}
-                        {me.sakuraScoreMult && me.sakuraScoreMult > 1
-                          ? ` · 다른 곡 · 정답 ×${me.sakuraScoreMult}`
-                          : ' · 다른 곡'}
-                      </div>
-                      <div style={{ fontFamily: F.ui, fontSize: 13, color: C.muted }}>올려보면 설명</div>
-                    </div>
-                  )}
-                  {(me?.answerDelayPending || (me?.answerDelayRoundsLeft && me.answerDelayRoundsLeft > 0)) && (
-                    <div
-                      title={`${me.answerDelayBy || '잠깐만요'}\n매 라운드 시작 ${me.answerDelaySec || 5}초 뒤에만 정답 입력`}
-                      style={{ display: 'flex', flexDirection: 'column', gap: 4, cursor: 'help' }}
-                    >
-                      <div style={{ fontFamily: F.ui, fontSize: 14, fontWeight: 800, color: C.blue }}>
-                        {me.answerDelayBy || '잠깐만요'}
-                        {me.answerDelayPending
-                          ? ' · 다음부터'
-                          : ` · ${me.answerDelayRoundsLeft}R · ${me.answerDelaySec || 5}초`}
-                      </div>
-                      <div style={{ fontFamily: F.ui, fontSize: 13, color: C.muted }}>올려보면 설명</div>
-                    </div>
-                  )}
-                  {me?.answerProxyActive && (
-                    <div
-                      title="신속정확대리 · 대상은 비공개 · 3라운드 후 적립 결산"
-                      style={{ display: 'flex', flexDirection: 'column', gap: 4, cursor: 'help' }}
-                    >
-                      <div style={{ fontFamily: F.ui, fontSize: 14, fontWeight: 800, color: C.blue }}>
-                        신속정확대리
-                        {me.answerProxyPending
-                          ? ' · 다음부터'
-                          : ` · ${me.answerProxyRoundsLeft ?? '?'}R · 적립 ${me.answerProxyPendingScore ?? 0}점`}
-                      </div>
-                      <div style={{ fontFamily: F.ui, fontSize: 13, color: C.muted }}>올려보면 설명</div>
-                    </div>
-                  )}
-                  {(me?.accuseWatchPending || me?.accuseWatchActive) && (
-                    <div
-                      title={`${me.accuseWatchBy || '범인은 당신이야!'}\n감시 라운드에 맞히면 다음 라운드 수면`}
-                      style={{ display: 'flex', flexDirection: 'column', gap: 4, cursor: 'help' }}
-                    >
-                      <div style={{ fontFamily: F.ui, fontSize: 14, fontWeight: 800, color: C.blue }}>
-                        {me.accuseWatchBy || '범인은 당신이야!'}
-                        {me.accuseWatchPending ? ' · 다음부터 감시' : ' · 감시 중'}
-                      </div>
-                      <div style={{ fontFamily: F.ui, fontSize: 13, color: C.muted }}>올려보면 설명</div>
-                    </div>
-                  )}
-                  {(me?.gabukiPending || me?.gabukiActive) && (
-                    <div
-                      title={`${me.gabukiBy || '가불기'}\n정답 시 −1 · 못 맞히면 −2 · 시전자에게 전달`}
-                      style={{ display: 'flex', flexDirection: 'column', gap: 4, cursor: 'help' }}
-                    >
-                      <div style={{ fontFamily: F.ui, fontSize: 14, fontWeight: 800, color: C.blue }}>
-                        {me.gabukiBy || '가불기'}
-                        {me.gabukiPending
-                          ? ' · 다음부터'
-                          : ` · ${me.gabukiRoundsLeft ?? '?'}R`}
-                      </div>
-                      <div style={{ fontFamily: F.ui, fontSize: 13, color: C.muted }}>올려보면 설명</div>
-                    </div>
-                  )}
-                  {(me?.flameKimPending || me?.flameKimActive) && (
-                    <div
-                      title={`${me.flameKimBy || '불꽃남자김상원'}\n방 노래+불꽃남자 동시 · 본인 득점 시 대상 −1`}
-                      style={{ display: 'flex', flexDirection: 'column', gap: 4, cursor: 'help' }}
-                    >
-                      <div style={{ fontFamily: F.ui, fontSize: 14, fontWeight: 800, color: C.blue }}>
-                        {me.flameKimBy || '불꽃남자김상원'}
-                        {me.flameKimPending
-                          ? ' · 다음부터'
-                          : ` · ${me.flameKimRoundsLeft ?? '?'}R · ${me.flameKimTarget || '대상'}`}
-                      </div>
-                      <div style={{ fontFamily: F.ui, fontSize: 13, color: C.muted }}>올려보면 설명</div>
-                    </div>
-                  )}
-                  {augmentHint && (
+              {(() => {
+                const chips: Array<{
+                  key: string
+                  name: string
+                  imageUrl?: string | null
+                  hostile: boolean
+                  meta: string
+                  description: string
+                }> = []
+                for (const [i, b] of visibleBuffs.entries()) {
+                  const fromOther = !!(b.usedByNickname && b.usedByNickname !== user.nickname)
+                  const hostile = HOSTILE_AUGMENT_TYPES.has(b.effectType) || fromOther
+                  chips.push({
+                    key: `buff-${b.name}-${i}`,
+                    name: b.name,
+                    imageUrl: b.imageUrl,
+                    hostile,
+                    meta: [
+                      b.pending ? '다음부터' : `${b.roundsLeft}R`,
+                      b.mult && b.mult > 1 ? `×${b.mult}` : '',
+                      b.usedByNickname && fromOther ? b.usedByNickname : '',
+                    ].filter(Boolean).join(' · '),
+                    description: [
+                      b.description || '',
+                      b.usedByNickname ? `시전: ${b.usedByNickname}` : '',
+                      b.pending ? '다음 라운드부터' : `남은 ${b.roundsLeft}R`,
+                    ].filter(Boolean).join('\n'),
+                  })
+                }
+                if (me?.sakuraActive) {
+                  chips.push({
+                    key: 'sakura',
+                    name: me.sakuraBy || '다른 곡',
+                    imageUrl: null,
+                    hostile: true,
+                    meta: me.sakuraScoreMult && me.sakuraScoreMult > 1 ? `정답 ×${me.sakuraScoreMult}` : '환상',
+                    description: '지금 들리는 곡은 실제 문제와 다릅니다.',
+                  })
+                }
+                if (!me?.answerDelayPending && me?.answerDelayRoundsLeft && me.answerDelayRoundsLeft > 0) {
+                  chips.push({
+                    key: 'answer-delay',
+                    name: me.answerDelayBy || '잠깐만요',
+                    imageUrl: null,
+                    hostile: true,
+                    meta: `${me.answerDelayRoundsLeft}R · ${me.answerDelaySec || 5}초`,
+                    description: `매 라운드 시작 ${me.answerDelaySec || 5}초 뒤에만 정답 입력`,
+                  })
+                }
+                if (me?.answerProxyActive && !me?.answerProxyPending) {
+                  chips.push({
+                    key: 'answer-proxy',
+                    name: '신속정확대리',
+                    imageUrl: null,
+                    hostile: true,
+                    meta: `${me.answerProxyRoundsLeft ?? '?'}R · 적립 ${me.answerProxyPendingScore ?? 0}`,
+                    description: '대상은 비공개입니다. 3라운드 후 적립 점수가 결산됩니다.',
+                  })
+                }
+                if (me?.accuseWatchActive) {
+                  chips.push({
+                    key: 'accuse',
+                    name: me.accuseWatchBy || '범인은 당신이야!',
+                    imageUrl: null,
+                    hostile: true,
+                    meta: '감시 중',
+                    description: '감시 라운드에 맞히면 다음 라운드 수면',
+                  })
+                }
+                if (me?.gabukiActive) {
+                  chips.push({
+                    key: 'gabuki',
+                    name: me.gabukiBy || '가불기',
+                    imageUrl: null,
+                    hostile: true,
+                    meta: `${me.gabukiRoundsLeft ?? '?'}R`,
+                    description: '정답 시 −1 · 못 맞히면 −2 · 시전자에게 전달',
+                  })
+                }
+                if (me?.flameKimActive) {
+                  chips.push({
+                    key: 'flame',
+                    name: me.flameKimBy || '불꽃남자김상원',
+                    imageUrl: null,
+                    hostile: false,
+                    meta: `${me.flameKimRoundsLeft ?? '?'}R · ${me.flameKimTarget || '대상'}`,
+                    description: '방 노래+불꽃남자 동시 · 본인 득점 시 대상 −1',
+                  })
+                }
+                if (chips.length === 0 && !augmentHint) {
+                  return (
                     <div style={{
-                      marginTop: (visibleBuffs.length || me?.answerProxyActive || me?.sakuraActive || me?.flameKimActive || me?.answerDelayRoundsLeft || me?.answerDelayPending) ? 4 : 0,
-                      paddingTop: (visibleBuffs.length || me?.answerProxyActive || me?.sakuraActive || me?.answerDelayRoundsLeft || me?.answerDelayPending) ? 10 : 0,
-                      borderTop: (visibleBuffs.length || me?.answerProxyActive || me?.sakuraActive || me?.answerDelayRoundsLeft || me?.answerDelayPending) ? `2px solid ${C.line}` : undefined,
-                      fontFamily: F.ui, fontSize: 16, color: C.body, lineHeight: 1.5,
-                      whiteSpace: 'pre-line', textAlign: 'center',
+                      flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      fontFamily: F.ui, fontSize: 15, color: C.muted, textAlign: 'center',
                     }}>
-                      {augmentHint}
+                      적용 중인 증강이 없습니다
                     </div>
-                  )}
-                </>
-              )}
+                  )
+                }
+                return (
+                  <>
+                    {chips.map((c) => (
+                      <AppliedAugmentChip
+                        key={c.key}
+                        name={c.name}
+                        imageUrl={c.imageUrl}
+                        hostile={c.hostile}
+                        meta={c.meta}
+                        description={c.description}
+                        onHover={(rect) => {
+                          setAppliedCardHover({
+                            name: c.name,
+                            description: c.description,
+                            imageUrl: c.imageUrl,
+                            hostile: c.hostile,
+                            meta: c.meta,
+                          })
+                          setAppliedCardAnchor(rect)
+                        }}
+                        onLeave={() => {
+                          setAppliedCardHover(null)
+                          setAppliedCardAnchor(null)
+                        }}
+                      />
+                    ))}
+                    {augmentHint && (
+                      <div style={{
+                        marginTop: chips.length ? 4 : 0,
+                        paddingTop: chips.length ? 8 : 0,
+                        borderTop: chips.length ? `2px solid ${C.line}` : undefined,
+                        fontFamily: F.ui, fontSize: 15, color: C.body, lineHeight: 1.45,
+                        whiteSpace: 'pre-line', textAlign: 'center',
+                      }}>
+                        {augmentHint}
+                      </div>
+                    )}
+                  </>
+                )
+              })()}
             </div>
           </div>
             </>
@@ -3105,7 +2412,7 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
                 : me?.heldAugmentEffectType === 'hide_hints'
                 ? '힌트를 가릴 플레이어를 선택하세요'
                 : me?.heldAugmentEffectType === 'score_share'
-                ? '점수를 같이 올릴 플레이어를 선택하세요'
+                ? '기생할 플레이어를 선택하세요 (그 사람 득점만큼 나도 획득)'
                 : me?.heldAugmentEffectType === 'answer_proxy'
                   ? '대리할 플레이어를 선택하세요 (대상은 공개되지 않습니다)'
                   : me?.heldAugmentEffectType === 'named_decoy'
@@ -3166,13 +2473,13 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
                   {me?.heldAugmentEffectType === 'steal_held_augment'
                     ? '증강을 보유한 다른 플레이어가 없습니다'
                     : busyTargets.length > 0
-                      ? '이미 증강이 적용 중인 대상만 있어 사용할 수 없습니다'
+                      ? '이미 디버프가 적용 중인 대상만 있어 사용할 수 없습니다'
                       : '선택할 대상이 없습니다'}
                 </div>
               )}
               {busyTargets.length > 0 && targetCandidates.length > 0 && (
                 <div style={{ fontFamily: F.ui, fontSize: 13, color: C.muted, marginTop: 4 }}>
-                  증강 적용 중(선택 불가): {busyTargets.map((p) => p.nickname).join(', ')}
+                  디버프 적용 중(선택 불가): {busyTargets.map((p) => p.nickname).join(', ')}
                 </div>
               )}
             </div>
@@ -3487,6 +2794,45 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
           </div>
         </FloatingHoverPopup>
       )}
+
+      {appliedCardHover && (
+        <FloatingHoverPopup
+          anchor={appliedCardAnchor}
+          borderColor={appliedCardHover.hostile ? C.red : C.blue}
+          width={240}
+        >
+          <div style={{
+            width: '100%', aspectRatio: '1.4', marginBottom: 8,
+            ...sk(appliedCardHover.hostile ? C.red : C.blue, true),
+            overflow: 'hidden', backgroundColor: '#F2F0EB',
+          }}>
+            {appliedCardHover.imageUrl ? (
+              <img src={appliedCardHover.imageUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+            ) : (
+              <AugmentNoPhoto
+                name={appliedCardHover.name}
+                accent={appliedCardHover.hostile ? C.red : C.blue}
+                compact
+              />
+            )}
+          </div>
+          <div style={{ fontFamily: F.brand, fontSize: 18, fontWeight: 700, marginBottom: 4 }}>
+            {appliedCardHover.name}
+          </div>
+          {appliedCardHover.meta && (
+            <div style={{
+              fontFamily: F.ui, fontSize: 12,
+              color: appliedCardHover.hostile ? C.red : C.blue,
+              fontWeight: 800, marginBottom: 6,
+            }}>
+              {appliedCardHover.meta}
+            </div>
+          )}
+          <div style={{ fontFamily: F.ui, fontSize: 13, color: C.body, lineHeight: 1.45, whiteSpace: 'pre-line' }}>
+            {appliedCardHover.description}
+          </div>
+        </FloatingHoverPopup>
+      )}
     </div>
   )
 }
@@ -3544,7 +2890,7 @@ function AugmentScreen({ nav }: { nav: (s: Screen) => void }) {
 
   useEffect(() => {
     const endsAt = augmentOffer?.endsAt
-  const finalize = () => {
+    const finalize = () => {
       if (doneRef.current) return
       // 가호 선택 중이면 타임아웃에도 랜덤 확정하되, 고른 가호가 있으면 그걸 보냄
       if (gahoOpen && selectedGahoIdRef.current) {
@@ -4941,11 +4287,12 @@ export default function App() {
     else if (room.status === 'augment') setScreen('augment')
   }, [user, room, results, manual])
 
-  const nav = (s: Screen) => {
+  // identity가 흔들리면 nav를 deps로 쓰는 화면 effect들이 매 렌더 재실행된다
+  const nav = useCallback((s: Screen) => {
     setManual(true)
     setScreen(s)
     setTimeout(() => setManual(false), 50)
-  }
+  }, [])
 
   const render = () => {
     switch (screen) {

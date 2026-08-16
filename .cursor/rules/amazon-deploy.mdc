@@ -1,0 +1,28 @@
+---
+description: 아마존(Lightsail) 서버를 켜거나 배포/최신화할 때 따라야 하는 절차
+alwaysApply: false
+---
+
+# 아마존 서버 배포 규칙
+
+사용자가 "아마존 서버 킨다 / 배포 / 서버 최신화 / db 넘긴다" 등을 말하면
+`배포/아마존-서버-배포.md`를 먼저 읽고 그 순서대로 진행한다.
+
+## 반드시 지킬 원칙
+- **관리 작업(git pull·npm 빌드·pm2 실행/재시작)은 아마존 브라우저 SSH 터미널에서** 하도록 안내한다. (보안상)
+- **로컬 DB 업로드(`scp`)만** 사용자 PC PowerShell에서 실행한다. 브라우저 터미널은 PC 파일을 못 읽는다.
+- Public IPv4는 켤 때마다 바뀔 수 있으니 **먼저 IP를 물어보고** 명령어의 `<IP>`에 넣어 완성한다.
+
+## 진행 순서 (요약)
+1. (PC) 로컬 코드 `git push origin main`
+2. Lightsail 콘솔에서 인스턴스 Start → Public IPv4 확인
+3. (PC PowerShell) `pm2 stop` 후 `scp`로 `dev.db` 업로드
+4. (아마존 브라우저 SSH) `git pull` → server/web 빌드 → public 복사 → `pm2 restart` → `pm2 save`
+5. `https://<IP>.sslip.io/health`로 확인
+
+## 고정 정보
+- 키: `C:\Users\ssw86\Downloads\LightsailDefaultKey-ap-northeast-2.pem`
+- 계정: `admin`, 서버 경로: `~/jeunggang-nomatch`, PM2 앱: `jeunggang`
+- 로컬 DB: `server/prisma/dev.db`
+
+세부 명령어 전문은 항상 `배포/아마존-서버-배포.md`를 참조한다.

@@ -68,6 +68,15 @@ export type ActiveBuffPublic = {
   frozen?: boolean
 }
 
+export type AudioTrick = {
+  mode: 'replace' | 'overlay'
+  youtubeUrl: string
+  startSec: number
+  endSec?: number | null
+  label: string
+  source: 'mud' | 'sakura' | 'flame' | 'party'
+}
+
 export type RoomMember = {
   userId: string
   nickname: string
@@ -77,7 +86,7 @@ export type RoomMember = {
   isHost: boolean
   /** 관전: 채팅만 */
   isSpectator?: boolean
-  /** 이미 증강 효과 적용 중 → 타겟 불가 */
+  /** 이미 디버프 적용 중 → 타겟 디버프 불가 */
   augmentBusy?: boolean
   heldAugmentId: string | null
   heldAugmentName: string | null
@@ -161,18 +170,14 @@ export type RoomMember = {
   /** 전원을 꺼봤습니다: 이 시각까지 노래 음소거 */
   songMuteUntil?: number | null
   /**
-   * 방 노래와 분리된 증강 트릭 오디오
-   * - replace: 세노·트루먼·진흙탕 등 (방 곡 음소거 + 트릭만)
-   * - overlay: 불꽃남자·풍악 등 (방 곡 + 트릭 동시)
+   * 방 노래를 대체하는 트릭 오디오 (세노·트루먼·진흙탕 등 · 방 곡 음소거)
    */
-  audioTrick?: {
-    mode: 'replace' | 'overlay'
-    youtubeUrl: string
-    startSec: number
-    endSec?: number | null
-    label: string
-    source: 'mud' | 'sakura' | 'flame' | 'party'
-  } | null
+  audioTrick?: AudioTrick | null
+  /**
+   * 지금 들리는 노래와 동시에 흐르는 트릭 (불꽃남자·풍악).
+   * 교체곡이 걸려 있어도 같이 재생되므로 audioTrick과 별도 슬롯이다.
+   */
+  audioOverlay?: AudioTrick | null
   /** @deprecated audioTrick 사용 · 호환용 */
   decoyYoutubeUrl?: string | null
   decoyStartSec?: number | null
@@ -414,6 +419,8 @@ export function GameProvider({ children }: { children: ReactNode }) {
   const [sfxVolume, setSfxVolumeState] = useState(() => getStoredUser()?.sfxVolume ?? 55)
   const [rooms, setRooms] = useState<PublicRoom[]>([])
   const [room, setRoom] = useState<RoomState | null>(null)
+  /** 소켓 핸들러에서 최신 방 정보를 stale closure 없이 읽기 위한 미러 */
+  const roomRef = useRef<RoomState | null>(null)
   const [roomCode, setRoomCode] = useState<string | null>(null)
   const [chats, setChats] = useState<ChatMsg[]>([])
   const [round, setRound] = useState<RoundInfo | null>(null)
@@ -441,8 +448,13 @@ export function GameProvider({ children }: { children: ReactNode }) {
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const typewriterTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const augmentNoticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const augmentHintTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   /** 트루먼 환상 중: 위 슬롯은 가짜 곡 기준 · 진짜 answer:correct 무시 */
   const illusionActiveRef = useRef(false)
+
+  useEffect(() => {
+    roomRef.current = room
+  }, [room])
 
   const clearTypewriter = useCallback(() => {
     if (typewriterTimer.current) {
@@ -649,11 +661,10 @@ export function GameProvider({ children }: { children: ReactNode }) {
       illusionActiveRef.current = false
       setStartCountdown(null)
       setCountdownEndsAt(null)
+      // skip_update 오기 전에도 절반(올림) 기준으로 표시
+      setSkip({ votes: 0, need: Math.max(1, Math.ceil((roomRef.current?.members?.length ?? 1) / 2)) })
       // room:state 지연 시 countdown vol=0이 남는 것 방지 — status를 먼저 playing으로
       setRoom((r) => {
-        const count = r?.members?.length ?? 1
-        // skip_update 오기 전에도 절반(올림) 기준으로 표시
-        setSkip({ votes: 0, need: Math.max(1, Math.ceil(count / 2)) })
         if (!r || r.status === 'lobby' || r.status === 'ended') return r
         if (r.status === 'playing' || r.status === 'duel') return r
         return { ...r, status: 'playing' }
@@ -700,25 +711,8 @@ export function GameProvider({ children }: { children: ReactNode }) {
       setCountdownEndsAt(null)
       setAugmentOffer(offer)
       playSfx('augment')
-      // 증강 20초 동안 시계 샘플을 빨리 모음 (나쁜 RTT는 applyClockSample이 무시)
-      const burst = () => {
-        const sock = getSocket()
-        if (!sock?.connected) return
-        const t0 = Date.now()
-        sock.timeout(2500).emit('ping:rtt', {}, (err: Error | null, res?: { t?: number }) => {
-          if (err || typeof res?.t !== 'number') return
-          const t1 = Date.now()
-          const rtt = t1 - t0
-          setPingMs((prev) => (prev == null ? rtt : Math.round(prev * 0.55 + rtt * 0.45)))
-          if (applyClockSample(t0, res.t, t1)) {
-            setClockSamples((n) => n + 1)
-          }
-        })
-      }
-      burst()
-      for (let i = 1; i <= 8; i += 1) {
-        window.setTimeout(burst, i * 220)
-      }
+      // 시계 샘플은 augmentOffer를 보고 400ms 간격으로 도는 측정 effect가 모은다.
+      // 여기서 또 쏘면 요청이 겹쳐 RTT가 스스로 부풀고, 방을 나가도 남은 타이머가 계속 발사된다.
     })
     s.on('answer:correct', (payload: { slotId: string; answer: string; by: string; allCleared?: boolean }) => {
       // 환상 중엔 진짜 문제 정답 공개를 화면에 반영하지 않음
@@ -846,6 +840,11 @@ export function GameProvider({ children }: { children: ReactNode }) {
     }) => {
       if (!p.hint) return
       clearTypewriter()
+      // 이전 힌트의 자동 해제 타이머가 살아 있으면 새 힌트를 지워버린다
+      if (augmentHintTimer.current) {
+        clearTimeout(augmentHintTimer.current)
+        augmentHintTimer.current = null
+      }
       if (p.mode === 'typewriter') {
         startTypewriter(p.hint, p.intervalMs || 1000)
         return
@@ -853,7 +852,8 @@ export function GameProvider({ children }: { children: ReactNode }) {
       setAugmentHint(p.hint)
       const ms = p.durationMs ?? 0
       if (ms > 0) {
-        setTimeout(() => {
+        augmentHintTimer.current = setTimeout(() => {
+          augmentHintTimer.current = null
           setAugmentHint((cur) => (cur === p.hint ? null : cur))
         }, ms)
       }
@@ -871,6 +871,10 @@ export function GameProvider({ children }: { children: ReactNode }) {
     return () => {
       clearTypewriter()
       if (augmentNoticeTimer.current) clearTimeout(augmentNoticeTimer.current)
+      if (augmentHintTimer.current) {
+        clearTimeout(augmentHintTimer.current)
+        augmentHintTimer.current = null
+      }
       s.off('connect', onConnect)
       s.off('disconnect', onDisconnect)
       s.removeAllListeners()
@@ -1101,13 +1105,14 @@ export function GameProvider({ children }: { children: ReactNode }) {
     setSkipVoted(true)
     getSocket()?.emit('round:skip')
   }
-  const pickAugment = (augmentId: string | null, gahoAugmentId?: string | null) => {
+  // 증강 화면의 마감 타이머 effect가 deps로 쓴다 — identity가 바뀌면 타이머가 계속 재시작된다
+  const pickAugment = useCallback((augmentId: string | null, gahoAugmentId?: string | null) => {
     getSocket()?.emit('augment:offer_done', {
       augmentId,
       ...(gahoAugmentId ? { gahoAugmentId } : {}),
     })
     setAugmentOffer(null)
-  }
+  }, [])
   const rerollAugment = async () => {
     const res = await emitAck<{ ok: boolean; candidates?: AugmentItem[]; lockedTier?: string | null }>(
       'augment:reroll',

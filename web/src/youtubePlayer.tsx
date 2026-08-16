@@ -53,6 +53,8 @@ type YtPlayer = {
   setPlaybackRate: (rate: number) => void
   getAvailablePlaybackRates: () => number[]
   getCurrentTime: () => number
+  /** 플레이어가 메타데이터를 받기 전에는 없을 수 있다 */
+  getDuration?: () => number
   unMute: () => void
   mute: () => void
   destroy: () => void
@@ -68,10 +70,17 @@ export function loadYtApi() {
   if (window.YT?.Player) return Promise.resolve()
   if (ytApiPromise) return ytApiPromise
   ytApiPromise = new Promise((resolve) => {
+    let check: ReturnType<typeof setInterval> | null = null
+    let giveUp: ReturnType<typeof setTimeout> | null = null
+    const done = () => {
+      if (check) { clearInterval(check); check = null }
+      if (giveUp) { clearTimeout(giveUp); giveUp = null }
+      resolve()
+    }
     const prev = window.onYouTubeIframeAPIReady
     window.onYouTubeIframeAPIReady = () => {
       prev?.()
-      resolve()
+      done()
     }
     if (!document.querySelector('script[src="https://www.youtube.com/iframe_api"]')) {
       const s = document.createElement('script')
@@ -79,12 +88,16 @@ export function loadYtApi() {
       document.head.appendChild(s)
     }
     // 이미 로드된 경우
-    const check = setInterval(() => {
-      if (window.YT?.Player) {
-        clearInterval(check)
-        resolve()
-      }
+    check = setInterval(() => {
+      if (window.YT?.Player) done()
     }, 50)
+    // 스크립트가 차단되면 폴링이 영원히 돌지 않게 포기 (다음 호출에서 재시도)
+    giveUp = setTimeout(() => {
+      if (check) { clearInterval(check); check = null }
+      giveUp = null
+      ytApiPromise = null
+      resolve()
+    }, 15_000)
   })
   return ytApiPromise
 }
@@ -877,17 +890,29 @@ export function RoomSongPersistentBgm() {
       const endRaw = Math.floor(round.endSec ?? 0)
       const end = endRaw > start ? endRaw : start + 40
       const roundDur = Math.max(10, Math.floor(round.duration || 40))
-      setSession({
+      const next = {
         url: round.youtubeUrl,
         startSec: start,
         endSec: end,
         endsAt: round.endsAt ?? null,
         roundDuration: roundDur,
         index: round.index,
+      }
+      // room:state 가 올 때마다 같은 값으로 새 객체를 넣으면 플레이어가 계속 리렌더된다
+      setSession((cur) => {
+        if (
+          cur
+          && cur.url === next.url
+          && cur.startSec === next.startSec
+          && cur.endSec === next.endSec
+          && cur.endsAt === next.endsAt
+          && cur.roundDuration === next.roundDuration
+          && cur.index === next.index
+        ) return cur
+        return next
       })
     }
   }, [
-    room,
     room?.status,
     round?.index,
     round?.youtubeUrl,
@@ -1028,8 +1053,8 @@ export function FlameKimOverlayBgm() {
       setSession(null)
       return
     }
-    const trick = me.audioTrick
-    const overlayActive = !!(trick && trick.mode === 'overlay' && trick.youtubeUrl)
+    const trick = me.audioOverlay
+    const overlayActive = !!(trick && trick.youtubeUrl)
     const flameHeld = !!(
       me.flameKimActive
       || me.flameKimPending
@@ -1060,7 +1085,7 @@ export function FlameKimOverlayBgm() {
     me?.flameKimActive,
     me?.flameKimPending,
     me?.flameKimRoundsLeft,
-    me?.audioTrick,
+    me?.audioOverlay,
     room,
     room?.status,
   ])

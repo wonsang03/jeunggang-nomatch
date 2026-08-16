@@ -138,8 +138,10 @@ function emitReadingRoomState(
   room: ReadingRoomLike,
   roomState: (r: ReadingRoomLike, viewerUserId?: string) => unknown,
 ) {
+  // roomState는 reading을 뺀 나머지가 뷰어와 무관하다 — 한 번만 만들고 reading만 갈아끼운다
+  const base = roomState(room) as Record<string, unknown>
   for (const m of room.members.values()) {
-    io.to(m.socketId).emit('room:state', roomState(room, m.userId))
+    io.to(m.socketId).emit('room:state', { ...base, reading: readingPublic(room, m.userId) })
   }
 }
 
