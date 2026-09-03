@@ -96,6 +96,16 @@ export function expandArtistAccepts(answer: string, accepts: string[] = []): str
 
 const CHO = ['ㄱ', 'ㄲ', 'ㄴ', 'ㄷ', 'ㄸ', 'ㄹ', 'ㅁ', 'ㅂ', 'ㅃ', 'ㅅ', 'ㅆ', 'ㅇ', 'ㅈ', 'ㅉ', 'ㅊ', 'ㅋ', 'ㅌ', 'ㅍ', 'ㅎ']
 
+/**
+ * "읽히지 않는" 글자 — 발음 소스 점수(한글 비중)를 계산할 때 분모에서 뺀다.
+ * 여기에 빠진 기호가 있으면 그 기호가 든 표기의 점수가 부당하게 낮아져
+ * 줄임 표기가 대신 뽑힌다. (예: "용과 같이 5: 꿈을 이루는자" 가 ':' 때문에 "용과같이"에 밀림)
+ */
+const NON_READING_CHARS = /[\s　\d._\-'"“”‘’,!?&/:;()[\]{}<>~|\\·・…。，、！？]/g
+
+/** 초성으로 표현할 수 없는 글자 — 숫자·라틴문자·가나·한자 */
+const NON_HANGUL_READABLE = /[\dA-Za-z぀-ヿ一-鿿]/
+
 /** 초성·힌트용: 괄호(및 유사 괄호)와 그 안 내용 제거 */
 export function stripParenSections(text: string) {
   return text
@@ -283,20 +293,52 @@ export function pickPronunciationSource(answer: string, accepts: string[] = []):
   const candidates = [answer, ...accepts].map((s) => s.trim()).filter(Boolean)
   const spaceCount = (s: string) => (s.match(/[\s\u3000]/g) || []).length
 
-  // 한글 비중이 높은 후보 우선 · 동점이면 띄어쓰기 많은 쪽
+  // 한글 비중이 높은 후보 우선 · 동점이면 (1) 숫자 없는 쪽 (2) 띄어쓰기 많은 쪽
+  // 숫자를 빼는 이유: 초성은 숫자를 표현하지 못해 "벌써 12시" → "ㅂㅆ ㅅ" 처럼 글자가 증발한다.
+  // "벌써 열두시" 같이 숫자를 한글로 풀어 쓴 인정답이 있으면 그쪽을 발음 소스로 삼는다.
+  // 초성은 "제목을 읽은 것"이어야 한다. 제목의 단어 수와 같은 후보를 최우선으로 삼는다.
+  // 이 규칙이 없으면 괄호 안 부제가 딸려 들어간다.
+  //   "기도 (I'll Be Your Man)" → 제목 "기도"(1단어)인데 "아일 비 유어 맨"(4단어)이 뽑혀 ㅇㅇㅂㅇㅇㅁ
+  //   "Cherish (My Love)"      → 제목 "Cherish"(1단어)인데 "체리시 마이 러브"가 뽑혀 ㅊㄹㅅㅁㅇㄹㅂ
+  const wordCount = (s: string) =>
+    stripParenSections(s).split(/[\s　]+/).filter((w) => /[0-9A-Za-z가-힣]/.test(w)).length
+  const targetWords = wordCount(answer)
+  // 제목에 괄호 부제가 있으면, 부제까지 읽은 긴 표기가 아니라 제목만 읽은 짧은 표기를 쓴다.
+  // "404 (New Era)" 의 인정답에는 "404뉴에라"·"포오포뉴에라"(부제 포함, 붙여써서 1단어로 보임)와
+  // "사공사"(제목만)가 같이 있어서, 짧은 쪽을 고르지 않으면 부제가 초성에 섞인다.
+  const preferShort = stripParenSections(answer.trim()) !== answer.trim()
+  const hasDigit = (s: string) => /\d/.test(s)
   let best: string | null = null
   let bestScore = -1
+  let bestWordMatch = false
+  let bestDigitFree = false
   let bestSpaces = -1
+  let bestHangulN = -1
   for (const c of candidates) {
-    const chars = [...c.replace(/[\s\d._\-'".,!&/]/g, '')]
+    const chars = [...c.replace(NON_READING_CHARS, '')]
     if (!chars.length) continue
     const hangulN = chars.filter((ch) => /[가-힣]/.test(ch)).length
     if (hangulN <= 0) continue
     const score = hangulN / chars.length
+    const wordMatch = targetWords > 0 && wordCount(c) === targetWords
+    const digitFree = !hasDigit(c)
     const spaces = spaceCount(c)
-    if (score > bestScore || (score === bestScore && spaces > bestSpaces)) {
+    // 숫자 없는 후보를 우선하되, 그게 더 짧으면(줄임 표기면) 쓰지 않는다.
+    // 예: "용과 같이 5: 꿈을 이루는자" 를 "용과 같이 오" 로 바꾸면 뒷부분이 통째로 사라진다.
+    const digitUpgrade = digitFree && !bestDigitFree && hangulN >= bestHangulN
+    const tie = score === bestScore
+    const better =
+      score > bestScore
+      || (tie && digitUpgrade)
+      || (tie && digitFree === bestDigitFree && preferShort && hangulN < bestHangulN)
+      // 길이가 같으면 띄어쓴 표기를 쓴다 — 초성 띄어쓰기의 근거가 된다.
+      || (tie && digitFree === bestDigitFree && (!preferShort || hangulN === bestHangulN) && spaces > bestSpaces)
+    if (better) {
       bestScore = score
+      bestWordMatch = wordMatch
+      bestDigitFree = digitFree
       bestSpaces = spaces
+      bestHangulN = hangulN
       best = c
     }
   }
@@ -335,10 +377,27 @@ export function pickPronunciationSource(answer: string, accepts: string[] = []):
  */
 function chosungWithTitleSpacing(spacedTitle: string, pronounced: string): string {
   const title = stripParenSections(spacedTitle)
-  const titleChars = [...title.replace(/[\s\d._\-'".,!&/]/g, '')]
+  const titleChars = [...title.replace(NON_READING_CHARS, '')]
   const titleHangulN = titleChars.filter((ch) => /[가-힣]/.test(ch)).length
   if (titleChars.length && titleHangulN / titleChars.length >= 0.4) {
+    // 초성은 한글 음절만 표현할 수 있다. 제목에 숫자·영문·가나가 섞여 있으면
+    // 그 부분이 통째로 사라진다.
+    //   "벌써 12시"        → "ㅂㅆ ㅅ"    (12 증발)
+    //   "넌 is 뭔들"        → "ㄴ ㅁㄷ"    (is 증발)
+    //   "강한 척하는 girl"  → "ㄱㅎ ㅊㅎㄴ" (girl 증발)
+    // 전부 한글로 풀어 쓴 발음 표기가 있으면 그쪽을 쓴다.
+    if (NON_HANGUL_READABLE.test(title) && !NON_HANGUL_READABLE.test(pronounced) && hasHangul(pronounced)) {
+      return chosung(pronounced)
+    }
     return chosung(title)
+  }
+
+  // \uc81c\ubaa9\uc774 \uc601\ubb38\u00b7\uac00\ub098\ub77c \uc81c\ubaa9 \ub2e8\uc5b4\ub85c\ub294 \ud55c\uae00 \uc74c\uc808\uc744 \uc140 \uc218 \uc5c6\ub2e4.
+  // \uc774\ub54c \ubc1c\uc74c \ud45c\uae30 \uc790\uccb4\uac00 \ub744\uc5b4\uc4f0\uc5ec \uc788\uc73c\uba74(\uc608: "\ud310\ud0c0\uc2a4\ud2f1 \ubca0\uc774\ube44") \uadf8 \uacbd\uacc4\ub97c \uadf8\ub300\ub85c \uc4f4\ub2e4.
+  // \uc608\uc804\uc5d0\ub294 \uc81c\ubaa9\uc758 \ud55c\uae00 \uae00\uc790 \uc218(\uc601\uc5b4 \ub2e8\uc5b4\ub294 0)\ub85c \ub04a\uc73c\ub824\ub2e4 \uc2e4\ud328\ud574 \uc804\ubd80 \ud55c \ub369\uc5b4\ub9ac\uac00 \ub410\ub2e4.
+  if (/[\s\u3000]/.test(pronounced.trim())) {
+    const byPronunciation = chosung(pronounced)
+    if (byPronunciation.includes(' ')) return byPronunciation
   }
 
   const flat = chosung(pronounced).replace(/\s+/g, '')
@@ -361,13 +420,14 @@ function chosungWithTitleSpacing(spacedTitle: string, pronounced: string): strin
 export function hintChosung(answer: string, accepts: string[] = []): string {
   const src = pickPronunciationSource(answer, accepts)
   const pronounced = hasHangul(src) ? src : toKoreanPronunciation(src)
-  const title = stripParenSections(answer.trim())
-  // 초성 띄어쓰기 근거 = 제목만. 제목에 공백이 있을 때만 반영
-  if (title && /[\s\u3000]/.test(title)) {
-    return chosungWithTitleSpacing(title, pronounced)
-  }
+  // 하이픈·슬래시·가운뎃점도 단어 경계다. ("Given-Taken" → 기븐 테이큰 = 2덩어리)
+  const title = stripParenSections(answer.trim()).replace(/[-–—/·]+/g, ' ').replace(/\s+/g, ' ').trim()
+  if (!title) return chosung(pronounced.replace(/[\s　]+/g, ''))
+  // 괄호를 뗀 제목이 기준. 제목이 한글이면 제목 그대로 초성을 뽑으므로
+  // "기도 (I'll Be Your Man)" 이 부제(아일 비 유어 맨)로 새지 않는다.
+  const out = chosungWithTitleSpacing(title, pronounced)
   // 제목이 붙여쓰기면 초성도 붙여쓰기 (중복정답의 띄어쓰기는 무시)
-  return chosung(pronounced.replace(/[\s\u3000]+/g, ''))
+  return /[\s　]/.test(title) ? out : out.replace(/\s+/g, '')
 }
 
 /** 두벌식 한글 → 한영키 안 누른 영타 (정답 → wjdekq) */

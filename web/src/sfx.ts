@@ -6,6 +6,7 @@ type SfxName =
   | 'roundStart'
   | 'reveal'
   | 'skip'
+  | 'skipVote'
   | 'augment'
   | 'augmentUse'
   | 'gaho'
@@ -138,6 +139,12 @@ const plays: Record<SfxName, () => void> = {
     const t = ensureCtx().currentTime
     softThump(t, 0.16, 0.32)
     tone(220, t, 0.18, 'sine', 0.34, 110)
+  },
+  /** 스킵 버튼을 누른 본인에게만 — 짧은 「똑-똑」 */
+  skipVote() {
+    const t = ensureCtx().currentTime
+    tone(523.25, t, 0.06, 'square', 0.22)
+    tone(392, t + 0.075, 0.1, 'square', 0.2)
   },
   augment() {
     const t = ensureCtx().currentTime

@@ -29,6 +29,25 @@ export const C = {
   tierGaho:   '#7B5EA7',
 }
 
+/** 방에서 각자 고르는 채팅 색 (10개) · 관전자는 색 없음 */
+export const CHAT_COLORS: Array<{ name: string; line: string; fill: string }> = [
+  { name: '파랑', line: '#5D8CD7', fill: '#DCEAFA' },
+  { name: '초록', line: '#3D9E62', fill: '#DCF0E4' },
+  { name: '빨강', line: '#E05252', fill: '#FADCDC' },
+  { name: '주황', line: '#DE8636', fill: '#FBE7CE' },
+  { name: '보라', line: '#8A63C4', fill: '#E9DFF8' },
+  { name: '분홍', line: '#D95F9A', fill: '#FBDDEB' },
+  { name: '청록', line: '#2E9CA6', fill: '#D6EFF2' },
+  { name: '갈색', line: '#A2703F', fill: '#F0E1CF' },
+  { name: '남색', line: '#4A5FA5', fill: '#DEE3F6' },
+  { name: '올리브', line: '#7C9639', fill: '#E9F1D5' },
+]
+
+export function chatColorOf(idx?: number | null) {
+  if (idx == null) return null
+  return CHAT_COLORS[idx] || null
+}
+
 export function tierBorderColor(tier?: string | null): string {
   const t = (tier || '').toLowerCase()
   if (t === 'bronze' || t === '브론즈') return C.tierBronze
@@ -752,7 +771,7 @@ export function RoundTimer({ endsAt, max = 40, size = 58 }: { endsAt: number; ma
   return <TimerRing value={left} max={max} size={size} />
 }
 
-export function SketchInput({ value, onChange, onKeyDown, placeholder, style, noPaste }: {
+export function SketchInput({ value, onChange, onKeyDown, placeholder, style, noPaste, inputRef }: {
   value: string
   onChange: (v: string) => void
   onKeyDown?: (e: React.KeyboardEvent<HTMLInputElement>) => void
@@ -760,6 +779,8 @@ export function SketchInput({ value, onChange, onKeyDown, placeholder, style, no
   style?: React.CSSProperties
   /** true면 붙여넣기/드롭 차단 */
   noPaste?: boolean
+  /** 엔터 단축키로 포커스를 주기 위한 ref */
+  inputRef?: React.Ref<HTMLInputElement>
 }) {
   const blockPaste = (e: React.ClipboardEvent | React.DragEvent) => {
     if (!noPaste) return
@@ -767,6 +788,7 @@ export function SketchInput({ value, onChange, onKeyDown, placeholder, style, no
   }
   return (
     <input
+      ref={inputRef}
       value={value} placeholder={placeholder}
       onChange={e => onChange(e.target.value)}
       onPaste={blockPaste}
@@ -832,29 +854,35 @@ export function Avatar({
   url,
   size = 40,
   host = false,
+  border,
+  tint,
 }: {
   name?: string | null
   url?: string | null
   size?: number
   host?: boolean
+  /** 방에서 고른 채팅 색으로 테두리·바탕을 덮어쓸 때 */
+  border?: string | null
+  tint?: string | null
 }) {
   const src = avatarSrc(url)
   const letter = (name || '?')[0]
+  const line = border || (host ? C.yellow : C.blue)
   return (
     <div style={{
       width: size,
       height: size,
       flexShrink: 0,
       overflow: 'hidden',
-      ...sk(host ? C.yellow : C.blue, true),
-      backgroundColor: host ? C.yellow : C.blueLight,
+      ...sk(line, true),
+      backgroundColor: tint || (host ? C.yellow : C.blueLight),
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
       fontFamily: F.ui,
       fontSize: size * 0.4,
       fontWeight: 900,
-      color: C.blue,
+      color: line,
     }}>
       {src ? (
         <img src={src} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />

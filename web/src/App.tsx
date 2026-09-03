@@ -413,15 +413,102 @@ function LobbyScreen({ nav }: { nav: (s: Screen) => void }) {
 
 // ── Waiting ────────────────────────────────────────────────────
 
+/** 채팅 하단 고정 판정 여유 (px) */
+const CHAT_BOTTOM_EPS = 24
+
+/**
+ * 채팅 자동 스크롤.
+ * - 맨 아래에 붙어 있으면 새 글·이미지 로딩으로 높이가 변해도 계속 따라 내려간다.
+ * - 휠을 위로 굴리는 순간 자동 스크롤을 멈춘다.
+ * - 다시 맨 아래까지 내리면(또는 「최근 채팅으로」) 자동 스크롤을 재개한다.
+ */
+function useStickyChatScroll(dep: unknown) {
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const contentRef = useRef<HTMLDivElement>(null)
+  const stickRef = useRef(true)
+  /** 우리가 건 스크롤인지 (사용자 스크롤과 구분) */
+  const autoRef = useRef(false)
+  const [stick, setStick] = useState(true)
+  const [hasNew, setHasNew] = useState(false)
+
+  const pin = useCallback(() => {
+    const el = scrollRef.current
+    if (!el) return
+    autoRef.current = true
+    el.scrollTop = el.scrollHeight
+    // scroll 이벤트는 다음 렌더 스텝에서 오므로 그 프레임까지만 무시
+    requestAnimationFrame(() => { autoRef.current = false })
+  }, [])
+
+  const setStickBoth = useCallback((v: boolean) => {
+    if (stickRef.current === v) return
+    stickRef.current = v
+    setStick(v)
+  }, [])
+
+  // 새 메시지
+  useEffect(() => {
+    if (stickRef.current) {
+      pin()
+      setHasNew(false)
+    } else {
+      setHasNew(true)
+    }
+  }, [dep, pin])
+
+  // 아바타 로딩·줄바꿈 등으로 나중에 높이가 늘어도 하단 고정 유지 (scroll 이벤트가 안 오는 경우)
+  useEffect(() => {
+    const content = contentRef.current
+    if (!content || typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(() => {
+      if (stickRef.current) pin()
+    })
+    ro.observe(content)
+    return () => ro.disconnect()
+  }, [pin])
+
+  const onScroll = useCallback(() => {
+    const el = scrollRef.current
+    if (!el) return
+    if (autoRef.current) return
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= CHAT_BOTTOM_EPS
+    setStickBoth(nearBottom)
+    if (nearBottom) setHasNew(false)
+  }, [setStickBoth])
+
+  // 관성 스크롤이 하단 판정을 늦게 갱신해 도로 끌려 내려가는 걸 막으려고 휠에서 바로 끊는다
+  const onWheel = useCallback((e: React.WheelEvent<HTMLDivElement>) => {
+    if (e.deltaY >= 0) return
+    const el = scrollRef.current
+    if (!el) return
+    if (el.scrollHeight - el.clientHeight <= CHAT_BOTTOM_EPS) return // 스크롤할 내용이 없음
+    setStickBoth(false)
+  }, [setStickBoth])
+
+  const jumpToLatest = useCallback(() => {
+    setStickBoth(true)
+    setHasNew(false)
+    pin()
+  }, [pin, setStickBoth])
+
+  return { scrollRef, contentRef, stick, hasNew, onScroll, onWheel, jumpToLatest }
+}
+
 function WaitingScreen({ nav }: { nav: (s: Screen) => void }) {
-  const { user, room, roomCode, chats, setReady, setSpectator, updateSettings, startGame, sendChat, leaveRoom } = useGame()
+  const { user, room, roomCode, chats, setReady, setSpectator, setChatColor, updateSettings, startGame, sendChat, leaveRoom } = useGame()
   const [chatInput, setChatInput] = useState('')
   const [err, setErr] = useState('')
   const [leaveOpen, setLeaveOpen] = useState(false)
   const [roleBusy, setRoleBusy] = useState(false)
-  const chatRef = useRef<HTMLDivElement>(null)
-  const [chatStickBottom, setChatStickBottom] = useState(true)
-  const [chatHasNew, setChatHasNew] = useState(false)
+  const {
+    scrollRef: chatRef,
+    contentRef: chatContentRef,
+    stick: chatStickBottom,
+    hasNew: chatHasNew,
+    onScroll: onChatScroll,
+    onWheel: onChatWheel,
+    jumpToLatest: jumpToLatestChat,
+  } = useStickyChatScroll(chats)
 
   useEffect(() => {
     if (!room) nav('lobby')
@@ -432,32 +519,6 @@ function WaitingScreen({ nav }: { nav: (s: Screen) => void }) {
     if (room?.status === 'augment') nav('augment')
   }, [room?.status, nav])
 
-  useEffect(() => {
-    const el = chatRef.current
-    if (!el) return
-    if (chatStickBottom) {
-      el.scrollTop = el.scrollHeight
-      setChatHasNew(false)
-    } else {
-      setChatHasNew(true)
-    }
-  }, [chats, chatStickBottom])
-
-  const onChatScroll = () => {
-    const el = chatRef.current
-    if (!el) return
-    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 48
-    setChatStickBottom(nearBottom)
-    if (nearBottom) setChatHasNew(false)
-  }
-
-  const jumpToLatestChat = () => {
-    const el = chatRef.current
-    if (!el) return
-    el.scrollTop = el.scrollHeight
-    setChatStickBottom(true)
-    setChatHasNew(false)
-  }
   if (!room || !user) return null
 
   const players = room.members
@@ -479,6 +540,12 @@ function WaitingScreen({ nav }: { nav: (s: Screen) => void }) {
     } finally {
       setRoleBusy(false)
     }
+  }
+
+  const onPickChatColor = async (idx: number) => {
+    setErr('')
+    try { await setChatColor(idx) }
+    catch (e) { setErr(e instanceof Error ? e.message : '색 변경 실패') }
   }
 
   const send = () => {
@@ -541,8 +608,18 @@ function WaitingScreen({ nav }: { nav: (s: Screen) => void }) {
                   backgroundColor: p.isSpectator ? '#F0EEE8' : (p.ready ? C.greenLight : C.card),
                   padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 10,
                 }}>
-                  <Avatar name={p.nickname} url={p.avatarUrl} size={32} host={p.isHost} />
-                  <div style={{ flex: 1, fontFamily: F.ui, fontSize: 15, fontWeight: 800 }}>
+                  <Avatar
+                    name={p.nickname}
+                    url={p.avatarUrl}
+                    size={32}
+                    host={p.isHost}
+                    border={p.isSpectator ? null : chatColorOf(p.chatColor)?.line}
+                    tint={p.isSpectator ? null : chatColorOf(p.chatColor)?.fill}
+                  />
+                  <div style={{
+                    flex: 1, fontFamily: F.ui, fontSize: 15, fontWeight: 800,
+                    color: (!p.isSpectator && chatColorOf(p.chatColor)?.line) || undefined,
+                  }}>
                     {p.nickname}{p.isHost ? ' 👑' : ''}
                     {p.isSpectator ? ' · 관전' : ''}
                   </div>
@@ -560,13 +637,20 @@ function WaitingScreen({ nav }: { nav: (s: Screen) => void }) {
               <div
                 ref={chatRef}
                 onScroll={onChatScroll}
-                style={{ height: 220, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}
+                onWheel={onChatWheel}
+                style={{ height: 220, overflowY: 'auto' }}
               >
-                {chats.map(m => (
-                  <div key={m.id} style={{ fontFamily: F.chat, fontSize: 18 }}>
-                    <strong style={{ color: m.system ? C.green : C.blue }}>{m.nickname}</strong>: {m.text}
-                  </div>
-                ))}
+                <div ref={chatContentRef} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {chats.map(m => {
+                    const sender = players.find((p) => p.userId === m.userId)
+                    const cc = sender && !sender.isSpectator ? chatColorOf(sender.chatColor) : null
+                    return (
+                      <div key={m.id} style={{ fontFamily: F.chat, fontSize: 18 }}>
+                        <strong style={{ color: m.system ? C.green : (cc?.line || C.blue) }}>{m.nickname}</strong>: {m.text}
+                      </div>
+                    )
+                  })}
+                </div>
               </div>
               {chatHasNew && !chatStickBottom && (
                 <button
@@ -650,6 +734,11 @@ function WaitingScreen({ nav }: { nav: (s: Screen) => void }) {
                 제목+가수
               </button>
             </div>
+            {(room.answerMode || 'title_artist') === 'title' && (
+              <div style={{ fontFamily: F.ui, fontSize: 12, color: C.muted, marginTop: -8, marginBottom: 14 }}>
+                한국·일본·해외 장르는 20초 남았을 때 가수를 힌트로 알려줍니다 (애니·버튜버·게임은 없음)
+              </div>
+            )}
             <div style={{ fontFamily: F.ui, fontSize: 13, color: C.muted, marginBottom: 6 }}>증강</div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 14 }}>
               <button
@@ -722,6 +811,45 @@ function WaitingScreen({ nav }: { nav: (s: Screen) => void }) {
             </div>
           </NoteCard>
 
+          <NoteCard>
+            <div style={{ fontFamily: F.ui, fontSize: 16, fontWeight: 900, marginBottom: 8 }}>내 채팅 색</div>
+            {me?.isSpectator ? (
+              <div style={{ fontFamily: F.ui, fontSize: 13, color: C.muted }}>
+                관전 중에는 색이 없습니다
+              </div>
+            ) : (
+              <>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                  {CHAT_COLORS.map((c, i) => {
+                    const picked = me?.chatColor === i
+                    const takenBy = playerList.find((p) => p.userId !== user.id && p.chatColor === i)
+                    return (
+                      <button
+                        key={c.name}
+                        type="button"
+                        title={takenBy ? `${c.name} · ${takenBy.nickname}` : c.name}
+                        onClick={() => onPickChatColor(i)}
+                        style={{
+                          width: 34, height: 34, cursor: 'pointer', padding: 0,
+                          ...sk(picked ? C.graphite : c.line, true),
+                          backgroundColor: c.fill,
+                          borderWidth: picked ? 3.5 : 2.5,
+                          fontFamily: F.ui, fontSize: 12, fontWeight: 900, color: c.line,
+                          opacity: takenBy && !picked ? 0.45 : 1,
+                        }}
+                      >
+                        {picked ? '✓' : takenBy ? takenBy.nickname[0] : ''}
+                      </button>
+                    )
+                  })}
+                </div>
+                <div style={{ fontFamily: F.ui, fontSize: 12, color: C.muted, marginTop: 8 }}>
+                  10개 중 하나 · 흐린 건 다른 사람이 쓰는 색
+                </div>
+              </>
+            )}
+          </NoteCard>
+
           {err && <div style={{ fontFamily: F.ui, color: C.red }}>{err}</div>}
           <Btn
             fullWidth
@@ -772,6 +900,7 @@ function WaitingScreen({ nav }: { nav: (s: Screen) => void }) {
 
 // ── Game ───────────────────────────────────────────────────────
 
+/** 증강 사용 — 장르 인트로처럼 크게 떴다가 서서히 사라진다 (로그가 왼쪽이라 놓치기 쉬움) */
 function AugmentUseNotice({
   name,
   message,
@@ -782,53 +911,79 @@ function AugmentUseNotice({
   onClose: () => void
 }) {
   return (
-    <button
-      type="button"
-      onClick={onClose}
-      aria-label="증강 사용 알림 닫기"
+    <div
       style={{
         position: 'fixed',
-        top: 18,
-        left: '50%',
+        inset: 0,
         zIndex: 110,
-        width: 'min(560px, calc(100vw - 28px))',
-        transform: 'translateX(-50%)',
-        ...sk(C.blue, true),
-        backgroundColor: '#F4F8FF',
-        boxShadow: `0 8px 0 ${C.graphite}30, 0 14px 34px rgba(35,91,158,0.2)`,
-        padding: '12px 18px 13px',
-        color: C.body,
-        textAlign: 'center',
-        cursor: 'pointer',
-        animation: 'augmentNoticeIn 0.3s cubic-bezier(.2,1.15,.3,1)',
+        display: 'flex',
+        alignItems: 'flex-start',
+        justifyContent: 'center',
+        paddingTop: 'min(15vh, 140px)',
+        // 알림이 화면을 먹지 않게 · 알림 상자만 클릭 가능
+        pointerEvents: 'none',
       }}
     >
       <style>{`
-        @keyframes augmentNoticeIn {
-          from { opacity: 0; transform: translateX(-50%) translateY(-18px) scale(.94); }
-          to { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
+        @keyframes augmentNoticeFly {
+          0%   { opacity: 0; transform: scale(0.62) translateY(22px); }
+          9%   { opacity: 1; transform: scale(1.06) translateY(0); }
+          16%  { opacity: 1; transform: scale(1) translateY(0); }
+          62%  { opacity: 1; transform: scale(1) translateY(0); }
+          100% { opacity: 0; transform: scale(0.9) translateY(-46px); }
         }
       `}</style>
-      <div style={{
-        fontFamily: F.ui,
-        fontSize: 13,
-        fontWeight: 900,
-        color: C.blue,
-        letterSpacing: '0.08em',
-        marginBottom: 5,
-      }}>
-        증강 사용 · {name}
-      </div>
-      <div style={{
-        fontFamily: F.ui,
-        fontSize: 16,
-        fontWeight: 750,
-        lineHeight: 1.4,
-        whiteSpace: 'pre-line',
-      }}>
-        {message}
-      </div>
-    </button>
+      <button
+        type="button"
+        onClick={onClose}
+        aria-label="증강 사용 알림 닫기"
+        style={{
+          pointerEvents: 'auto',
+          cursor: 'pointer',
+          maxWidth: 'min(760px, calc(100vw - 40px))',
+          ...sk(C.blue),
+          backgroundColor: 'rgba(244, 248, 255, 0.94)',
+          boxShadow: `0 8px 0 ${C.graphite}22, 0 16px 40px rgba(35,91,158,0.18)`,
+          padding: '16px 32px 20px',
+          color: C.body,
+          textAlign: 'center',
+          animation: 'augmentNoticeFly 3.4s cubic-bezier(0.22, 1, 0.36, 1) forwards',
+          willChange: 'transform, opacity',
+        }}
+      >
+        <div style={{
+          fontFamily: F.ui,
+          fontSize: 14,
+          fontWeight: 900,
+          color: C.blue,
+          letterSpacing: '0.12em',
+          marginBottom: 6,
+        }}>
+          증강 사용
+        </div>
+        <div style={{
+          fontFamily: F.brand,
+          fontSize: name.length > 9 ? 40 : 54,
+          fontWeight: 700,
+          color: C.blue,
+          lineHeight: 1.1,
+          marginBottom: 10,
+          wordBreak: 'keep-all',
+        }}>
+          {name}
+        </div>
+        <div style={{
+          fontFamily: F.ui,
+          fontSize: 19,
+          fontWeight: 750,
+          lineHeight: 1.45,
+          whiteSpace: 'pre-line',
+          wordBreak: 'keep-all',
+        }}>
+          {message}
+        </div>
+      </button>
+    </div>
   )
 }
 
@@ -1034,31 +1189,39 @@ const GameScoreboard = memo(function GameScoreboard({
   ranked,
   spectators,
   selfId,
+  style,
 }: {
   ranked: RoomMember[]
   spectators: RoomMember[]
   selfId: string
+  style?: React.CSSProperties
 }) {
   const surf = C.panel
   return (
     <div style={{
-      ...sk(), backgroundColor: surf, padding: '12px 14px',
-      display: 'flex', flexDirection: 'column', gap: 10, minHeight: 0, minWidth: 0,
+      ...sk(), backgroundColor: surf, padding: '14px 16px',
+      display: 'flex', flexDirection: 'column', gap: 12, minHeight: 0, minWidth: 0,
+      ...style,
     }}>
-      <div style={{ fontFamily: F.ui, fontSize: 18, color: C.muted, textAlign: 'center' }}>전체 순위</div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, overflowY: 'auto' }}>
+      <div style={{ fontFamily: F.ui, fontSize: 20, color: C.muted, textAlign: 'center', flexShrink: 0 }}>전체 순위</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, overflowY: 'auto', flex: 1, minHeight: 0 }}>
         {ranked.map((s, i) => {
           const mine = s.userId === selfId
+          // 채팅에서 고른 색을 순위표에도 그대로 (관전자는 색 없음)
+          const cc = chatColorOf(s.chatColor)
+          const line = cc?.line || (mine ? C.blue : C.graphite)
+          const nameColor = cc?.line || (mine ? C.blue : C.body)
           return (
             <div key={s.userId} style={{
-              display: 'grid', gridTemplateColumns: '36px 32px 1fr auto', gap: 6, alignItems: 'center',
-              padding: '8px 8px', ...sk(mine ? C.blue : C.graphite, true),
-              backgroundColor: mine ? C.blueLight : surf,
+              display: 'grid', gridTemplateColumns: '40px 36px 1fr auto', gap: 8, alignItems: 'center',
+              padding: '10px 10px', ...sk(line, true),
+              backgroundColor: cc?.fill || (mine ? C.blueLight : surf),
+              borderWidth: mine ? 3.5 : 2.5,
             }}>
-              <span style={{ fontFamily: F.ui, fontSize: 15, color: mine ? C.blue : C.body, textAlign: 'center' }}>{i + 1}</span>
-              <Avatar name={s.nickname} url={s.avatarUrl} size={28} />
-              <span style={{ fontFamily: F.ui, fontSize: 15, color: mine ? C.blue : C.body, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.nickname}</span>
-              <span style={{ fontFamily: F.ui, fontSize: 15 }}>{s.score}점</span>
+              <span style={{ fontFamily: F.ui, fontSize: 17, fontWeight: mine ? 900 : 500, color: nameColor, textAlign: 'center' }}>{i + 1}</span>
+              <Avatar name={s.nickname} url={s.avatarUrl} size={32} border={cc?.line} tint={cc?.fill} />
+              <span style={{ fontFamily: F.ui, fontSize: 17, fontWeight: mine ? 900 : 500, color: nameColor, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.nickname}{mine ? ' · 나' : ''}</span>
+              <span style={{ fontFamily: F.ui, fontSize: 17, fontWeight: mine ? 900 : 700, color: C.body }}>{s.score}점</span>
             </div>
           )
         })}
@@ -1080,59 +1243,73 @@ const GameScoreboard = memo(function GameScoreboard({
   )
 })
 
-const GameChatList = memo(function GameChatList({
-  chats,
-  isDuelist,
-  selfId,
+/** 정답·증강 등 시스템 알림만 모은 로그 (사람 채팅과 분리) */
+const GameLogList = memo(function GameLogList({
+  logs,
   setChatCardHover,
   setChatCardAnchor,
 }: {
-  chats: ChatMsg[]
-  isDuelist: boolean
-  selfId: string
+  logs: ChatMsg[]
   setChatCardHover: (id: number | null) => void
   setChatCardAnchor: (rect: DOMRect | null) => void
 }) {
   return (
     <>
-      {chats.filter((msg) => !(msg.spectator && isDuelist)).map(msg => {
-        if (msg.system) {
-          return (
-            <div
-              key={msg.id}
-              style={{ display: 'flex', justifyContent: 'center', position: 'relative', opacity: msg.spectator ? 0.55 : 1, minWidth: 0 }}
-              onMouseEnter={(e) => {
-                if (!msg.augmentCard) return
-                setChatCardHover(msg.id)
-                setChatCardAnchor(e.currentTarget.getBoundingClientRect())
-              }}
-              onMouseLeave={() => {
-                setChatCardHover(null)
-                setChatCardAnchor(null)
-              }}
-            >
-              <div style={{
-                ...sk(msg.augmentCard ? C.red : C.green, true),
-                backgroundColor: msg.augmentCard ? C.redLight : C.greenLight,
-                padding: '8px 16px', fontFamily: F.ui, fontSize: 17,
-                color: msg.augmentCard ? C.red : C.green, textAlign: 'center',
-                cursor: msg.augmentCard ? 'help' : undefined,
-                maxWidth: '100%',
-                boxSizing: 'border-box',
-                wordBreak: 'keep-all',
-                overflowWrap: 'anywhere',
-              }}>{msg.text}</div>
-            </div>
-          )
-        }
+      {logs.map((msg) => (
+        <div
+          key={msg.id}
+          style={{ display: 'flex', position: 'relative', opacity: msg.spectator ? 0.55 : 1, minWidth: 0 }}
+          onMouseEnter={(e) => {
+            if (!msg.augmentCard) return
+            setChatCardHover(msg.id)
+            setChatCardAnchor(e.currentTarget.getBoundingClientRect())
+          }}
+          onMouseLeave={() => {
+            setChatCardHover(null)
+            setChatCardAnchor(null)
+          }}
+        >
+          <div style={{
+            ...sk(msg.augmentCard ? C.red : C.green, true),
+            backgroundColor: msg.augmentCard ? C.redLight : C.greenLight,
+            padding: '6px 10px', fontFamily: F.ui, fontSize: 14, lineHeight: 1.4,
+            color: msg.augmentCard ? C.red : C.green,
+            cursor: msg.augmentCard ? 'help' : undefined,
+            width: '100%',
+            boxSizing: 'border-box',
+            wordBreak: 'keep-all',
+            overflowWrap: 'anywhere',
+          }}>{msg.text}</div>
+        </div>
+      ))}
+    </>
+  )
+})
+
+const GameChatList = memo(function GameChatList({
+  chats,
+  selfId,
+  metaByUser,
+}: {
+  chats: ChatMsg[]
+  selfId: string
+  metaByUser: Record<string, { color: number | null; avatarUrl: string | null }>
+}) {
+  return (
+    <>
+      {chats.map(msg => {
         const self = msg.userId === selfId
         const spect = !!msg.spectator
+        // 관전자는 색 없음 · 나머지는 방에서 고른 색
+        const meta = metaByUser[msg.userId]
+        const cc = spect ? null : chatColorOf(meta?.color)
+        const lineColor = cc?.line || C.graphite
         return (
           <div
             key={msg.id}
             style={{
               display: 'flex',
-              justifyContent: self ? 'flex-end' : 'flex-start',
+              justifyContent: 'flex-start',
               gap: 8,
               alignItems: 'flex-end',
               opacity: spect ? 0.52 : 1,
@@ -1140,25 +1317,25 @@ const GameChatList = memo(function GameChatList({
               width: '100%',
             }}
           >
-            {!self && (
+            <Avatar
+              name={msg.nickname}
+              url={meta?.avatarUrl}
+              size={34}
+              border={lineColor}
+              tint={spect ? '#E8EEF3' : (cc?.fill || C.blueLight)}
+            />
+            <div style={{ maxWidth: 'min(76%, 100%)', minWidth: 0, boxSizing: 'border-box' }}>
               <div style={{
-                width: 34, height: 34, flexShrink: 0, ...sk(C.graphite, true),
-                backgroundColor: spect ? '#E8EEF3' : C.blueLight,
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontFamily: F.ui, fontSize: 16, color: C.blue,
-              }}>{msg.nickname?.[0]}</div>
-            )}
-            <div style={{ maxWidth: 'min(72%, 100%)', minWidth: 0, boxSizing: 'border-box' }}>
-              {!self && (
-                <div style={{ fontFamily: F.ui, fontSize: 14, color: C.muted, marginBottom: 3 }}>
-                  {msg.nickname}{spect ? ' · 관전' : ''}
-                </div>
-              )}
+                fontFamily: F.ui, fontSize: 14, fontWeight: self ? 800 : 500,
+                color: spect ? C.muted : lineColor, marginBottom: 3,
+              }}>
+                {msg.nickname}{spect ? ' · 관전' : self ? ' · 나' : ''}
+              </div>
               <div style={{
-                ...sk(self ? C.blue : C.graphite, true),
+                ...sk(lineColor, true),
                 backgroundColor: spect
-                  ? (self ? 'rgba(74, 144, 186, 0.22)' : 'rgba(255,255,255,0.45)')
-                  : (self ? C.blueLight : '#FFFFFF'),
+                  ? 'rgba(255,255,255,0.45)'
+                  : (cc?.fill || '#FFFFFF'),
                 padding: '10px 14px',
                 fontFamily: F.chat,
                 fontSize: 22,
@@ -1213,11 +1390,60 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
   const [now, setNow] = useState(() => serverNow())
   const [genreSettled, setGenreSettled] = useState(true)
   const [genreIntroActive, setGenreIntroActive] = useState(false)
-  const chatRef = useRef<HTMLDivElement>(null)
-  const [chatStickBottom, setChatStickBottom] = useState(true)
-  const [chatHasNew, setChatHasNew] = useState(false)
+  // 야차룰 당사자에게는 관전 채팅이 안 보인다 (early return 전이라 옵셔널 접근)
+  const isDuelistForChat = !!(
+    room?.duel && user
+    && (room.duel.challengerId === user.id || room.duel.opponentId === user.id)
+  )
+  // 사람 채팅 / 시스템 로그를 나눠 각각 따로 스크롤한다
+  const playerChats = useMemo(
+    () => chats.filter((m) => !m.system && !(m.spectator && isDuelistForChat)),
+    [chats, isDuelistForChat],
+  )
+  const logChats = useMemo(() => chats.filter((m) => m.system), [chats])
+  const {
+    scrollRef: chatRef,
+    contentRef: chatContentRef,
+    stick: chatStickBottom,
+    hasNew: chatHasNew,
+    onScroll: onChatScrollBase,
+    onWheel: onGameChatWheel,
+    jumpToLatest: jumpToLatestGameChat,
+  } = useStickyChatScroll(playerChats)
+  const {
+    scrollRef: logRef,
+    contentRef: logContentRef,
+    onScroll: onLogScroll,
+    onWheel: onLogWheel,
+  } = useStickyChatScroll(logChats)
+  const answerInputRef = useRef<HTMLInputElement>(null)
   const genreSlotRef = useRef<HTMLDivElement>(null)
   const genreIntroRoundRef = useRef<number | null>(null)
+
+  // 단축키(K=스킵, R=증강 사용) · 렌더마다 최신 상태로 갱신되는 핸들러를 ref에 담는다
+  const hotkeyRef = useRef<(action: 'skip' | 'augment' | 'focusInput') => boolean>(() => false)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey || e.repeat) return
+      if (e.isComposing || e.keyCode === 229) return
+      const el = e.target as HTMLElement | null
+      const tag = el?.tagName
+      // 입력창·채팅창에 커서가 있으면 그냥 글자로 (정답 타이핑 방해 금지)
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el?.isContentEditable) return
+      const key = e.key.toLowerCase()
+      // 한글 자판이어도 자리로 잡히게 e.code 우선
+      const action: 'skip' | 'augment' | 'focusInput' | null =
+        (e.code === 'KeyK' || key === 'k') ? 'skip'
+        : (e.code === 'KeyR' || key === 'r') ? 'augment'
+        : (e.key === 'Enter') ? 'focusInput'
+        : null
+      if (!action) return
+      // 모달이 떠 있는 등 처리하지 않은 경우엔 기본 동작을 막지 않는다
+      if (hotkeyRef.current(action)) e.preventDefault()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
 
   const settleGenreIntro = useCallback(() => {
     setGenreIntroActive(false)
@@ -1265,40 +1491,13 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
     setGenreIntroActive(true)
   }, [room?.status, round?.index, round?.duel])
 
-  useEffect(() => {
-    const el = chatRef.current
-    if (!el) return
-    if (chatStickBottom) {
-      // smooth 스크롤과 휠이 싸우면 복제감 → 즉시 이동
-      const prev = el.style.scrollBehavior
-      el.style.scrollBehavior = 'auto'
-      el.scrollTop = el.scrollHeight
-      el.style.scrollBehavior = prev
-      setChatHasNew(false)
-    } else {
-      setChatHasNew(true)
-    }
-  }, [chats, chatStickBottom])
-
   const onGameChatScroll = () => {
-    const el = chatRef.current
-    if (!el) return
+    // 스크롤하면 붙어 있던 호버 카드는 자리가 어긋나므로 닫는다
     if (chatCardHover != null) {
       setChatCardHover(null)
       setChatCardAnchor(null)
     }
-    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 56
-    setChatStickBottom(nearBottom)
-    if (nearBottom) setChatHasNew(false)
-  }
-
-  const jumpToLatestGameChat = () => {
-    const el = chatRef.current
-    if (!el) return
-    el.style.scrollBehavior = 'auto'
-    el.scrollTop = el.scrollHeight
-    setChatStickBottom(true)
-    setChatHasNew(false)
+    onChatScrollBase()
   }
 
   if (!room || !user) return null
@@ -1345,6 +1544,17 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
     [members],
   )
   const spectators = useMemo(() => members.filter((m) => m.isSpectator), [members])
+  // 채팅 색·프로필 사진은 멤버 목록에서 가져온다 (색을 바꾸면 지난 말풍선도 같이 바뀜)
+  const chatMetaByUser = useMemo(() => {
+    const out: Record<string, { color: number | null; avatarUrl: string | null }> = {}
+    for (const m of members) {
+      out[m.userId] = {
+        color: m.isSpectator ? null : (m.chatColor ?? null),
+        avatarUrl: m.avatarUrl ?? null,
+      }
+    }
+    return out
+  }, [members])
   const myBuffs = me?.activeBuffs || []
   const deafMode = myBuffs.some(b => b.active && (
     b.effectType === 'score_mult_hint_only' || b.effectType === 'mud_fight'
@@ -1425,6 +1635,32 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
   }
   const reading = room.reading
   const isReading = (room.gameMode || 'nomatch') === 'reading'
+
+  // 모달이 떠 있으면 단축키 무시
+  const hotkeyBlocked = leaveOpen || targetPickOpen || genrePickOpen || gahoPickOpen || showUsedList
+  hotkeyRef.current = (action) => {
+    if (hotkeyBlocked) return false
+    if (action === 'focusInput') {
+      const el = answerInputRef.current
+      if (!el) return false
+      el.focus()
+      return true
+    }
+    if (action === 'skip') {
+      if (isSpectator || isReading || skipVoted || room.status !== 'playing' || inDuel) return false
+      voteSkip()
+      return true
+    }
+    if (!me?.heldAugmentId || useLocked) return false
+    if (needsGahoPick) void openGahoPick()
+    else if (needsTargetPick) {
+      setSelectedTargetIds([])
+      setTargetPickOpen(true)
+    }
+    else if (needsGenrePick) setGenrePickOpen(true)
+    else useAugment()
+    return true
+  }
   const isReadingSolver = !!(reading && reading.solverId === user.id)
   const readingPhase = reading?.phase
   /** 리딩: 도전 전 숨김 · 투표/준비는 유권자만 · 풀이·결과는 전원(장르+？？？) */
@@ -1527,6 +1763,14 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
     }
   })
 
+  // 제목만 모드 가수 힌트 — 서버가 한국·일본·해외 장르에만 실어 보낸다
+  // 초성처럼 바로 주지 않고 남은 시간 20초부터 공개
+  const ARTIST_HINT_DUE_SEC = 20
+  const artistHintDue = timer <= ARTIST_HINT_DUE_SEC
+  const artistHintText = (!isReading && !inDuel && !inCountdown && !noHintMode && artistHintDue)
+    ? (round?.artistHint || '').trim()
+    : ''
+
   // 다음 R 예약(pending) 적대 효과는 발동 전까지 적용 칸·요약에 안 보임 (대상 미리보기 방지).
   // 단 내가 건 것(영역전개·코로나·진흙탕)은 남겨야 발동 여부를 확인할 수 있다.
   const visibleBuffs = myBuffs.filter((b) => {
@@ -1609,8 +1853,8 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
   }
 
   const panelBox: React.CSSProperties = {
-    ...sk(), backgroundColor: C.panel, padding: '12px 14px',
-    display: 'flex', flexDirection: 'column', gap: 10, minHeight: 0, minWidth: 0,
+    ...sk(), backgroundColor: C.panel, padding: '14px 16px',
+    display: 'flex', flexDirection: 'column', gap: 12, minHeight: 0, minWidth: 0,
   }
   const surf = C.panel
   const chip = (ok: boolean, label: string, value: string | null) => (
@@ -1669,10 +1913,10 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
       <div style={{
         position: 'relative', zIndex: 2, backgroundColor: C.card,
         borderBottom: `2.5px solid ${C.graphite}`, boxShadow: `0 3px 0 ${C.graphite}40`,
-        padding: '10px 16px', display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0,
+        padding: '12px 20px', display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0,
         filter: 'url(#pencilRough)',
       }}>
-        <RoundTimer endsAt={round?.endsAt ?? now} max={maxTime} size={58} />
+        <RoundTimer endsAt={round?.endsAt ?? now} max={maxTime} size={66} />
         <div
           style={{
             fontFamily: F.ui,
@@ -1778,11 +2022,49 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
         position: 'relative', zIndex: 2, flex: 1, minHeight: 0,
         display: 'grid',
         gridTemplateColumns: showAugmentSide
-          ? '200px minmax(0, 1fr) 220px'
-          : '200px minmax(0, 1fr)',
-        gap: 14, padding: '14px 14px 0',
+          ? 'clamp(230px, 17vw, 340px) minmax(0, 1fr) clamp(230px, 16vw, 320px)'
+          : 'clamp(230px, 17vw, 340px) minmax(0, 1fr)',
+        gap: 16, padding: '16px 18px 0',
       }}>
-        <GameScoreboard ranked={ranked} spectators={spectators} selfId={user.id} />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12, minHeight: 0, minWidth: 0 }}>
+          <GameScoreboard
+            ranked={ranked}
+            spectators={spectators}
+            selfId={user.id}
+            style={{ flex: 1.35 }}
+          />
+          <div style={{ ...panelBox, flex: 1, backgroundColor: surf, minWidth: 0, overflow: 'hidden' }}>
+            <div style={{ fontFamily: F.ui, fontSize: 17, color: C.muted, textAlign: 'center', flexShrink: 0 }}>
+              로그
+              <span style={{ fontSize: 12, marginLeft: 5, opacity: 0.7 }}>· 정답 · 증강</span>
+            </div>
+            <div
+              ref={logRef}
+              onScroll={onLogScroll}
+              onWheel={onLogWheel}
+              style={{
+                flex: 1,
+                overflowY: 'auto',
+                overflowX: 'hidden',
+                minHeight: 0,
+                minWidth: 0,
+                padding: '4px 8px 8px 4px',
+                scrollBehavior: 'auto',
+              }}
+            >
+              <div
+                ref={logContentRef}
+                style={{ display: 'flex', flexDirection: 'column', gap: 7, minWidth: 0 }}
+              >
+                <GameLogList
+                  logs={logChats}
+                  setChatCardHover={setChatCardHover}
+                  setChatCardAnchor={setChatCardAnchor}
+                />
+              </div>
+            </div>
+          </div>
+        </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12, minHeight: 0, minWidth: 0 }}>
           <div style={{ ...sk(), backgroundColor: surf, padding: '14px 18px', textAlign: 'center', flexShrink: 0 }}>
@@ -1866,6 +2148,23 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
               ))}
             </div>
             )}
+            {!!artistHintText && (
+              <div style={{
+                marginTop: 10,
+                display: 'flex',
+                alignItems: 'baseline',
+                justifyContent: 'center',
+                gap: 8,
+                flexWrap: 'wrap',
+              }}>
+                <span style={{ fontFamily: F.ui, fontSize: 12, fontWeight: 800, color: C.blue }}>
+                  가수 힌트
+                </span>
+                <span style={{ fontFamily: F.brand, fontSize: 20, fontWeight: 700, color: C.body }}>
+                  {artistHintText}
+                </span>
+              </div>
+            )}
             {!isReading && showHidden && hiddenSlot && (
               <div style={{
                 marginTop: 14, paddingTop: 12,
@@ -1894,7 +2193,7 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
           </div>
 
           <div style={{ ...panelBox, flex: 1, backgroundColor: surf, minWidth: 0, overflow: 'hidden' }}>
-            <div style={{ fontFamily: F.ui, fontSize: 18, color: C.muted, textAlign: 'center', flexShrink: 0 }}>
+            <div style={{ fontFamily: F.ui, fontSize: 20, color: C.muted, textAlign: 'center', flexShrink: 0 }}>
               {duelSpectating ? '관전 채팅' : me?.chatIsolated ? '격리 채팅' : '채팅'}
               {duelSpectating && (
                 <span style={{ fontSize: 13, marginLeft: 6, opacity: 0.7 }}>· 당사자에게 안 보임</span>
@@ -1910,13 +2209,11 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
             <div
               ref={chatRef}
               onScroll={onGameChatScroll}
+              onWheel={onGameChatWheel}
               style={{
                 flex: 1,
                 overflowY: 'auto',
                 overflowX: 'hidden',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 10,
                 minHeight: 0,
                 minWidth: 0,
                 // 스케치 그림자·우측 말풍선이 잘리지 않게
@@ -1924,13 +2221,16 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
                 scrollBehavior: 'auto',
               }}
             >
-              <GameChatList
-                chats={chats}
-                isDuelist={isDuelist}
-                selfId={user.id}
-                setChatCardHover={setChatCardHover}
-                setChatCardAnchor={setChatCardAnchor}
-              />
+              <div
+                ref={chatContentRef}
+                style={{ display: 'flex', flexDirection: 'column', gap: 10, minWidth: 0 }}
+              >
+                <GameChatList
+                  chats={playerChats}
+                  selfId={user.id}
+                  metaByUser={chatMetaByUser}
+                />
+              </div>
             </div>
               {chatHasNew && !chatStickBottom && (
                 <button
@@ -2092,14 +2392,14 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
             <>
           <div style={{ ...panelBox, flex: 1.2 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
-              <div style={{ fontFamily: F.ui, fontSize: 18, color: C.muted }}>증강</div>
+              <div style={{ fontFamily: F.ui, fontSize: 20, color: C.muted }}>증강</div>
               <Btn size="sm" onClick={() => setShowUsedList(true)}>사용 목록</Btn>
             </div>
             <div style={{
               flex: 1, ...sk(me?.heldAugmentTier ? tierBorderColor(me.heldAugmentTier) : C.graphite),
-              backgroundColor: C.card, padding: '14px 12px',
+              backgroundColor: C.card, padding: '16px 14px',
               display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-              textAlign: 'center', gap: 10, minHeight: 160, position: 'relative',
+              textAlign: 'center', gap: 12, minHeight: 184, position: 'relative',
               border: me?.heldAugmentTier
                 ? `2.5px solid ${tierBorderColor(me.heldAugmentTier)}`
                 : undefined,
@@ -2107,7 +2407,7 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
               {me?.heldAugmentId ? (
                 <>
                   <div style={{
-                    width: 88, height: 88, flexShrink: 0,
+                    width: 104, height: 104, flexShrink: 0,
                     ...sk(tierBorderColor(me.heldAugmentTier), true),
                     overflow: 'hidden', backgroundColor: '#F2F0EB',
                   }}>
@@ -2129,7 +2429,7 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
                       {tierDisplayName(me.heldAugmentTier)}
                     </div>
                   )}
-                  <div style={{ fontFamily: F.brand, fontSize: 20, fontWeight: 700, lineHeight: 1.2 }}>
+                  <div style={{ fontFamily: F.brand, fontSize: 23, fontWeight: 700, lineHeight: 1.2 }}>
                     {me.heldAugmentName || '보유 중'}
                   </div>
                   <div
@@ -2171,6 +2471,7 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
                               : needsGenrePick
                                 ? '장르 선택'
                                 : '사용'}
+                      {!useLocked && ' · R'}
                     </Btn>
                   </div>
                   <div style={{ fontFamily: F.ui, fontSize: 12, color: C.muted }}>
@@ -2195,7 +2496,7 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
             </div>
           </div>
           <div style={{ ...panelBox, flex: 1 }}>
-            <div style={{ fontFamily: F.ui, fontSize: 18, color: C.muted, textAlign: 'center' }}>
+            <div style={{ fontFamily: F.ui, fontSize: 20, color: C.muted, textAlign: 'center' }}>
               증강 적용{scoreMult > 1 ? ` · 점수 ×${scoreMult}` : ''}
             </div>
             <div style={{
@@ -2634,13 +2935,22 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
 
       <div style={{
         position: 'relative', zIndex: 2, backgroundColor: 'transparent',
-        padding: '10px 14px', display: 'flex', gap: 10, alignItems: 'center', flexShrink: 0,
+        padding: '12px 18px 14px', display: 'flex', gap: 12, alignItems: 'center', flexShrink: 0,
         filter: 'url(#pencilRough)',
       }}>
         <SketchInput
+          inputRef={answerInputRef}
           value={input}
           onChange={setInput}
-          onKeyDown={e => e.key === 'Enter' && !submitBlocked && send()}
+          onKeyDown={(e) => {
+            if (e.key !== 'Enter') return
+            // 빈 채로 엔터 → 입력창에서 빠져나감 (땅바닥 클릭한 것처럼 · K/R 단축키 사용 가능)
+            if (!input.trim()) {
+              e.currentTarget.blur()
+              return
+            }
+            if (!submitBlocked) send()
+          }}
           placeholder={
             isReading && reading
               ? (reading.phase === 'solve' && isReadingSolver
@@ -2676,8 +2986,8 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
           }
           style={{
             flex: 1,
-            fontSize: '22px',
-            padding: '12px 16px',
+            fontSize: '25px',
+            padding: '14px 18px',
             backgroundColor: submitBlocked ? '#E8EEF3' : C.card,
             textAlign: 'center',
             fontFamily: F.chat,
@@ -2699,7 +3009,7 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
               ? '공개 중'
               : room.status === 'countdown'
                 ? '대기 중'
-                : `스킵 ${skip.votes}/${skip.need}`}
+                : `스킵 ${skip.votes}/${skip.need} · K`}
         </Btn>
         <Btn variant="primary" disabled={submitBlocked} onClick={send}>
           {isSpectator ? '채팅' : '제출'}

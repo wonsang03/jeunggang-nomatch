@@ -86,6 +86,8 @@ export type RoomMember = {
   isHost: boolean
   /** 관전: 채팅만 */
   isSpectator?: boolean
+  /** 채팅 색 인덱스 (0~9 · 관전자는 null) */
+  chatColor?: number | null
   /** 이미 디버프 적용 중 → 타겟 디버프 불가 */
   augmentBusy?: boolean
   heldAugmentId: string | null
@@ -283,6 +285,8 @@ export type RoundInfo = {
   endSec: number
   titleChosung: string
   artistChosung: string
+  /** 제목만 모드 가수 힌트 (한국·일본·해외 장르만 · 정답 대상 아님) */
+  artistHint?: string
   slots: RoundSlot[]
   duel?: boolean
   duelLabel?: string
@@ -380,6 +384,7 @@ type GameCtx = {
   leaveRoom: () => void
   setReady: () => void
   setSpectator: (spectator: boolean) => Promise<void>
+  setChatColor: (color: number | null) => Promise<void>
   updateSettings: (payload: {
     genreCounts?: Record<string, number>
     maxPlayers?: number
@@ -646,9 +651,10 @@ export function GameProvider({ children }: { children: ReactNode }) {
           youtubeUrl: p.youtubeUrl,
           startSec: p.startSec,
           endSec: p.endSec,
-          // 카운트다운 프리로드용 — 초성은 round:start 때 공개
+          // 카운트다운 프리로드용 — 초성·가수 힌트는 round:start 때 공개
           titleChosung: '',
           artistChosung: '',
+          artistHint: '',
           slots: [],
         })
       } else {
@@ -690,6 +696,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
           genre: payload.genre || r.genre,
           titleChosung: payload.titleChosung ?? '',
           artistChosung: payload.artistChosung ?? '',
+          artistHint: '',
           hasHidden: false,
         }
       })
@@ -824,10 +831,11 @@ export function GameProvider({ children }: { children: ReactNode }) {
           nickname: p.nickname || '누군가',
           message: p.message || `${p.nickname || '누군가'}님이 [${p.name}]을(를) 사용했습니다`,
         })
+        // AugmentUseNotice 의 페이드아웃(3.4s)과 맞춘다
         augmentNoticeTimer.current = setTimeout(() => {
           setAugmentNotice(null)
           augmentNoticeTimer.current = null
-        }, 4000)
+        }, 3400)
       }
     })
     s.on('augment:hint', (p: {
@@ -1052,6 +1060,11 @@ export function GameProvider({ children }: { children: ReactNode }) {
     if (!res.ok) throw new Error(res.error || '역할 변경 실패')
     if (res.room) setRoom(res.room)
   }
+  const setChatColor = async (color: number | null) => {
+    const res = await emitAck<{ ok: boolean; room?: RoomState; error?: string }>('room:chat_color', { color })
+    if (!res.ok) throw new Error(res.error || '색 변경 실패')
+    if (res.room) setRoom(res.room)
+  }
   const updateSettings = (payload: {
     genreCounts?: Record<string, number>
     maxPlayers?: number
@@ -1103,6 +1116,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
     if (skipVoted) return
     if (room?.status !== 'playing') return
     setSkipVoted(true)
+    playSfx('skipVote')
     getSocket()?.emit('round:skip')
   }
   // 증강 화면의 마감 타이머 effect가 deps로 쓴다 — identity가 바뀌면 타이머가 계속 재시작된다
@@ -1198,6 +1212,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
       leaveRoom,
       setReady,
       setSpectator,
+      setChatColor,
       updateSettings,
       startGame,
       sendChat,

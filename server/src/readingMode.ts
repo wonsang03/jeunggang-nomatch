@@ -270,6 +270,8 @@ export function beginDecidePhase(
   io: Server,
   room: ReadingRoomLike,
   roomState: (r: ReadingRoomLike, viewerUserId?: string) => unknown,
+  /** 퇴장자 스킵 재귀 깊이 — turnIndex 는 게임 내내 누적이라 종료 판정에 쓰면 안 된다 */
+  skipAttempt = 0,
 ) {
   if (!room.reading) return
   const r = room.reading
@@ -279,15 +281,13 @@ export function beginDecidePhase(
   }
   const offeredUserId = r.turnOrder[r.turnIndex % r.turnOrder.length]
   if (!room.members.has(offeredUserId)) {
-    // 퇴장한 사람 스킵
+    // 퇴장한 사람 스킵 — 한 바퀴 다 돌았는데 아무도 없으면 종료
     r.turnIndex += 1
-    if (r.turnIndex >= r.turnOrder.length * 2) {
-      room.status = 'ended'
-      room.reading = null
-      emitReadingRoomState(io, room, roomState)
+    if (skipAttempt + 1 >= r.turnOrder.length) {
+      endReadingGame(io, room, roomState, '남은 참가자가 없어 리딩방을 종료합니다')
       return
     }
-    beginDecidePhase(io, room, roomState)
+    beginDecidePhase(io, room, roomState, skipAttempt + 1)
     return
   }
 
