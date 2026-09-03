@@ -191,6 +191,21 @@ type Member = {
     startSec: number
     byName: string
   } | null
+  /**
+   * 쪼아요~: 대상이 «끝까지» 들어야 하는 벌칙 곡.
+   * 라운드·스킵과 무관하게 곡이 끝날 때까지(또는 hardEndsAt까지) 유지된다.
+   */
+  peckSong: {
+    /** 재생 세션 식별자 — 클라가 끝났다고 알릴 때 대조 */
+    id: string
+    youtubeUrl: string
+    startSec: number
+    startedAt: number
+    /** 안전장치: 클라가 끝을 못 알려도 이 시각엔 해제 */
+    hardEndsAt: number
+    byName: string
+    byNickname: string
+  } | null
   /** 전원을 꺼봤습니다: 이 시각까지 노래 음소거(본인 제외 대상) */
   songMuteUntil: number | null
   /** 이번 라운드 본인 득점 합 (콤보 결산용) */
@@ -1463,6 +1478,17 @@ function isFlameKimActive(m: Member, roundIndex: number, _room?: Room | null) {
   return !!(m.flameKim && roundIndex >= m.flameKim.startIndex && m.flameKim.roundsLeft > 0)
 }
 
+/** 쪼아요~: 아직 끝까지 안 들은 벌칙 곡 (안전 시각이 지나면 스스로 해제) */
+function activePeckSong(m: Member) {
+  const p = m.peckSong
+  if (!p) return null
+  if (p.hardEndsAt > 0 && p.hardEndsAt <= Date.now()) {
+    m.peckSong = null
+    return null
+  }
+  return p
+}
+
 type AudioTrick = {
   mode: 'replace' | 'overlay'
   youtubeUrl: string
@@ -2046,6 +2072,7 @@ function emptyMember(
     answerProxy: null,
     sakuraDecoy: null,
     flameKim: null,
+    peckSong: null,
     songMuteUntil: null,
     roundScoreGain: 0,
   }
@@ -2580,6 +2607,19 @@ function roomState(room: Room, viewerUserId?: string) {
       /** 방 노래와 분리된 트릭 오디오 · mode=replace면 방 곡 음소거, overlay면 동시 재생 */
       audioTrick: resolveReplaceTrick(m, room),
       audioOverlay: resolveOverlayTrick(m, room),
+      /** 쪼아요~ 벌칙 곡 · 라운드/스킵과 무관하게 곡이 끝날 때까지 재생 */
+      peckSong: (() => {
+        const p = activePeckSong(m)
+        if (!p) return null
+        return {
+          id: p.id,
+          youtubeUrl: p.youtubeUrl,
+          startSec: p.startSec,
+          startedAt: p.startedAt,
+          byName: p.byName,
+          byNickname: p.byNickname,
+        }
+      })(),
       decoyYoutubeUrl: (() => {
         if (room.status === 'duel') return null
         if (isSakuraDecoyActive(m, room.index, room)) return m.sakuraDecoy!.youtubeUrl
@@ -3195,6 +3235,9 @@ async function boostAttemptedGenreFromOthers(
   }
 }
 
+/** 쪼아요~ 기본 벌칙 곡 (시드 effectValue.youtubeUrl 이 우선) */
+const PECK_SONG_URL = 'https://www.youtube.com/watch?v=SYacnl6MpSA'
+
 const TARGET_AUGMENT_TYPES = new Set([
   'mute_chat',
   'soft_chat_mute',
@@ -3218,6 +3261,8 @@ const TARGET_AUGMENT_TYPES = new Set([
   'score_share',
   'swap_scores',
   'destroy_held_augment',
+  // 쪼아요~는 디버프 중첩 금지에서 «빠져 있다» — 이미 걸린 사람·같은 사람에게도 계속 쓸 수 있다
+  'peck_song',
 ])
 
 const GENRE_AUGMENT_TYPES = new Set(['ban_genre'])
@@ -4158,6 +4203,71 @@ async function applyAugmentEffect(
       ok: true,
       hint: `[${aug.name}] ${victim.nickname} → ${whenHint}「${songLabel}」${multHint}`,
       chatText: `${user.nickname}님이 [${aug.name}]으로 ${victim.nickname}님에게 ${whenHint}「${songLabel}」을(를) 틀었습니다!${multHint}`,
+    }
+  }
+
+  if (aug.effectType === 'peck_song') {
+    const intended = targetUserId ? room.members.get(targetUserId) : null
+    if (!intended || intended.userId === m.userId) return { ok: false, hint: null, chatText: null }
+    if (!isPlayingMember(intended)) {
+      return { ok: false, hint: `[${aug.name}] 지금 지목할 수 없는 대상입니다`, chatText: null }
+    }
+    const youtubeUrl = String(value.youtubeUrl || '').trim() || PECK_SONG_URL
+    const startRaw = Number(value.startSec)
+    const startSec = Number.isFinite(startRaw) && startRaw > 0 ? Math.floor(startRaw) : 0
+    const maxRaw = Number(value.maxSec)
+    const maxSec = Number.isFinite(maxRaw) && maxRaw > 0 ? Math.floor(maxRaw) : 900
+    const songLabel = String(value.songLabel || '').trim() || aug.name
+    // 무지개 반사: 되돌아오면 시전자가 대신 끝까지 듣는다
+    const shield = takeReflectShield(intended, room.index)
+    const victim = shield ? m : intended
+    const reflected = !!shield
+
+    const chargesRaw = Number(value.charges)
+    let charges = Number.isFinite(chargesRaw) && chargesRaw > 0 ? Math.floor(chargesRaw) : 1
+    charges -= 1
+    // 혼돈으로 발동하면 보유 슬롯이 이미 비어 있다 — 그땐 잔여 횟수를 기록하지 않는다
+    const stillHeld = m.heldAugmentName === aug.name && !!m.heldAugmentId
+    const keepHeld = charges > 0 && stillHeld
+    if (keepHeld) m.heldAugmentEffectValue = JSON.stringify({ ...value, charges })
+    const leftNote = keepHeld ? ` · 남은 ${charges}회` : ''
+
+    const now = Date.now()
+    // 라운드·스킵과 무관한 «곡 단위» 벌칙 — 이미 듣고 있어도 처음부터 다시 건다
+    victim.peckSong = {
+      id: `${now.toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+      youtubeUrl,
+      startSec,
+      startedAt: now,
+      hardEndsAt: now + maxSec * 1000,
+      byName: aug.name,
+      byNickname: reflected ? intended.nickname : user.nickname,
+    }
+    io.to(victim.socketId).emit('augment:hint', {
+      name: reflected ? shield!.name : aug.name,
+      hint: reflected
+        ? `[무지개 반사] 「${songLabel}」을(를) 대신 끝까지 들어야 합니다`
+        : `[${aug.name}] 「${songLabel}」 · 끝까지 다 들어야 합니다 (스킵해도 안 멈춤)`,
+      durationMs: 0,
+    })
+    if (reflected) {
+      io.to(intended.socketId).emit('augment:hint', {
+        name: shield!.name,
+        hint: `[무지개 반사] ${user.nickname}님의 [${aug.name}]을(를) 되돌려보냈습니다`,
+        durationMs: 0,
+      })
+      return {
+        ok: true,
+        hint: `[무지개 반사] 되돌아와서 본인이 「${songLabel}」을(를) 끝까지 듣습니다${leftNote}`,
+        chatText: `${intended.nickname}님의 [무지개 반사]! ${user.nickname}님의 [${aug.name}]이(가) 되돌아갔습니다!`,
+        keepHeld,
+      }
+    }
+    return {
+      ok: true,
+      hint: `[${aug.name}] ${victim.nickname} → 「${songLabel}」 끝까지${leftNote}`,
+      chatText: `${user.nickname}님이 [${aug.name}]! ${victim.nickname}님은 「${songLabel}」을(를) 끝까지 다 들어야 합니다${leftNote}`,
+      keepHeld,
     }
   }
 
@@ -6105,6 +6215,7 @@ export function registerSocket(io: Server) {
         m.answerProxy = null
         m.sakuraDecoy = null
         m.flameKim = null
+        m.peckSong = null
         m.songMuteUntil = null
         m.roundScoreGain = 0
         clearHeldAugment(m)
@@ -6711,6 +6822,23 @@ export function registerSocket(io: Server) {
       if (room.skipVotes.size >= need) {
         endRound(io, room, 'skip')
       }
+    })
+
+    // 쪼아요~: 벌칙 곡을 끝까지 다 들었다고 클라가 알려줄 때만 해제된다
+    socket.on('augment:peck_done', (payload?: { id?: string }) => {
+      const room = findRoomByUser(user.id)
+      if (!room) return
+      const self = room.members.get(user.id)
+      if (!self?.peckSong) return
+      if (payload?.id && payload.id !== self.peckSong.id) return
+      const byName = self.peckSong.byName
+      self.peckSong = null
+      io.to(self.socketId).emit('augment:hint', {
+        name: byName,
+        hint: `[${byName}] 다 들었습니다`,
+        durationMs: 3000,
+      })
+      io.to(room.id).emit('room:state', roomState(room))
     })
 
     socket.on('augment:reroll', async (_payload, cb?: (res: unknown) => void) => {

@@ -387,6 +387,21 @@ async function main() {
       imageUrl: '/augments/throw-rock.jpg',
     },
     {
+      name: '쪼아요~',
+      description:
+        '플레이어를 지목해 그 사람에게만 벌칙 곡을 끝까지 들려줍니다. (3회 · 스킵하거나 라운드가 넘어가도 곡이 끝날 때까지 계속 들립니다 · 이미 디버프가 걸린 사람이나 같은 사람에게도 쓸 수 있습니다)',
+      effectType: 'peck_song',
+      effectValue: JSON.stringify({
+        charges: 3,
+        youtubeUrl: 'https://www.youtube.com/watch?v=SYacnl6MpSA',
+        startSec: 0,
+        songLabel: '쪼아요~',
+        maxSec: 900,
+      }),
+      tier: 'gold',
+      imageUrl: null,
+    },
+    {
       name: '넘어가요!',
       description: '사용하면 지금 재생 중인 문제를 강제 스킵합니다. (1회 · 플레이 중에만)',
       effectType: 'force_skip',

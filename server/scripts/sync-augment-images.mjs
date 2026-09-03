@@ -52,6 +52,7 @@ const FILE_TO_AUGMENTS = {
   '일론 머스크의 가호': ['일론 머스크의 가호'],
   '풍악을 울려라': ['풍악을 울려라'],
   '미룬이의 가호': ['미룬이의 가호'],
+  '쪼아요': ['쪼아요~'],
 }
 
 /** 증강명 → public URL용 파일 슬러그 */
@@ -96,6 +97,7 @@ const SLUG = {
   '일론 머스크의 가호': 'elon-musk-gaho',
   '풍악을 울려라': 'pungak',
   '미룬이의 가호': 'miruni-gaho',
+  '쪼아요~': 'peck',
 }
 
 function extFor(file) {

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useGame } from './GameContext'
 import { serverNow } from './clockSync'
+import { getSocket } from './socket'
 
 const C = {
   blue: '#5D8CD7',
@@ -116,6 +117,7 @@ export function HiddenYouTube({
   roundEndsAt = null,
   roundDurationSec = null,
   loop = false,
+  onEnded,
   /** 값이 바뀔 때마다 강제 재킥 (라운드 시작 등) */
   playEpoch = 0,
 }: {
@@ -141,6 +143,8 @@ export function HiddenYouTube({
   roundDurationSec?: number | null
   /** true면 끝나면 startSec부터 다시 재생 (불꽃남자 BGM) */
   loop?: boolean
+  /** 루프가 아닐 때 영상이 끝까지 재생되면 1번 호출 (쪼아요~ 벌칙 곡 종료 보고) */
+  onEnded?: () => void
   playEpoch?: number | string
 }) {
   const id = ytId(url)
@@ -158,6 +162,10 @@ export function HiddenYouTube({
   cutMuteRef.current = cutMute
   const loopRef = useRef(loop)
   loopRef.current = loop
+  const onEndedRef = useRef(onEnded)
+  onEndedRef.current = onEnded
+  /** 루프가 아닌 곡이 끝까지 재생됐다 — 복구 로직이 되살리지 않게 막는다 */
+  const endedRef = useRef(false)
   const endsAtRef = useRef(roundEndsAt)
   endsAtRef.current = roundEndsAt
   const roundDurRef = useRef(roundDurationSec)
@@ -399,6 +407,7 @@ export function HiddenYouTube({
 
   const kickPlayback = (p: YtPlayer) => {
     clearMediaTimers()
+    endedRef.current = false
     const unlockAt = unlockAtRef.current
     const waitMs = unlockAt != null ? Math.max(0, unlockAt - serverNow()) : 0
     const ambientOnly = () => {
@@ -433,8 +442,9 @@ export function HiddenYouTube({
               setBlocked(false)
               return
             }
-            // ended면 클립/앰비언트 루프
+            // ended면 클립/앰비언트 루프 (끝까지 듣는 곡은 되살리지 않음)
             if (st === 0) {
+              if (endedRef.current) return
               restartClipFromStart(p)
               scheduleClipLoop(p)
               setBlocked(false)
@@ -577,7 +587,11 @@ export function HiddenYouTube({
               if (shouldLoop) {
                 restartClipFromStart(e.target)
                 scheduleClipLoop(e.target)
+                return
               }
+              // 루프가 아니면 여기서 「끝까지 다 들었다」 (쪼아요~)
+              endedRef.current = true
+              onEndedRef.current?.()
               return
             }
             if (e.data === 1) {
@@ -721,6 +735,8 @@ export function HiddenYouTube({
     const recover = (forceSeek = false) => {
       const p = playerRef.current
       if (!p || pausedRef.current || audioLockedRef.current) return
+      // 끝까지 다 들은 곡(쪼아요~)은 복구가 다시 틀지 않는다
+      if (endedRef.current) return
       try {
         const st = typeof p.getPlayerState === 'function' ? p.getPlayerState() : -1
         // playing / buffering: 볼륨만 맞추고 끝. seek 중 잠깐 paused로 떨어지는 건 streak로 거름.
@@ -1116,5 +1132,87 @@ export function FlameKimOverlayBgm() {
       roundDurationSec={null}
       playEpoch={`overlay-${session.source}-${ytId(session.url)}`}
     />
+  )
+}
+
+/**
+ * 쪼아요~ 벌칙 곡: 지목당한 사람만 «끝까지» 듣는다.
+ * 라운드 전환·스킵·증강 선택 화면과 무관하게 계속 재생되며,
+ * 곡이 끝나야(또는 게임이 끝나야) 멈춘다. 새로고침하면 경과 지점부터 이어 듣는다.
+ */
+export function PeckSongBgm() {
+  const { user, room, musicVolume } = useGame()
+  const me = room?.members.find((m) => m.userId === user?.id)
+  const peck = me?.peckSong ?? null
+  const [session, setSession] = useState<{
+    id: string
+    url: string
+    startSec: number
+    byName: string
+  } | null>(null)
+  /** 같은 세션을 두 번 보고하지 않게 */
+  const reportedRef = useRef<string | null>(null)
+
+  useEffect(() => {
+    if (!peck || !room || room.status === 'lobby' || room.status === 'ended') {
+      setSession(null)
+      return
+    }
+    setSession((prev) => {
+      if (prev && prev.id === peck.id) return prev
+      // 새로고침·재접속: 사용 시점부터 흐른 만큼 건너뛰고 이어 듣는다
+      const elapsed = Math.max(0, Math.floor((serverNow() - peck.startedAt) / 1000))
+      return {
+        id: peck.id,
+        url: peck.youtubeUrl,
+        startSec: Math.max(0, Math.floor(peck.startSec || 0)) + elapsed,
+        byName: peck.byName || '쪼아요~',
+      }
+    })
+  }, [peck, peck?.id, room, room?.status])
+
+  if (!session || !room || room.status === 'lobby' || room.status === 'ended') return null
+
+  const vol = Math.min(100, Math.round(musicVolume * 2))
+
+  return (
+    <>
+      <HiddenYouTube
+        key={`yt-peck-${session.id}`}
+        url={session.url}
+        startSec={session.startSec}
+        volume={vol}
+        paused={false}
+        playbackRate={1}
+        playLabel={`🐤 탭해서 ${session.byName} 재생`}
+        audioUnlockAt={null}
+        cutMute={false}
+        roundEndsAt={null}
+        roundDurationSec={null}
+        onEnded={() => {
+          if (reportedRef.current === session.id) return
+          reportedRef.current = session.id
+          getSocket()?.emit('augment:peck_done', { id: session.id })
+        }}
+        playEpoch={`peck-${session.id}`}
+      />
+      <div style={{
+        position: 'fixed',
+        left: 12,
+        bottom: 12,
+        zIndex: 60,
+        pointerEvents: 'none',
+        padding: '6px 10px',
+        borderRadius: 10,
+        background: '#FFF7D6',
+        color: C.graphite,
+        fontFamily: F.ui,
+        fontWeight: 800,
+        fontSize: 12,
+        ...sk('#E0B341'),
+      }}>
+        🐤 {session.byName} · 끝까지 재생 중
+      </div>
+    </>
   )
 }

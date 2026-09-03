@@ -5,13 +5,15 @@ import { PLAYABLE_GENRES, BANK_GENRES, emptyGenreCounts, YACHA_GENRE, type Genre
 import { normalizeSongTags } from './tags'
 import { playSfx } from './sfx'
 import { serverNow } from './clockSync'
-import { HiddenYouTube, FlameKimOverlayBgm, RoomSongPersistentBgm, ytId, loadYtApi, type YtPlayer } from './youtubePlayer'
+import { HiddenYouTube, FlameKimOverlayBgm, PeckSongBgm, RoomSongPersistentBgm, ytId, loadYtApi, type YtPlayer } from './youtubePlayer'
 import {
   AppliedAugmentChip,
   AugmentNoPhoto,
   Avatar,
   Btn,
   C,
+  CHAT_COLORS,
+  chatColorOf,
   CrumpleOverlay,
   Equalizer,
   F,
@@ -1569,6 +1571,7 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
     || me?.heldAugmentEffectType === 'slow_playback'
     || me?.heldAugmentEffectType === 'answer_proxy'
     || me?.heldAugmentEffectType === 'named_decoy'
+    || me?.heldAugmentEffectType === 'peck_song'
     || me?.heldAugmentEffectType === 'sakura_decoy'
     || me?.heldAugmentEffectType === 'answer_delay'
     || me?.heldAugmentEffectType === 'yacha_duel'
@@ -4628,6 +4631,7 @@ export default function App() {
         {render()}
       </div>
       <FlameKimOverlayBgm />
+      <PeckSongBgm />
       <RoomSongPersistentBgm />
       {gahoCutscene && (
         <GahoCutscene

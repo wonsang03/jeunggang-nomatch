@@ -180,6 +180,18 @@ export type RoomMember = {
    * 교체곡이 걸려 있어도 같이 재생되므로 audioTrick과 별도 슬롯이다.
    */
   audioOverlay?: AudioTrick | null
+  /**
+   * 쪼아요~ 벌칙 곡. 라운드·스킵과 무관하게 «곡이 끝날 때까지» 계속 들린다.
+   * 다 들으면 클라가 augment:peck_done 으로 알려서 해제된다.
+   */
+  peckSong?: {
+    id: string
+    youtubeUrl: string
+    startSec: number
+    startedAt: number
+    byName: string
+    byNickname: string
+  } | null
   /** @deprecated audioTrick 사용 · 호환용 */
   decoyYoutubeUrl?: string | null
   decoyStartSec?: number | null
