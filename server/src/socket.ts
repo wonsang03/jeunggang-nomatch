@@ -444,45 +444,6 @@ function settleCrownBet(io: Server, room: Room) {
   }
 }
 
-/** 오히려 좋아: 이번 라운드 미득점이면 보너스 (tick 전에 호출) */
-function settleFailForward(io: Server, room: Room) {
-  for (const m of room.members.values()) {
-    const b = m.activeBuffs.find((x) => x.effectType === 'fail_forward' && room.index >= x.startIndex)
-    if (!b) continue
-    if (m.roundScoreGain > 0) {
-      io.to(m.socketId).emit('augment:hint', {
-        name: b.name,
-        hint: `[${b.name}] 맞혀버려서 보너스는 없습니다`,
-        durationMs: 0,
-      })
-      continue
-    }
-    const bonus = Number(b.effectValue.bonus) || 3
-    m.score += bonus
-    io.to(m.socketId).emit('augment:hint', {
-      name: b.name,
-      hint: `[${b.name}] 못 맞혔지만 오히려 좋아! +${bonus}점`,
-      durationMs: 0,
-    })
-    systemChat(io, room, `${m.nickname}님의 [${b.name}]! 못 맞혔지만 오히려 +${bonus}점`)
-  }
-}
-
-/** 중요한 건 꺾이지 않는 마음: 미득점 라운드마다 보너스 (tick 전에 호출) */
-function settleComebackStack(io: Server, room: Room) {
-  for (const m of room.members.values()) {
-    const b = m.activeBuffs.find((x) => x.effectType === 'comeback_stack' && room.index >= x.startIndex)
-    if (!b || m.roundScoreGain > 0) continue
-    const bonus = Number(b.effectValue.bonus) || 1
-    m.score += bonus
-    io.to(m.socketId).emit('augment:hint', {
-      name: b.name,
-      hint: `[${b.name}] 꺾이지 않는 마음 +${bonus}점 (남은 ${Math.max(0, b.roundsLeft - 1)}R)`,
-      durationMs: 0,
-    })
-  }
-}
-
 function isAnswerProxyActive(m: Member, roundIndex: number, _room?: Room | null) {
   return !!(m.answerProxy && roundIndex >= m.answerProxy.startIndex && m.answerProxy.roundsLeft > 0)
 }
@@ -2611,6 +2572,8 @@ function roomState(room: Room, viewerUserId?: string) {
       peckSong: (() => {
         const p = activePeckSong(m)
         if (!p) return null
+        // 재생 URL은 당사자만 — 남에게 보내면 클라 버그 시 전원에게 들릴 수 있다
+        if (viewerUserId && viewerUserId !== m.userId) return null
         return {
           id: p.id,
           youtubeUrl: p.youtubeUrl,
@@ -3040,7 +3003,11 @@ async function equalizeGenreRemaining(room: Room): Promise<{ ok: boolean; hint: 
   }
 }
 
-/** 특정 장르 밴: 앞으로 나올 해당 장르 곡을 제거하고, 그 수만큼 다른 장르에 랜덤 배분(은행 보충) */
+/**
+ * 특정 장르 밴: 앞으로 나올 해당 장르 곡을 제거하고, 그 수만큼 다른 장르에 랜덤 배분.
+ * 큐 길이(total)는 반드시 유지 — 은행 유니크가 모자라면 수신 장르에서 중복 보충.
+ * (길이가 줄면 Q 진행도·20곡 증강 주기가 어긋남)
+ */
 async function banGenreAndRedistribute(
   room: Room,
   banGenre: string,
@@ -3071,10 +3038,19 @@ async function banGenreAndRedistribute(
     return { ok: false, hint: '배분할 다른 장르가 없습니다' }
   }
 
+  const banks = new Map<string, Awaited<ReturnType<typeof loadGenreQuestions>>>()
+  for (const g of receivers) {
+    banks.set(g, await loadGenreQuestions(g))
+  }
+  const viable = receivers.filter((g) => (banks.get(g)?.length || 0) > 0)
+  if (viable.length === 0) {
+    return { ok: false, hint: '다른 장르 곡을 은행에서 가져올 수 없습니다' }
+  }
+
   const allot = new Map<string, number>()
-  for (const g of receivers) allot.set(g, 0)
+  for (const g of viable) allot.set(g, 0)
   for (let i = 0; i < n; i++) {
-    const g = receivers[Math.floor(Math.random() * receivers.length)]
+    const g = viable[pickRandomIndex(viable.length)]
     allot.set(g, (allot.get(g) || 0) + 1)
   }
 
@@ -3082,13 +3058,14 @@ async function banGenreAndRedistribute(
   const usedYt = new Set(
     room.queue.map((q) => extractYoutubeId(q.youtubeUrl)).filter((x): x is string => !!x),
   )
-  // 밴으로 빠지는 곡은 재사용 가능하도록 used에서 제외하지 않음(이미 큐에 있었음)
 
   const extras: QuestionRuntime[] = []
   const distParts: string[] = []
+  let dupFill = 0
+
   for (const [g, need] of allot.entries()) {
     if (need <= 0) continue
-    const bank = await loadGenreQuestions(g)
+    const bank = banks.get(g) || []
     if (!bank.length) continue
     let added = 0
     for (const q of shuffleArray(bank)) {
@@ -3101,23 +3078,55 @@ async function banGenreAndRedistribute(
       extras.push(toQueueQuestion(room, q))
       added += 1
     }
+    // 유니크 부족분: 같은 장르 은행에서 중복 허용해 슬롯 수(큐 길이) 유지
+    if (added < need) {
+      const shuffled = shuffleArray(bank)
+      let i = 0
+      while (added < need && shuffled.length > 0) {
+        const q = shuffled[i % shuffled.length]
+        i += 1
+        extras.push(toQueueQuestion(room, q))
+        added += 1
+        dupFill += 1
+      }
+    }
     if (added > 0) distParts.push(`${g} +${added}`)
+  }
+
+  // 배정 장르가 비는 등 예외 시 남은 슬롯을 아무 viable 장르로 채움
+  while (extras.length < n) {
+    const g = viable[pickRandomIndex(viable.length)]
+    const bank = banks.get(g) || []
+    if (!bank.length) break
+    const q = bank[pickRandomIndex(bank.length)]
+    extras.push(toQueueQuestion(room, q))
+    dupFill += 1
+    const partIdx = distParts.findIndex((p) => p.startsWith(`${g} +`))
+    if (partIdx >= 0) {
+      const prev = Number(distParts[partIdx].slice(`${g} +`.length)) || 0
+      distParts[partIdx] = `${g} +${prev + 1}`
+    } else {
+      distParts.push(`${g} +1`)
+    }
   }
 
   if (extras.length === 0) {
     return { ok: false, hint: '다른 장르 곡을 은행에서 가져올 수 없습니다' }
   }
 
+  const fill = extras.slice(0, n)
   room.queue = [
     ...room.queue.slice(0, from),
     current,
-    ...shuffleArray([...keep, ...extras]),
+    ...shuffleArray([...keep, ...fill]),
   ]
 
-  const short = extras.length < n ? ` (은행 부족으로 ${extras.length}/${n}곡만 보충)` : ''
+  const dupNote = dupFill > 0
+    ? ` (은행 한도 초과 ${dupFill}곡은 중복 보충 · 총 곡 수 유지)`
+    : ''
   return {
     ok: true,
-    hint: `「${genre}」 ${n}곡 밴 → ${distParts.join(' · ') || '배분'}${short}`,
+    hint: `「${genre}」 ${n}곡 밴 → ${distParts.join(' · ') || '배분'}${dupNote}`,
   }
 }
 
@@ -3259,7 +3268,6 @@ const TARGET_AUGMENT_TYPES = new Set([
   'hide_hints',
   'audio_stutter',
   'score_share',
-  'swap_scores',
   'destroy_held_augment',
   // 쪼아요~는 디버프 중첩 금지에서 «빠져 있다» — 이미 걸린 사람·같은 사람에게도 계속 쓸 수 있다
   'peck_song',
@@ -4265,8 +4273,8 @@ async function applyAugmentEffect(
     }
     return {
       ok: true,
-      hint: `[${aug.name}] ${victim.nickname} → 「${songLabel}」 끝까지${leftNote}`,
-      chatText: `${user.nickname}님이 [${aug.name}]! ${victim.nickname}님은 「${songLabel}」을(를) 끝까지 다 들어야 합니다${leftNote}`,
+      hint: `[${aug.name}] ${victim.nickname}에게만 「${songLabel}」 끝까지${leftNote}`,
+      chatText: `${user.nickname}님이 [${aug.name}]! ${victim.nickname}님에게만 「${songLabel}」을(를) 끝까지 들려줍니다${leftNote}`,
       keepHeld,
     }
   }
@@ -4634,32 +4642,6 @@ async function applyAugmentEffect(
       ok: true,
       hint: `[${aug.name}] 지금부터 ${earlyRounds}R · 본인만 초성 즉시 공개`,
       chatText: `${user.nickname}님이 [${aug.name}]! 지금부터 ${earlyRounds}R 동안 본인에게만 초성이 즉시 보입니다`,
-    }
-  }
-
-  if (aug.effectType === 'follow_answer') {
-    const followRounds = rounds > 0 ? rounds : 2
-    const windowMsRaw = Number(value.windowMs)
-    const windowSecRaw = Number(value.windowSec)
-    const windowMs = Number.isFinite(windowMsRaw) && windowMsRaw > 0
-      ? Math.floor(windowMsRaw)
-      : Number.isFinite(windowSecRaw) && windowSecRaw > 0
-        ? Math.floor(windowSecRaw * 1000)
-        : 2000
-    m.activeBuffs.push({
-      name: aug.name,
-      description: aug.description,
-      effectType: aug.effectType,
-      effectValue: { rounds: followRounds, windowMs },
-      imageUrl: aug.imageUrl || null,
-      usedByNickname: user.nickname,
-      startIndex: room.index,
-      roundsLeft: followRounds,
-    })
-    return {
-      ok: true,
-      hint: `[${aug.name}] 지금부터 ${followRounds}R · 남이 맞힌 뒤 ${Math.round(windowMs / 1000)}초 안에 같은 답이면 인정`,
-      chatText: defaultChat,
     }
   }
 
@@ -5085,75 +5067,6 @@ async function applyAugmentEffect(
     }
   }
 
-  // 바꿔: 대상과 점수를 통째로 교환 (즉시 1회)
-  if (aug.effectType === 'swap_scores') {
-    const intended = targetUserId ? room.members.get(targetUserId) : null
-    if (!intended || intended.userId === m.userId) {
-      return { ok: false, hint: '대상을 선택하세요', chatText: null }
-    }
-    const shield = takeReflectShield(intended, room.index)
-    if (shield) {
-      io.to(intended.socketId).emit('augment:hint', {
-        name: shield.name,
-        hint: `[무지개 반사] ${user.nickname}님의 [${aug.name}]을(를) 되돌려보냈습니다`,
-        durationMs: 0,
-      })
-      return {
-        ok: true,
-        hint: `[무지개 반사] ${intended.nickname}님이 튕겨내 점수 교환이 무산됐습니다`,
-        chatText: `${intended.nickname}님의 [무지개 반사]! ${user.nickname}님의 [${aug.name}]이(가) 무산됐습니다`,
-      }
-    }
-    const mine = m.score
-    const theirs = intended.score
-    m.score = theirs
-    intended.score = mine
-    io.to(intended.socketId).emit('augment:hint', {
-      name: aug.name,
-      hint: `[${aug.name}] ${user.nickname}님과 점수가 바뀌었습니다 · ${theirs} → ${mine}`,
-      durationMs: 0,
-    })
-    return {
-      ok: true,
-      hint: `[${aug.name}] ${intended.nickname}님과 점수 교환 · ${mine} → ${theirs}`,
-      chatText: `${user.nickname}님이 [${aug.name}]! ${intended.nickname}님과 점수를 맞바꿨습니다 (${mine} ↔ ${theirs})`,
-    }
-  }
-
-  // 주작: 남들 화면에만 가짜 정답 알림. 실제 점수·공개 상태는 건드리지 않는다.
-  if (aug.effectType === 'fake_correct_alert') {
-    if (room.status !== 'playing') {
-      return { ok: false, hint: '플레이 중에만 쓸 수 있습니다', chatText: null }
-    }
-    const q = room.queue[room.index]
-    const openSlots = (q?.slots || []).filter((s) => !room.revealed[s.id])
-    const others = [...room.members.values()].filter((x) => isPlayingMember(x) && x.userId !== m.userId)
-    if (!q || !openSlots.length || !others.length) {
-      return { ok: false, hint: `[${aug.name}] 지금은 속일 대상이 없습니다`, chatText: null }
-    }
-    const fakeSlot = openSlots[Math.floor(Math.random() * openSlots.length)]
-    const fakeWinner = others[Math.floor(Math.random() * others.length)]
-    const fakePts = fakeSlot.hidden ? 3 : 1
-    for (const other of room.members.values()) {
-      if (other.userId === m.userId) continue
-      io.to(other.socketId).emit('chat:message', {
-        id: Date.now() + Math.floor(Math.random() * 1000),
-        userId: '',
-        nickname: '시스템',
-        text: fakeSlot.hidden
-          ? `${fakeWinner.nickname}님이 히든 문제를 맞혔습니다! +${fakePts}점`
-          : `${fakeWinner.nickname}님이 ${fakeSlot.label}을(를) 맞혔습니다! +${fakePts}점`,
-        system: true,
-        at: Date.now(),
-      })
-    }
-    return {
-      ok: true,
-      hint: `[${aug.name}] ${fakeWinner.nickname}님이 「${fakeSlot.label}」을(를) 맞힌 것처럼 꾸몄습니다 (실제 점수 변화 없음)`,
-      chatText: null,
-    }
-  }
-
   // 내가 왕이 될 상인가: 기간 종료 시 1등이면 +win, 아니면 -lose (settleCrownBet에서 정산)
   if (aug.effectType === 'crown_bet') {
     const betRounds = rounds > 0 ? rounds : 3
@@ -5177,128 +5090,6 @@ async function applyAugmentEffect(
       ok: true,
       hint: `[${aug.name}] ${betRounds}R 뒤 1등이면 +${win}, 아니면 -${lose}`,
       chatText: `${user.nickname}님이 [${aug.name}]! ${betRounds}라운드 뒤 1등이면 +${win}점, 아니면 -${lose}점`,
-    }
-  }
-
-  // 오히려 좋아: 이번 R 미득점이면 오히려 +bonus (settleFailForward에서 정산)
-  if (aug.effectType === 'fail_forward') {
-    const ffRounds = rounds > 0 ? rounds : 1
-    const bonusRaw = Number(value.bonus)
-    const bonus = Number.isFinite(bonusRaw) && bonusRaw > 0 ? Math.floor(bonusRaw) : 3
-    m.activeBuffs = m.activeBuffs.filter((b) => b.effectType !== 'fail_forward')
-    m.activeBuffs.push({
-      name: aug.name,
-      description: aug.description,
-      effectType: aug.effectType,
-      effectValue: { rounds: ffRounds, bonus },
-      imageUrl: aug.imageUrl || null,
-      usedByNickname: user.nickname,
-      usedByUserId: m.userId,
-      startIndex: room.index,
-      roundsLeft: ffRounds,
-    })
-    return {
-      ok: true,
-      hint: `[${aug.name}] 이번 라운드 못 맞히면 오히려 +${bonus}점`,
-      chatText: `${user.nickname}님이 [${aug.name}]! 이번 라운드를 못 맞히면 오히려 +${bonus}점을 얻습니다`,
-    }
-  }
-
-  // 중요한 건 꺾이지 않는 마음: 미득점 R마다 +bonus (settleComebackStack에서 정산)
-  if (aug.effectType === 'comeback_stack') {
-    const cbRounds = rounds > 0 ? rounds : 4
-    const bonusRaw = Number(value.bonus)
-    const bonus = Number.isFinite(bonusRaw) && bonusRaw > 0 ? Math.floor(bonusRaw) : 1
-    m.activeBuffs = m.activeBuffs.filter((b) => b.effectType !== 'comeback_stack')
-    m.activeBuffs.push({
-      name: aug.name,
-      description: aug.description,
-      effectType: aug.effectType,
-      effectValue: { rounds: cbRounds, bonus },
-      imageUrl: aug.imageUrl || null,
-      usedByNickname: user.nickname,
-      usedByUserId: m.userId,
-      startIndex: room.index,
-      roundsLeft: cbRounds,
-    })
-    return {
-      ok: true,
-      hint: `[${aug.name}] 지금부터 ${cbRounds}R · 못 맞힌 라운드마다 +${bonus}점`,
-      chatText: `${user.nickname}님이 [${aug.name}]! 지금부터 ${cbRounds}라운드 동안 못 맞힌 라운드마다 +${bonus}점`,
-    }
-  }
-
-  // 어림도 없지: 본인에게 걸린 디버프를 한 번에 정화
-  if (aug.effectType === 'cleanse_debuff') {
-    let cleared = 0
-    const drop = (had: unknown) => {
-      if (had) cleared += 1
-    }
-    drop(m.chatMute); m.chatMute = null
-    drop(m.chatMuteUntil); m.chatMuteUntil = null
-    drop(m.answerDelay); m.answerDelay = null
-    drop(m.politeSuffix); m.politeSuffix = null
-    drop(m.answerBlock); m.answerBlock = null
-    drop(m.accuseMark); m.accuseMark = null
-    drop(m.gabuki); m.gabuki = null
-    // flameKim은 시전자 본인의 공격 효과라 정화 대상이 아니다
-    drop(m.songMuteUntil && m.songMuteUntil > Date.now()); m.songMuteUntil = null
-    if (m.sakuraDecoy) {
-      cleared += 1
-      // 트루먼은 그냥 지우면 클라가 환상 상태로 남는다. 정상 종료 경로를 타야 한다.
-      if (m.sakuraDecoy.mode === 'truman') settleTrumanIllusion(io, room, m)
-      else m.sakuraDecoy = null
-    }
-    const before = m.activeBuffs.length
-    m.activeBuffs = m.activeBuffs.filter((b) => (
-      !DEBUFF_AUGMENT_TYPES.has(b.effectType) || b.usedByUserId === m.userId
-    ))
-    cleared += before - m.activeBuffs.length
-    if (!cleared) {
-      return { ok: false, hint: `[${aug.name}] 지금 걸린 디버프가 없습니다`, chatText: null }
-    }
-    return {
-      ok: true,
-      hint: `[${aug.name}] 걸려 있던 디버프 ${cleared}개를 털어냈습니다`,
-      chatText: `${user.nickname}님이 [${aug.name}]! 자신에게 걸린 디버프를 전부 털어냈습니다`,
-    }
-  }
-
-  // 킹받네: 마지막으로 나에게 디버프를 건 사람에게서 점수 탈취
-  if (aug.effectType === 'revenge_steal') {
-    const amtRaw = Number(value.amount)
-    const amount = Number.isFinite(amtRaw) && amtRaw > 0 ? Math.floor(amtRaw) : 2
-    // 디버프는 종류마다 저장 위치가 달라서 byNickname을 쓰는 필드들을 모아 본다.
-    const sources = [
-      m.chatMute?.byNickname,
-      m.answerDelay?.byNickname,
-      m.politeSuffix?.byNickname,
-      m.answerBlock?.byNickname,
-      m.gabuki?.byNickname,
-      // flameKim은 시전자 쪽에 저장되는 공격 효과라 내 디버프 목록이 아니다
-      ...m.activeBuffs
-        .filter((b) => DEBUFF_AUGMENT_TYPES.has(b.effectType) && b.usedByUserId !== m.userId)
-        .map((b) => b.usedByNickname),
-    ].filter((n): n is string => !!n && n !== m.nickname)
-    if (!sources.length) {
-      return { ok: false, hint: `[${aug.name}] 킹받을 상대가 없습니다`, chatText: null }
-    }
-    const targetNick = sources[sources.length - 1]
-    const culprit = [...room.members.values()].find((x) => x.nickname === targetNick && isPlayingMember(x))
-    if (!culprit) {
-      return { ok: false, hint: `[${aug.name}] ${targetNick}님이 지금 방에 없습니다`, chatText: null }
-    }
-    culprit.score -= amount
-    m.score += amount
-    io.to(culprit.socketId).emit('augment:hint', {
-      name: aug.name,
-      hint: `[${aug.name}] ${user.nickname}님이 되갚아 ${amount}점을 가져갔습니다`,
-      durationMs: 0,
-    })
-    return {
-      ok: true,
-      hint: `[${aug.name}] ${culprit.nickname}님에게서 ${amount}점 회수`,
-      chatText: `${user.nickname}님이 [${aug.name}]! ${culprit.nickname}님에게서 ${amount}점을 되갚았습니다`,
     }
   }
 
@@ -5348,27 +5139,6 @@ async function applyAugmentEffect(
       ok: true,
       hint: `[${aug.name}] ${intended.nickname}님의 [${lostName}]을(를) 부쉈습니다`,
       chatText: `${user.nickname}님이 [${aug.name}]! ${intended.nickname}님의 보유 증강을 부쉈습니다`,
-    }
-  }
-
-  // 몇 글자게?: 아직 안 나온 슬롯의 글자 수만 본인에게 알려준다
-  if (aug.effectType === 'reveal_answer_length') {
-    if (room.status !== 'playing') {
-      return { ok: false, hint: '플레이 중에만 쓸 수 있습니다', chatText: null }
-    }
-    const q = room.queue[room.index]
-    const openSlots = (q?.slots || []).filter((s) => !room.revealed[s.id])
-    if (!q || !openSlots.length) {
-      return { ok: false, hint: `[${aug.name}] 남은 문제가 없습니다`, chatText: null }
-    }
-    const parts = openSlots.map((s) => {
-      const len = String(s.answer).replace(/\s/g, '').length
-      return `${s.label} ${len}글자`
-    })
-    return {
-      ok: true,
-      hint: `[${aug.name}] ${parts.join(' · ')}`,
-      chatText: defaultChat,
     }
   }
 
@@ -6838,7 +6608,9 @@ export function registerSocket(io: Server) {
         hint: `[${byName}] 다 들었습니다`,
         durationMs: 3000,
       })
-      io.to(room.id).emit('room:state', roomState(room))
+      for (const member of room.members.values()) {
+        io.to(member.socketId).emit('room:state', roomState(room, member.userId))
+      }
     })
 
     socket.on('augment:reroll', async (_payload, cb?: (res: unknown) => void) => {
@@ -7286,7 +7058,14 @@ export function registerSocket(io: Server) {
           durationMs: 0,
         })
       }
-      io.to(room.id).emit('room:state', roomState(room))
+      if (aug.effectType === 'peck_song') {
+        // 벌칙 재생 정보는 소켓별로 개인화 (당사자만 peckSong URL 수신)
+        for (const member of room.members.values()) {
+          io.to(member.socketId).emit('room:state', roomState(room, member.userId))
+        }
+      } else {
+        io.to(room.id).emit('room:state', roomState(room))
+      }
       if (chatText) {
         emitToWatchers('chat:message', {
           id: Date.now(),
@@ -7868,6 +7647,7 @@ function startRound(io: Server, room: Room) {
     endGameAndBroadcast(io, room)
     return
   }
+  systemChat(io, room, `--------${room.index + 1}--------`)
   const duration = 40
   room.roundDuration = duration
   room.roundStartedAt = Date.now()
@@ -7982,14 +7762,14 @@ function endRound(io: Server, room: Room, reason: 'cleared' | 'skip' | 'timeout'
   // 한입만/맞췄죠?: 버프 tick 전에 실패 결산 (1R 버프가 tick으로 사라지면 패널티 누락)
   settleWagerAnswers(io, room)
   // roundScoreGain·roundsLeft를 보는 정산이라 tick보다 먼저 돌아야 한다
-  settleFailForward(io, room)
-  settleComebackStack(io, room)
   settleCrownBet(io, room)
   for (const m of room.members.values()) {
     tickBuffsAfterRound(io, room, m, room.index)
   }
   tickChatIsolate(room, room.index)
   settleAllAnswerProxies(io, room)
+
+  systemChat(io, room, `--------${room.index + 1}--------`)
 
   const reveal = buildRevealSlots(room, q, reason)
 

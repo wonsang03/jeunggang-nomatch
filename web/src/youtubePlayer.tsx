@@ -118,6 +118,8 @@ export function HiddenYouTube({
   roundDurationSec = null,
   loop = false,
   onEnded,
+  /** true면 한 번만 재생 — 끝나면 복구/볼륨 로직이 다시 틀지 않음 (쪼아요~) */
+  oneshot = false,
   /** 값이 바뀔 때마다 강제 재킥 (라운드 시작 등) */
   playEpoch = 0,
 }: {
@@ -145,6 +147,8 @@ export function HiddenYouTube({
   loop?: boolean
   /** 루프가 아닐 때 영상이 끝까지 재생되면 1번 호출 (쪼아요~ 벌칙 곡 종료 보고) */
   onEnded?: () => void
+  /** true면 한 번만 재생 — 끝나면 복구/볼륨 로직이 다시 틀지 않음 */
+  oneshot?: boolean
   playEpoch?: number | string
 }) {
   const id = ytId(url)
@@ -162,6 +166,8 @@ export function HiddenYouTube({
   cutMuteRef.current = cutMute
   const loopRef = useRef(loop)
   loopRef.current = loop
+  const oneshotRef = useRef(oneshot)
+  oneshotRef.current = oneshot
   const onEndedRef = useRef(onEnded)
   onEndedRef.current = onEnded
   /** 루프가 아닌 곡이 끝까지 재생됐다 — 복구 로직이 되살리지 않게 막는다 */
@@ -407,6 +413,8 @@ export function HiddenYouTube({
 
   const kickPlayback = (p: YtPlayer) => {
     clearMediaTimers()
+    // oneshot이 이미 끝났으면 되살리지 않는다 (증강 선택 화면 전환 시 무한 반복 방지)
+    if (oneshotRef.current && endedRef.current) return
     endedRef.current = false
     const unlockAt = unlockAtRef.current
     const waitMs = unlockAt != null ? Math.max(0, unlockAt - serverNow()) : 0
@@ -579,11 +587,14 @@ export function HiddenYouTube({
           onStateChange: (e) => {
             if (e.data === 0) {
               // 라운드 중·클립·앰비언트·배속: 끝나면 다시 처음부터 (배속 시 영상 끝에 멈추던 문제 방지)
-              const shouldLoop = loopRef.current
+              // oneshot(쪼아요~)은 절대 루프하지 않는다
+              const shouldLoop = !oneshotRef.current && (
+                loopRef.current
                 || endRef.current != null
                 || (durationSecRef.current && durationSecRef.current > 0)
                 || !!endsAtRef.current
                 || Math.abs((rateRef.current || 1) - 1) > 0.05
+              )
               if (shouldLoop) {
                 restartClipFromStart(e.target)
                 scheduleClipLoop(e.target)
@@ -619,8 +630,10 @@ export function HiddenYouTube({
               (e.data === 5 || e.data === -1 || e.data === 2)
               && !pausedRef.current
               && !audioLockedRef.current
+              && !endedRef.current
             ) {
               const t = setTimeout(() => {
+                if (endedRef.current) return
                 syncPlayback(e.target, { seek: e.data !== 2, forceSeek: true })
                 scheduleClipLoop(e.target)
               }, 80)
@@ -712,6 +725,7 @@ export function HiddenYouTube({
   useEffect(() => {
     const p = playerRef.current
     if (!p || !ready || paused || audioLockedRef.current) return
+    if (oneshotRef.current && endedRef.current) return
     try {
       const vol = cutMuteRef.current ? 0 : Math.max(0, Math.min(100, volume))
       p.setVolume(vol)
@@ -722,7 +736,8 @@ export function HiddenYouTube({
         p.unMute()
         p.setVolume(vol)
         const st = typeof p.getPlayerState === 'function' ? p.getPlayerState() : -1
-        if (st !== 1 && st !== 3) p.playVideo()
+        // ended(0)는 다시 틀지 않음 — 쪼아요~ 무한반복 방지
+        if (st !== 1 && st !== 3 && st !== 0) p.playVideo()
       }
     } catch { /* ignore */ }
   }, [volume, ready, paused])
@@ -748,6 +763,12 @@ export function HiddenYouTube({
         }
         // -1 unstarted, 0 ended, 2 paused, 5 cued
         if (st === -1 || st === 0 || st === 2 || st === 5) {
+          // oneshot은 ended(0)에서 절대 재시작하지 않고 종료 처리만 한다
+          if (oneshotRef.current && st === 0) {
+            endedRef.current = true
+            onEndedRef.current?.()
+            return
+          }
           badStateStreakRef.current += 1
           // 탭 복귀·ended·unstarted는 즉시. 그 외 paused/cued는 2연속일 때만 kick
           const hard =
@@ -787,12 +808,14 @@ export function HiddenYouTube({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, id])
 
-  // blocked 오버레이가 떠 있어도 주기적으로 자동 재시도 (클릭 전 무음 완화)
+  // 탭 전환·버퍼 끊김·뮤트 잔존으로 "갑자기 안 들림" 복구 — oneshot 종료 후에는 돌리지 않음
   useEffect(() => {
     if (!ready || !blocked || !id) return
+    if (oneshotRef.current && endedRef.current) return
     const t = setInterval(() => {
       const p = playerRef.current
       if (!p || pausedRef.current || audioLockedRef.current) return
+      if (oneshotRef.current && endedRef.current) return
       try {
         kickPlayback(p)
       } catch { /* ignore */ }
@@ -969,7 +992,7 @@ export function RoomSongPersistentBgm() {
     const elapsed = Math.max(0, now - started)
     return (elapsed % cycle) >= onMs
   })()
-  const baseVol = (songPowerOff || stutterOff || round?.readingMuted || readingPreSolveMute) ? 0 : musicVolume
+  const baseVol = (songPowerOff || stutterOff || round?.readingMuted || readingPreSolveMute || !!me?.peckSong) ? 0 : musicVolume
   const songPlaybackRate = (!inDuel && me?.playbackRate && me.playbackRate > 0 && me.playbackRate !== 1)
     ? me.playbackRate
     : 1
@@ -1109,12 +1132,16 @@ export function FlameKimOverlayBgm() {
   if (!session || !room || room.status === 'lobby' || room.status === 'ended') return null
 
   const songPowerOff = !!(me?.songMuteUntil && now < me.songMuteUntil)
-  const baseVol = songPowerOff ? 0 : musicVolume
+  // 쪼아요~ 중에는 대상만 벌칙곡 — 방 곡·다른 오버레이는 죽인다
+  const peckMute = !!me?.peckSong
+  const baseVol = (songPowerOff || peckMute) ? 0 : musicVolume
   // 야차룰 중엔 볼륨만 끄고 플레이어는 유지 (돌아와도 이어 재생)
   const vol = room.status === 'duel'
     ? 0
     : Math.min(100, Math.round(baseVol * 2))
   const label = session.source === 'party' ? '풍악' : '불꽃남자'
+
+  if (peckMute) return null
 
   return (
     <HiddenYouTube
@@ -1143,7 +1170,8 @@ export function FlameKimOverlayBgm() {
 export function PeckSongBgm() {
   const { user, room, musicVolume } = useGame()
   const me = room?.members.find((m) => m.userId === user?.id)
-  const peck = me?.peckSong ?? null
+  // 본인에게 걸린 벌칙만 재생 — 다른 멤버의 peckSong은 무시
+  const peck = (me?.peckSong?.youtubeUrl ? me.peckSong : null)
   const [session, setSession] = useState<{
     id: string
     url: string
@@ -1155,6 +1183,11 @@ export function PeckSongBgm() {
 
   useEffect(() => {
     if (!peck || !room || room.status === 'lobby' || room.status === 'ended') {
+      setSession(null)
+      return
+    }
+    // 이미 종료 보고한 세션이 서버에 남아 있어도 다시 틀지 않음
+    if (reportedRef.current === peck.id) {
       setSession(null)
       return
     }
@@ -1171,14 +1204,14 @@ export function PeckSongBgm() {
     })
   }, [peck, peck?.id, room, room?.status])
 
-  if (!session || !room || room.status === 'lobby' || room.status === 'ended') return null
+  if (!user?.id || !session || !room || room.status === 'lobby' || room.status === 'ended') return null
 
   const vol = Math.min(100, Math.round(musicVolume * 2))
 
   return (
     <>
       <HiddenYouTube
-        key={`yt-peck-${session.id}`}
+        key={`yt-peck-${user.id}-${session.id}`}
         url={session.url}
         startSec={session.startSec}
         volume={vol}
@@ -1189,12 +1222,14 @@ export function PeckSongBgm() {
         cutMute={false}
         roundEndsAt={null}
         roundDurationSec={null}
+        oneshot
         onEnded={() => {
           if (reportedRef.current === session.id) return
           reportedRef.current = session.id
+          setSession(null)
           getSocket()?.emit('augment:peck_done', { id: session.id })
         }}
-        playEpoch={`peck-${session.id}`}
+        playEpoch={`peck-${user.id}-${session.id}`}
       />
       <div style={{
         position: 'fixed',
@@ -1211,7 +1246,7 @@ export function PeckSongBgm() {
         fontSize: 12,
         ...sk('#E0B341'),
       }}>
-        🐤 {session.byName} · 끝까지 재생 중
+        🐤 {session.byName} · 끝까지 재생 중 (본인만)
       </div>
     </>
   )

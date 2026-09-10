@@ -45,12 +45,10 @@ const URLS = {
   '트루먼쇼': '/augments/truman-show.jpg',
   '불꽃남자김상원': '/augments/fire-sangwon.jpg',
   '무지개 반사': '/augments/rainbow-reflect.jpg',
-  '김동주의 가호': '/augments/kimdongju-gaho.jpg',
-  '박진성의 가호': '/augments/parkjinseong-gaho.jpg',
-  '신동혁의 가호': '/augments/sindonghyeok-gaho.jpg',
   '일론 머스크의 가호': '/augments/elon-musk-gaho.jpg',
   '풍악을 울려라': '/augments/pungak.jpg',
   '미룬이의 가호': '/augments/miruni-gaho.png',
+  '쪼아요~': '/augments/peck.png',
 }
 
 let src = fs.readFileSync(seedPath, 'utf8')

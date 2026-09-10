@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import { avatarSrc } from './api'
 import { playSfx } from './sfx'
@@ -308,8 +308,115 @@ export const HOSTILE_AUGMENT_TYPES = new Set([
   'gabuki_mark', 'hide_hints', 'audio_stutter', 'power_off_others', 'party_music_others',
   'chat_isolate', 'slow_playback', 'answer_proxy', 'score_steal', 'rock_throw',
   'steal_chain', 'yacha_duel', 'flame_kim', 'mud_fight',
-  'swap_scores', 'destroy_held_augment',
+  'destroy_held_augment',
 ])
+
+/** 플레이어 1명 이상 지목 */
+const OPPONENT_TARGET_TYPES = new Set([
+  'mute_chat', 'soft_chat_mute', 'slow_playback', 'answer_proxy', 'named_decoy',
+  'sakura_decoy', 'answer_delay', 'yacha_duel', 'polite_suffix', 'answer_block',
+  'rock_throw', 'steal_chain', 'score_steal', 'accuse_sleep', 'gabuki_mark',
+  'steal_held_augment', 'flame_kim', 'hide_hints', 'audio_stutter', 'score_share',
+  'destroy_held_augment', 'peck_song',
+])
+
+/** 본인에게만 걸리는 이득·리스크 */
+const SELF_TARGET_TYPES = new Set([
+  'score_mult', 'score_mult_no_hint', 'score_mult_hint_only', 'flash_answer',
+  'delayed_answer', 'late_answer', 'reveal_game_song', 'alien_qwerty_answer',
+  'wager_answer', 'hidden_run', 'slow_starter', 'early_chosung', 'score_bonus',
+  'self_suffix_bonus', 'know_but_cant', 'auto_reveal_slot', 'peek_next_hint',
+  'future_sight', 'crown_bet', 'force_skip', 'rank_jump_tie', 'cha_cha_cha',
+  'combo_clear_double', 'water_ghost', 'reflect_debuff',
+])
+
+export type AugmentTargetInfo = {
+  label: string
+  color: string
+  bg: string
+}
+
+/** 선택·보유 화면용: 본인 / 상대 지목 등을 한눈에 */
+export function augmentTargetInfo(effectType?: string | null): AugmentTargetInfo | null {
+  if (!effectType) return null
+  if (OPPONENT_TARGET_TYPES.has(effectType)) {
+    return { label: '상대 지목', color: C.red, bg: C.redLight }
+  }
+  if (effectType === 'party_music_others' || effectType === 'power_off_others' || effectType === 'answer_block_others') {
+    return { label: '본인 제외', color: C.red, bg: C.redLight }
+  }
+  if (
+    effectType === 'equalize_scores'
+    || effectType === 'named_decoy_all'
+    || effectType === 'chat_isolate'
+    || effectType === 'mud_fight'
+    || effectType === 'extend_round'
+  ) {
+    return { label: '전원', color: C.graphite, bg: '#E8EEF2' }
+  }
+  if (effectType === 'ban_genre') {
+    return { label: '장르 선택', color: C.green, bg: C.greenLight }
+  }
+  if (effectType === 'swap_genre_counts' || effectType === 'equalize_genre_remaining') {
+    return { label: '큐 조작', color: C.graphite, bg: '#E8EEF2' }
+  }
+  if (effectType === 'gaho_select') {
+    return { label: '가호 선택', color: C.tierGaho, bg: '#EDE6F7' }
+  }
+  if (effectType === 'chaos_cast') {
+    return { label: '랜덤', color: C.graphite, bg: '#E8EEF2' }
+  }
+  if (effectType === 'tier_upgrade') {
+    return { label: '전환', color: C.graphite, bg: '#E8EEF2' }
+  }
+  if (effectType === 'donate_from_random') {
+    return { label: '랜덤 상대', color: C.red, bg: C.redLight }
+  }
+  if (effectType === 'steal_from_leader') {
+    return { label: '1등 대상', color: C.red, bg: C.redLight }
+  }
+  if (effectType === 'collect_piece') {
+    return { label: '조각', color: C.graphite, bg: '#E8EEF2' }
+  }
+  if (effectType === 'flavor_announce') {
+    return { label: '드립', color: C.graphite, bg: '#E8EEF2' }
+  }
+  if (SELF_TARGET_TYPES.has(effectType)) {
+    return { label: '본인', color: C.blue, bg: C.blueLight }
+  }
+  return null
+}
+
+export function AugmentTargetBadge({
+  effectType,
+  style,
+}: {
+  effectType?: string | null
+  style?: CSSProperties
+}) {
+  const info = augmentTargetInfo(effectType)
+  if (!info) return null
+  return (
+    <span
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        fontFamily: F.ui,
+        fontSize: 11,
+        fontWeight: 800,
+        letterSpacing: 0.02,
+        color: info.color,
+        backgroundColor: info.bg,
+        border: `1.5px solid ${info.color}`,
+        padding: '2px 8px',
+        lineHeight: 1.2,
+        ...style,
+      }}
+    >
+      {info.label}
+    </span>
+  )
+}
 
 /** 증강 적용 칸: 썸네일 + 짧은 라벨 · 호버로 카드 */
 export function AppliedAugmentChip({
