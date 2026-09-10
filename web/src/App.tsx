@@ -1305,7 +1305,7 @@ const GameScoreboard = memo(function GameScoreboard({
 })
 
 /** 정답·증강 등 시스템 알림만 모은 로그 (사람 채팅과 분리) */
-const ROUND_LOG_DIVIDER_RE = /^-+\d+-+$/
+const ROUND_LOG_DIVIDER_RE = /^-+\d+R?-+$/
 const GameLogList = memo(function GameLogList({
   logs,
   setChatCardHover,
@@ -1318,8 +1318,8 @@ const GameLogList = memo(function GameLogList({
   return (
     <>
       {logs.map((msg) => {
-        const isRoundDivider = ROUND_LOG_DIVIDER_RE.test(msg.text.trim())
-        if (isRoundDivider) {
+        const dividerMatch = msg.text.trim().match(/^-+(\d+)R?-+$/)
+        if (dividerMatch) {
           return (
             <div
               key={msg.id}
@@ -1341,7 +1341,7 @@ const GameLogList = memo(function GameLogList({
                 letterSpacing: 0.4,
                 whiteSpace: 'nowrap',
               }}>
-                {msg.text.trim()}
+                {dividerMatch[1]}R
               </div>
               <div style={{ flex: 1, height: 1, background: C.muted, opacity: 0.35 }} />
             </div>

@@ -7647,7 +7647,7 @@ function startRound(io: Server, room: Room) {
     endGameAndBroadcast(io, room)
     return
   }
-  systemChat(io, room, `--------${room.index + 1}--------`)
+  systemChat(io, room, `--------${room.index + 1}R--------`)
   const duration = 40
   room.roundDuration = duration
   room.roundStartedAt = Date.now()
@@ -7769,7 +7769,7 @@ function endRound(io: Server, room: Room, reason: 'cleared' | 'skip' | 'timeout'
   tickChatIsolate(room, room.index)
   settleAllAnswerProxies(io, room)
 
-  systemChat(io, room, `--------${room.index + 1}--------`)
+  systemChat(io, room, `--------${room.index + 1}R--------`)
 
   const reveal = buildRevealSlots(room, q, reason)
 
