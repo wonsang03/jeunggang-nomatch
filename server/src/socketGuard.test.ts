@@ -22,8 +22,12 @@ let port: number
 /** 가드를 통과해 실제로 핸들러가 실행된 횟수 */
 let handledPayloads: unknown[] = []
 
-function connect(): Promise<ClientSocket> {
-  const token = jwt.sign({ id: 'u1', username: 'u1', nickname: '테스터', isAdmin: false }, SECRET)
+/**
+ * 레이트리밋 버킷은 계정(`who`) 단위 전역이다. 테스트끼리 서로의 버킷을
+ * 소진시키지 않도록 각 테스트는 자기 계정으로 접속한다.
+ */
+function connect(userId = 'u1'): Promise<ClientSocket> {
+  const token = jwt.sign({ id: userId, username: userId, nickname: '테스터', isAdmin: false }, SECRET)
   return new Promise((resolve, reject) => {
     const c = createClient(`http://localhost:${port}`, {
       auth: { token },
@@ -95,7 +99,7 @@ afterAll(async () => {
 
 describe('소켓 가드', () => {
   it('정상 페이로드는 그대로 통과한다', async () => {
-    const c = await connect()
+    const c = await connect('t-ok')
     handledPayloads = []
     const res = await emitAck(c, 'room:join', { code: 'ab12' })
     expect(res).toEqual({ ok: true, code: 'AB12' })
@@ -104,7 +108,7 @@ describe('소켓 가드', () => {
   })
 
   it('타입이 틀린 페이로드는 핸들러에 닿지 않는다', async () => {
-    const c = await connect()
+    const c = await connect('t-badtype')
     handledPayloads = []
     // 예전에는 이 한 줄이 서버를 내렸다
     const res = await emitAck(c, 'room:join', { code: 123 })
@@ -114,7 +118,7 @@ describe('소켓 가드', () => {
   })
 
   it('페이로드가 객체가 아니어도 죽지 않는다', async () => {
-    const c = await connect()
+    const c = await connect('t-nonobj')
     handledPayloads = []
     for (const bad of [null, 'string', 42, [], true]) {
       const res = await emitAck(c, 'room:join', bad)
@@ -125,7 +129,7 @@ describe('소켓 가드', () => {
   })
 
   it('모르는 키는 버리고 아는 키만 넘긴다', async () => {
-    const c = await connect()
+    const c = await connect('t-strip')
     handledPayloads = []
     await emitAck(c, 'room:join', { code: 'ab12', __proto__: { evil: 1 }, extra: 'x'.repeat(5000) })
     expect(handledPayloads[0]).toEqual({ code: 'ab12' })
@@ -133,7 +137,7 @@ describe('소켓 가드', () => {
   })
 
   it('핸들러가 터져도 연결과 서버가 살아있다', async () => {
-    const c = await connect()
+    const c = await connect('t-boom')
     const sync = await emitAck(c, 'boom:sync', {})
     const async = await emitAck(c, 'boom:async', {})
     expect(sync).toEqual({ ok: false, error: '처리 중 오류가 발생했습니다' })
@@ -146,7 +150,8 @@ describe('소켓 가드', () => {
   })
 
   it('버스트를 넘기면 레이트리밋이 걸린다', async () => {
-    const c = await connect()
+    // 버킷은 계정 전역이므로 테스트마다 다른 계정을 쓴다
+    const c = await connect('rate-burst')
     const results = []
     for (let i = 0; i < 5; i += 1) results.push(await emitAck(c, 'fast', {}))
     expect(results.slice(0, 3).every((r) => r.ok === true)).toBe(true)
@@ -154,14 +159,32 @@ describe('소켓 가드', () => {
     c.close()
   })
 
-  it('레이트리밋은 이벤트별·연결별로 따로 센다', async () => {
-    const a = await connect()
-    const b = await connect()
+  it('레이트리밋은 이벤트별로 따로 세고, 계정이 다르면 독립이다', async () => {
+    const a = await connect('rate-a')
+    const b = await connect('rate-b')
     for (let i = 0; i < 4; i += 1) await emitAck(a, 'fast', {})
-    // a가 다 써도 b는 멀쩡해야 한다
+    // 계정이 다르면 a가 다 써도 b는 멀쩡해야 한다
     expect((await emitAck(b, 'fast', {})).ok).toBe(true)
-    // 다른 이벤트도 멀쩡해야 한다
+    // 같은 계정이라도 다른 이벤트는 따로 센다
     expect((await emitAck(a, 'room:join', { code: 'q1' })).ok).toBe(true)
+    a.close()
+    b.close()
+  })
+
+  /**
+   * 회귀 방지: 예전에는 버킷이 연결마다 새로 생겨서, 같은 계정으로 소켓을
+   * 하나 더 열기만 하면 허용량이 그대로 두 배가 됐다. 즉 레이트리밋이
+   * 사실상 없는 것과 같았다. 이제는 연결 수와 무관하게 합산돼야 한다.
+   */
+  it('같은 계정은 연결을 더 열어도 버킷을 나눠 쓴다', async () => {
+    const a = await connect('rate-shared')
+    const b = await connect('rate-shared')
+    // burst 3 — a에서 3번이면 소진이다
+    for (let i = 0; i < 3; i += 1) {
+      expect((await emitAck(a, 'fast', {})).ok).toBe(true)
+    }
+    // 새 연결이라고 리셋되면 안 된다
+    expect((await emitAck(b, 'fast', {})).ok).toBe(false)
     a.close()
     b.close()
   })

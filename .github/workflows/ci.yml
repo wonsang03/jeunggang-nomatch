@@ -24,6 +24,11 @@ jobs:
       - run: npx prisma generate
       - run: npm run typecheck
       - run: npm test
+      # 취약점은 보이게만 한다. 지금 남은 건 devDependency·CLI 경로뿐이라
+      # 여기서 막으면 무관한 PR 이 계속 빨갛게 된다.
+      - name: npm audit (비차단)
+        run: npm audit --audit-level=high
+        continue-on-error: true
 
   web:
     name: web (typecheck + build)
@@ -41,3 +46,6 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run build
+      - name: npm audit (비차단)
+        run: npm audit --audit-level=high
+        continue-on-error: true

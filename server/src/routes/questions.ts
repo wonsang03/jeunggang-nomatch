@@ -93,12 +93,23 @@ questionRouter.get('/', authMiddleware, async (req, res) => {
   }
 
   if (q) {
-    where.OR = [
-      { youtubeUrl: { contains: q } },
-      { slots: { some: { label: { contains: q } } } },
-      { slots: { some: { answer: { contains: q } } } },
-      { slots: { some: { acceptAnswers: { contains: q } } } },
-    ]
+    /**
+     * 응답 본문에서는 mapQuestion 이 비관리자에게 정답을 가린다. 하지만 정답을
+     * 조건으로 검색할 수 있으면 total 값만 보고도 "이 정답이 은행에 있는가" 를
+     * 확인할 수 있다. 접두사를 늘려가며 두드리면 정답이 복원된다.
+     * 그래서 정답 본문 검색은 관리자에게만 연다.
+     */
+    where.OR = isAdmin
+      ? [
+          { youtubeUrl: { contains: q } },
+          { slots: { some: { label: { contains: q } } } },
+          { slots: { some: { answer: { contains: q } } } },
+          { slots: { some: { acceptAnswers: { contains: q } } } },
+        ]
+      : [
+          { youtubeUrl: { contains: q } },
+          { slots: { some: { label: { contains: q } } } },
+        ]
   }
 
   const [questions, total] = await Promise.all([

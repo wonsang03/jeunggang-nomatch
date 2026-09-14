@@ -6,6 +6,7 @@ import path from 'path'
 import { fileURLToPath } from 'url'
 import { prisma } from '../config.js'
 import { authMiddleware, signToken, type AuthUser } from '../auth.js'
+import { takeToken } from '../socketGuard.js'
 import { loadUserStats } from '../records.js'
 import type { Request } from 'express'
 
@@ -16,6 +17,21 @@ export const UPLOADS_DIR = path.resolve(__dirname, '../../uploads/avatars')
 
 function ensureUploadsDir() {
   fs.mkdirSync(UPLOADS_DIR, { recursive: true })
+}
+
+/**
+ * 아바타 파일 경로를 만든다.
+ *
+ * 파일명에 유저 id 가 그대로 들어간다. id 는 토큰에서 오고 auth.ts 가 이미
+ * 형태를 검증하지만, 그 검증이 뚫리거나 느슨해지는 날 여기서 uploads 밖으로
+ * 파일을 쓰게 된다. 마지막으로 한 번 더 가둔다.
+ */
+function avatarPath(userId: string, ext: string) {
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(userId)) return null
+  const p = path.resolve(UPLOADS_DIR, `${userId}.${ext}`)
+  if (p !== path.join(UPLOADS_DIR, `${userId}.${ext}`)) return null
+  if (!p.startsWith(UPLOADS_DIR + path.sep)) return null
+  return p
 }
 
 function toUserPayload(user: {
@@ -38,9 +54,27 @@ function toUserPayload(user: {
   }
 }
 
+/**
+ * 로그인·가입 스로틀링.
+ *
+ * 예전에는 아무 제한이 없었다. bcrypt.compare 는 한 번에 수십 ms 의 CPU 를 쓰므로
+ * 미인증 상태로 무한히 때릴 수 있다는 건 (1) 비밀번호 무차별 대입이 가능하고
+ * (2) 단일 프로세스인 게임 서버의 CPU 를 그대로 태울 수 있다는 뜻이다.
+ *
+ * IP 는 한 집·학교에서 여러 명이 같이 쓸 수 있으니 넉넉히, 계정별로는 좁게 잡는다.
+ */
+const RATE_LOGIN_IP = { burst: 20, refillMs: 10_000 }
+const RATE_LOGIN_ACCOUNT = { burst: 8, refillMs: 30_000 }
+const RATE_REGISTER_IP = { burst: 5, refillMs: 60_000 }
+
+function clientIp(req: Request) {
+  return req.ip || req.socket.remoteAddress || 'unknown'
+}
+
 const registerSchema = z.object({
   username: z.string().min(3).max(32),
-  password: z.string().min(4).max(72),
+  // 4자는 사전 공격에 사실상 무방비였다. 기존 계정의 로그인에는 영향이 없다.
+  password: z.string().min(8).max(72),
   nickname: z.string().min(1).max(24),
 })
 
@@ -59,12 +93,18 @@ const profileSchema = z.object({
 })
 
 authRouter.post('/register', async (req, res) => {
+  if (!takeToken(`register:ip:${clientIp(req)}`, RATE_REGISTER_IP)) {
+    return res.status(429).json({ error: '요청이 너무 잦습니다. 잠시 후 다시 시도해 주세요' })
+  }
   const parsed = registerSchema.safeParse(req.body)
-  if (!parsed.success) return res.status(400).json({ error: '입력값을 확인해주세요' })
+  if (!parsed.success) {
+    return res.status(400).json({ error: '아이디 3~32자, 비밀번호 8자 이상, 닉네임 1~24자로 입력해주세요' })
+  }
 
   const { username, password, nickname } = parsed.data
   const exists = await prisma.user.findUnique({ where: { username } })
-  if (exists) return res.status(409).json({ error: '이미 존재하는 아이디입니다' })
+  // 아이디 존재 여부는 어차피 가입 시도로 드러나지만, 굳이 확정해 주지는 않는다
+  if (exists) return res.status(409).json({ error: '사용할 수 없는 아이디입니다' })
 
   const passwordHash = await bcrypt.hash(password, 10)
   const user = await prisma.user.create({
@@ -76,8 +116,16 @@ authRouter.post('/register', async (req, res) => {
 })
 
 authRouter.post('/login', async (req, res) => {
+  if (!takeToken(`login:ip:${clientIp(req)}`, RATE_LOGIN_IP)) {
+    return res.status(429).json({ error: '로그인 시도가 너무 잦습니다. 잠시 후 다시 시도해 주세요' })
+  }
   const parsed = loginSchema.safeParse(req.body)
   if (!parsed.success) return res.status(400).json({ error: '입력값을 확인해주세요' })
+
+  // 계정 단위 제한 — 한 아이디를 여러 IP에서 두드리는 경우를 막는다
+  if (!takeToken(`login:acct:${parsed.data.username.toLowerCase()}`, RATE_LOGIN_ACCOUNT)) {
+    return res.status(429).json({ error: '로그인 시도가 너무 잦습니다. 잠시 후 다시 시도해 주세요' })
+  }
 
   const user = await prisma.user.findUnique({ where: { username: parsed.data.username } })
   if (!user) return res.status(401).json({ error: '아이디 또는 비밀번호가 틀렸습니다' })
@@ -161,11 +209,12 @@ authRouter.post('/avatar', authMiddleware, async (req, res) => {
 
   ensureUploadsDir()
   const filename = `${auth.id}.${ext}`
-  const filepath = path.join(UPLOADS_DIR, filename)
+  const filepath = avatarPath(auth.id, ext)
+  if (!filepath) return res.status(400).json({ error: '잘못된 요청입니다' })
   // 이전 확장자 파일 정리
   for (const oldExt of ['png', 'jpg', 'webp']) {
-    const old = path.join(UPLOADS_DIR, `${auth.id}.${oldExt}`)
-    if (old !== filepath && fs.existsSync(old)) fs.unlinkSync(old)
+    const old = avatarPath(auth.id, oldExt)
+    if (old && old !== filepath && fs.existsSync(old)) fs.unlinkSync(old)
   }
   fs.writeFileSync(filepath, buf)
 
@@ -181,8 +230,8 @@ authRouter.delete('/avatar', authMiddleware, async (req, res) => {
   const auth = (req as Request & { user: AuthUser }).user
   ensureUploadsDir()
   for (const ext of ['png', 'jpg', 'webp']) {
-    const p = path.join(UPLOADS_DIR, `${auth.id}.${ext}`)
-    if (fs.existsSync(p)) fs.unlinkSync(p)
+    const p = avatarPath(auth.id, ext)
+    if (p && fs.existsSync(p)) fs.unlinkSync(p)
   }
   const user = await prisma.user.update({
     where: { id: auth.id },

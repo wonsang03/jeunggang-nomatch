@@ -4,8 +4,34 @@ import { BANK_GENRES } from '../src/genres.js'
 
 const prisma = new PrismaClient()
 
-async function main() {
-  const adminHash = await bcrypt.hash('admin1234', 10)
+/**
+ * 기본 계정 생성.
+ *
+ * 예전에는 무조건 admin/admin1234 · test/test1234 를 만들었다. 배포 절차가
+ * 로컬 dev.db 를 서버로 그대로 올리기 때문에, 로컬에서 한 번 시드를 돌리면
+ * 그 계정이 운영 DB에 그대로 실려 갔다. `admin1234` 는 어떤 기본 크리덴셜
+ * 목록에도 들어 있는 조합이라 사실상 공개된 관리자 계정이었다.
+ *
+ * 이제는 명시적으로 허용해야만 만든다.
+ *  - SEED_ADMIN_PASSWORD 를 주면 그 비밀번호로 만든다 (권장)
+ *  - SEED_DEFAULT_ACCOUNTS=1 이면 예전처럼 약한 기본값으로 만든다 (로컬 전용)
+ *  - 둘 다 없으면 계정을 만들지 않고 넘어간다
+ *
+ * 이미 존재하는 계정의 비밀번호는 예나 지금이나 건드리지 않는다(update: {}).
+ */
+async function seedAccounts() {
+  const adminPassword = process.env.SEED_ADMIN_PASSWORD
+  const allowWeakDefaults = process.env.SEED_DEFAULT_ACCOUNTS === '1'
+
+  if (!adminPassword && !allowWeakDefaults) {
+    console.log('· 기본 계정 생성을 건너뜁니다 (SEED_ADMIN_PASSWORD 또는 SEED_DEFAULT_ACCOUNTS=1 필요)')
+    return
+  }
+  if (!adminPassword) {
+    console.warn('⚠ 약한 기본 계정(admin/admin1234, test/test1234)을 만듭니다 — 로컬에서만 쓰세요')
+  }
+
+  const adminHash = await bcrypt.hash(adminPassword || 'admin1234', 10)
   await prisma.user.upsert({
     where: { username: 'admin' },
     update: {},
@@ -17,17 +43,23 @@ async function main() {
     },
   })
 
-  const userHash = await bcrypt.hash('test1234', 10)
-  await prisma.user.upsert({
-    where: { username: 'test' },
-    update: {},
-    create: {
-      username: 'test',
-      passwordHash: userHash,
-      nickname: '멜로디킹',
-      isAdmin: false,
-    },
-  })
+  if (allowWeakDefaults) {
+    const userHash = await bcrypt.hash('test1234', 10)
+    await prisma.user.upsert({
+      where: { username: 'test' },
+      update: {},
+      create: {
+        username: 'test',
+        passwordHash: userHash,
+        nickname: '멜로디킹',
+        isAdmin: false,
+      },
+    })
+  }
+}
+
+async function main() {
+  await seedAccounts()
 
   const genreIds: Record<string, string> = {}
   for (const name of BANK_GENRES) {
@@ -888,7 +920,7 @@ async function main() {
     })
   }
 
-  console.log(`Seed OK — admin/admin1234 , test/test1234 · augments ${augments.length}`)
+  console.log(`Seed OK — augments ${augments.length}`)
 }
 
 main()

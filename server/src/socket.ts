@@ -487,7 +487,7 @@ function applyDomainExpansionPulse(
         x.answerBlockUntilBy = null
       }
     }
-    io.to(room.id).emit('room:state', roomState(room))
+    emitRoomState(io, room)
   }, blockMs + 80)
   room.extraTimers.push(t)
   return { hit, reflectedCount }
@@ -622,7 +622,7 @@ function tryTriggerAccuseSleep(io: Server, room: Room, m: Member) {
     system: true,
     at: Date.now(),
   })
-  io.to(room.id).emit('room:state', roomState(room))
+  emitRoomState(io, room)
 }
 
 function isChatMuted(m: Member, roundIndex: number, _room?: Room | null) {
@@ -2051,6 +2051,41 @@ function assignHeldFromOfferPick(
 const rooms = new Map<string, Room>()
 
 /**
+ * 방 id·비공개 코드 생성.
+ *
+ * 예전에는 `Math.random().toString(36).slice(2,8)` 이었다. Math.random 은
+ * 암호학적 난수가 아니라서(V8은 xorshift128+) 출력 몇 개만 관측하면 이후 값을
+ * 예측할 수 있다. 비공개 방에서는 이 코드가 유일한 접근 통제 수단이므로
+ * crypto 난수로 뽑는다. id 는 충돌하면 기존 방을 덮어써 버리므로 다시 뽑는다.
+ */
+const ROOM_ID_ALPHABET = 'abcdefghijklmnopqrstuvwxyz0123456789'
+/** 코드는 사람이 불러주고 받아적는다 — 헷갈리는 0/O/1/I/L 은 뺀다 */
+const ROOM_CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'
+
+function randomFrom(alphabet: string, length: number) {
+  let out = ''
+  for (let i = 0; i < length; i += 1) out += alphabet[randomInt(alphabet.length)]
+  return out
+}
+
+function newRoomId() {
+  for (let i = 0; i < 20; i += 1) {
+    const id = randomFrom(ROOM_ID_ALPHABET, 6)
+    if (!rooms.has(id)) return id
+  }
+  // 여기까지 왔으면 방이 비정상적으로 많은 것 — 길이를 늘려 확실히 피한다
+  return randomFrom(ROOM_ID_ALPHABET, 10)
+}
+
+function newRoomCode() {
+  for (let i = 0; i < 20; i += 1) {
+    const code = randomFrom(ROOM_CODE_ALPHABET, 6)
+    if (![...rooms.values()].some((r) => r.code === code)) return code
+  }
+  return randomFrom(ROOM_CODE_ALPHABET, 10)
+}
+
+/**
  * 게임 중 연결이 끊긴 사람을 기다려 주는 시간.
  * 새로고침·터널 진입·앱 전환 정도는 여기 안에서 대부분 돌아온다.
  */
@@ -2187,8 +2222,17 @@ function roomState(room: Room, viewerUserId?: string) {
       const spoilQ = room.queue[room.index]
       // 트루먼에게 진짜 곡 정답 힌트를 보내 환상이 깨지는 중첩을 방지한다.
       const truman = isTrumanIllusion(m, room.index)
-      const spoilActive = !!(spoilQ && room.status !== 'duel' && !truman && knowButCantBuff(m, room.index, room))
-      const alienActive = !!(spoilQ && room.status !== 'duel' && !truman && !spoilActive && alienQwertyBuff(m, room.index, room))
+      /**
+       * 스포일러는 본인에게만 보여야 한다.
+       *
+       * 예전에는 이 값이 members[] 안에 담긴 채 방 전체로 브로드캐스트됐다.
+       * 클라이언트가 `me?.knowSpoilTitle` 로 자기 것만 읽고 있었을 뿐이라,
+       * 증강이 없는 사람도 소켓 페이로드에서 남의 칸을 열면 정답이 그대로 보였다.
+       * 뷰어가 지정되지 않은 브로드캐스트에서는 아무에게도 채우지 않는다.
+       */
+      const spoilVisible = viewerUserId != null && m.userId === viewerUserId
+      const spoilActive = spoilVisible && !!(spoilQ && room.status !== 'duel' && !truman && knowButCantBuff(m, room.index, room))
+      const alienActive = spoilVisible && !!(spoilQ && room.status !== 'duel' && !truman && !spoilActive && alienQwertyBuff(m, room.index, room))
       // 일론=전 슬롯·히든 영타 / 나이거=제목·가수·커버·캐릭터 평문
       const spoilBySlot = alienActive
         ? buildSpoilBySlot(spoilQ!, 'qwerty', true)
@@ -2439,6 +2483,34 @@ function roomState(room: Room, viewerUserId?: string) {
       : null,
   }
 }
+
+/** 이번 라운드에 정답 스포일러를 보고 있어야 하는 사람인가 */
+function hasSpoiler(room: Room, m: Member) {
+  const q = room.queue[room.index]
+  if (!q || room.status === 'duel') return false
+  if (isTrumanIllusion(m, room.index)) return false
+  return !!(knowButCantBuff(m, room.index, room) || alienQwertyBuff(m, room.index, room))
+}
+
+/**
+ * room:state 브로드캐스트.
+ *
+ * 스포일러 보유자에게만 개인화된 상태를 따로 보낸다. 보유자가 없으면 예전처럼
+ * 한 번만 쏜다 — roomState 는 매우 자주 만들어지므로 평상시 비용을 늘리지 않는
+ * 게 중요하다. (보유자가 있는 라운드에서만 인원수만큼 직렬화가 더 든다.)
+ */
+function emitRoomState(io: Server, room: Room) {
+  const holders = [...room.members.values()].filter((m) => m.socketId && hasSpoiler(room, m))
+  if (holders.length === 0) {
+    io.to(room.id).emit('room:state', roomState(room))
+    return
+  }
+  io.to(room.id).except(holders.map((m) => m.socketId)).emit('room:state', roomState(room))
+  for (const m of holders) {
+    io.to(m.socketId).emit('room:state', roomState(room, m.userId))
+  }
+}
+
 
 async function clampGenreCounts(counts: Record<string, number>): Promise<Record<string, number>> {
   const bank = await loadGenreBankCounts()
@@ -3302,7 +3374,7 @@ async function applyAugmentEffect(
         if (x.songMuteUntil && x.songMuteUntil <= Date.now()) x.songMuteUntil = null
       }
       io.to(room.id).emit('song:power_off_end', {})
-      io.to(room.id).emit('room:state', roomState(room))
+      emitRoomState(io, room)
     }, seconds * 1000 + 80)
     room.extraTimers.push(t)
     return {
@@ -4895,7 +4967,7 @@ async function applyAugmentEffect(
       points: pointsShown,
       allCleared,
     })
-    io.to(room.id).emit('room:state', roomState(room))
+    emitRoomState(io, room)
     const nowOpenDone = q.slots.filter((s) => !s.hidden).every((s) => room.revealed[s.id])
     if (nowOpenDone) {
       const locked = q.slots.filter((s) => s.hidden && !room.revealed[s.id])
@@ -5407,7 +5479,7 @@ function applyRoundStartBuffs(io: Server, room: Room) {
         m.chatMuteUntil = Date.now() + muteSec * 1000
         const t = setTimeout(() => {
           if (m.chatMuteUntil && m.chatMuteUntil <= Date.now()) m.chatMuteUntil = null
-          io.to(room.id).emit('room:state', roomState(room))
+          emitRoomState(io, room)
         }, muteSec * 1000 + 80)
         room.extraTimers.push(t)
       }
@@ -5557,7 +5629,7 @@ function restoreMember(io: Server, socket: Socket, userId: string): boolean {
 
   if (wasDisconnected) {
     systemChat(io, room, `${m.nickname} 님이 돌아왔습니다`)
-    io.to(room.id).emit('room:state', roomState(room))
+    emitRoomState(io, room)
   }
   return true
 }
@@ -5577,11 +5649,27 @@ export function notifyShutdown(io: Server) {
 }
 
 export function registerSocket(io: Server) {
+  /**
+   * 한 계정이 열 수 있는 동시 소켓 수.
+   * 레이트리밋이 계정 단위가 되면서 "소켓을 더 열어 우회"는 막혔지만,
+   * 연결 자체를 무한히 만드는 건 여전히 가능하므로 여기서도 상한을 둔다.
+   * 새로고침·멀티탭·재연결 유예가 겹칠 수 있어 넉넉하게 잡는다.
+   */
+  const MAX_SOCKETS_PER_USER = 5
+
   io.use((socket, next) => {
     try {
       const token = socket.handshake.auth?.token as string | undefined
       if (!token) return next(new Error('UNAUTHORIZED'))
-      socket.data.user = verifyToken(token)
+      const authUser = verifyToken(token)
+
+      let open = 0
+      for (const s of io.sockets.sockets.values()) {
+        if ((s.data.user as AuthUser | undefined)?.id === authUser.id) open += 1
+      }
+      if (open >= MAX_SOCKETS_PER_USER) return next(new Error('TOO_MANY_CONNECTIONS'))
+
+      socket.data.user = authUser
       next()
     } catch {
       next(new Error('UNAUTHORIZED'))
@@ -5621,7 +5709,7 @@ export function registerSocket(io: Server) {
       // 이전 방을 정리하지 않으면 그 방에 유령 멤버가 남아 인원·스킵 정족수가 틀어진다
       leaveRoom(io, socket, user.id)
       const profile = await loadMemberProfile(user.id, user.nickname)
-      const id = Math.random().toString(36).slice(2, 8)
+      const id = newRoomId()
       const genreBankCounts = await loadGenreBankCounts()
       const genreCounts = await clampGenreCounts(payload.genreCounts || { '한국노래': 20 })
       const gameMode: GameMode = payload.gameMode === 'reading' ? 'reading' : 'nomatch'
@@ -5638,7 +5726,7 @@ export function registerSocket(io: Server) {
         name: cleanText(payload?.name, MAX_ROOM_NAME_LENGTH) || `${profile.nickname}의 방`,
         hostId: user.id,
         isPrivate: !!payload.isPrivate,
-        code: payload.isPrivate ? Math.random().toString(36).slice(2, 8).toUpperCase() : null,
+        code: payload.isPrivate ? newRoomCode() : null,
         maxPlayers: Math.min(10, Math.max(2, Math.floor(Number(payload.maxPlayers) || 10))),
         genreCounts,
         genreBankCounts,
@@ -5712,7 +5800,7 @@ export function registerSocket(io: Server) {
       attachMember(room, emptyMember(user.id, profile.nickname, profile.avatarUrl, socket.id, { spectator: joinAsSpectator }))
       socket.join(room.id)
       const state = roomState(room)
-      io.to(room.id).emit('room:state', state)
+      emitRoomState(io, room)
       io.emit('lobby:rooms', publicRooms())
       cb?.({ ok: true, room: state })
     })
@@ -5726,7 +5814,7 @@ export function registerSocket(io: Server) {
         if (m) {
           m.nickname = profile.nickname
           m.avatarUrl = profile.avatarUrl
-          io.to(room.id).emit('room:state', roomState(room))
+          emitRoomState(io, room)
         }
       }
       cb?.({ ok: true, nickname: profile.nickname, avatarUrl: profile.avatarUrl })
@@ -5752,7 +5840,7 @@ export function registerSocket(io: Server) {
       room.reading = null
       for (const m of room.members.values()) m.ready = false
       const state = roomState(room)
-      io.to(room.id).emit('room:state', state)
+      emitRoomState(io, room)
       io.emit('lobby:rooms', publicRooms())
       cb?.({ ok: true, room: state })
     })
@@ -5763,7 +5851,7 @@ export function registerSocket(io: Server) {
       const m = room.members.get(user.id)
       if (!m || m.isSpectator) return
       m.ready = !m.ready
-      io.to(room.id).emit('room:state', roomState(room))
+      emitRoomState(io, room)
     })
 
     on('room:set_spectator', S.setSpectator, RATE.action, (payload, cb) => {
@@ -5791,7 +5879,7 @@ export function registerSocket(io: Server) {
         m.ready = false
       }
       const state = roomState(room)
-      io.to(room.id).emit('room:state', state)
+      emitRoomState(io, room)
       io.emit('lobby:rooms', publicRooms())
       cb?.({ ok: true, room: state })
     })
@@ -5814,7 +5902,7 @@ export function registerSocket(io: Server) {
         m.chatColor = n
       }
       const state = roomState(room)
-      io.to(room.id).emit('room:state', state)
+      emitRoomState(io, room)
       cb?.({ ok: true, room: state })
     })
 
@@ -5851,7 +5939,7 @@ export function registerSocket(io: Server) {
           room.augmentsEnabled = payload.augmentsEnabled
         }
       }
-      io.to(room.id).emit('room:state', roomState(room))
+      emitRoomState(io, room)
     })
 
     on('chat:message', S.text, RATE.chat, (payload) => {
@@ -6122,7 +6210,7 @@ export function registerSocket(io: Server) {
           system: true,
           at: Date.now(),
         })
-        io.to(room.id).emit('room:state', roomState(room))
+        emitRoomState(io, room)
         endDuel(io, room, 'resolved')
         return
       }
@@ -6236,7 +6324,7 @@ export function registerSocket(io: Server) {
             label: slot.label,
             by: user.nickname,
           })
-          io.to(room.id).emit('room:state', roomState(room))
+          emitRoomState(io, room)
           return
         }
         // 가짜 미매칭 · 진짜 곡 정답도 인정하지 않음
@@ -6321,7 +6409,7 @@ export function registerSocket(io: Server) {
                 points: pointsShown,
                 allCleared,
               })
-              io.to(room.id).emit('room:state', roomState(room))
+              emitRoomState(io, room)
               io.to(room.id).emit('chat:message', {
                 id: Date.now() + 21,
                 userId: '',
@@ -6371,7 +6459,7 @@ export function registerSocket(io: Server) {
             applyGabukiOnCorrect(io, room, memberSelf!)
             applyFlameKimOnCorrect(io, room, memberSelf!)
             bankAnswerProxyPoints(io, room, user.id, pointsShown)
-            io.to(room.id).emit('room:state', roomState(room))
+            emitRoomState(io, room)
             io.to(room.id).emit('chat:message', {
               id: Date.now() + 19,
               userId: '',
@@ -6437,7 +6525,7 @@ export function registerSocket(io: Server) {
 
           const followBuff = activeBuffsAt(memberSelf, room.index).find((b) => b.effectType === 'follow_answer')
           const followName = followBuff?.name || '보너스 타임'
-          io.to(room.id).emit('room:state', roomState(room))
+          emitRoomState(io, room)
           io.to(room.id).emit('chat:message', {
             id: Date.now() + 11,
             userId: '',
@@ -6566,7 +6654,7 @@ export function registerSocket(io: Server) {
             points: pointsShown,
             allCleared,
           })
-          io.to(room.id).emit('room:state', roomState(room))
+          emitRoomState(io, room)
           const zeroReason = member && hasHiddenRun(member, room.index) && !slot.hidden
             ? '히든런 · 일반 문제 득점 없음'
             : pointsShown < 0
@@ -6976,7 +7064,7 @@ export function registerSocket(io: Server) {
               : `[가호선택] ${pick.name} · 장르를 선택해 사용하세요`,
             durationMs: 0,
           })
-          io.to(room.id).emit('room:state', roomState(room))
+          emitRoomState(io, room)
           return
         }
         const result = await applyAugmentEffect(io, room, m, user, pickAug)
@@ -7009,7 +7097,7 @@ export function registerSocket(io: Server) {
         }, m.usedAugments)
         if (!pick) return
         setHeldAugment(m, pick)
-        io.to(room.id).emit('room:state', roomState(room))
+        emitRoomState(io, room)
         return
       } else {
         if (TARGET_AUGMENT_TYPES.has(aug.effectType)) {
@@ -7147,7 +7235,7 @@ export function registerSocket(io: Server) {
           io.to(member.socketId).emit('room:state', roomState(room, member.userId))
         }
       } else {
-        io.to(room.id).emit('room:state', roomState(room))
+        emitRoomState(io, room)
       }
       if (chatText) {
         emitToWatchers('chat:message', {
@@ -7217,7 +7305,7 @@ export function registerSocket(io: Server) {
 
       const graceSec = Math.round(RECONNECT_GRACE_MS / 1000)
       systemChat(io, room, `${cur.nickname} 님의 연결이 끊겼습니다 · ${graceSec}초 안에 돌아오면 이어서 진행합니다`)
-      io.to(room.id).emit('room:state', roomState(room))
+      emitRoomState(io, room)
 
       // 분모가 줄었으니 남은 사람들의 스킵 정족수를 다시 알리고, 이미 넘었으면 진행한다
       if (room.status === 'playing') {
@@ -7333,13 +7421,13 @@ function leaveRoom(io: Server, socket: Socket, userId: string) {
       endGameAndBroadcast(io, room)
     } else if (room.status === 'playing' && room.skipVotes.size >= skipVotesNeeded(connectedPlayerCount(room))) {
       // 남은 인원 기준으로 정족수가 이미 찼으면 기다리지 않고 넘어간다.
-      io.to(room.id).emit('room:state', roomState(room))
+      emitRoomState(io, room)
       endRound(io, room, 'skip')
     } else if (room.status === 'augment') {
       // 아직 안 고른 사람이 나갔으면 20초 타임아웃까지 기다릴 이유가 없다.
       void finishAugmentIfReady(io, room)
     } else {
-      io.to(room.id).emit('room:state', roomState(room))
+      emitRoomState(io, room)
     }
   }
   io.emit('lobby:rooms', publicRooms())
@@ -7431,7 +7519,7 @@ function startDuelRound(io: Server, room: Room) {
     tier: 'gold',
     message: `야차룰! ${a} vs ${b} · 시전자 초성 선공개 · 대상 ${duel.targetAudioDelaySec}초 노래 지연`,
   })
-  io.to(room.id).emit('room:state', roomState(room))
+  emitRoomState(io, room)
   io.to(room.id).emit('chat:message', {
     id: Date.now(),
     userId: '',
@@ -7472,7 +7560,7 @@ function endDuel(io: Server, room: Room, reason: 'resolved' | 'timeout') {
 
   room.status = 'revealing'
   io.to(room.id).emit('round:reveal', { reason: reason === 'timeout' ? 'timeout' : 'cleared', slots: reveal, pauseSec: 3 })
-  io.to(room.id).emit('room:state', roomState(room))
+  emitRoomState(io, room)
 
   const resumeIndex = duel.resumeIndex
   const savedRevealed = duel.savedRevealed
@@ -7533,7 +7621,7 @@ function resumeMainRoundAfterDuel(
   const q = room.queue[room.index]
   if (!q) {
     room.status = 'ended'
-    io.to(room.id).emit('room:state', roomState(room))
+    emitRoomState(io, room)
     return
   }
 
@@ -7591,7 +7679,7 @@ function startRound(io: Server, room: Room) {
   if (shouldOfferAugment(room)) {
     room.lastAugmentAt = room.index
     room.status = 'augment'
-    io.to(room.id).emit('room:state', roomState(room))
+    emitRoomState(io, room)
     augmentCache = null
     getEnabledAugments().then((list) => {
       if (room.status !== 'augment') return
@@ -7621,7 +7709,7 @@ function startRound(io: Server, room: Room) {
           lockedTier,
         })
       }
-      io.to(room.id).emit('room:state', roomState(room))
+      emitRoomState(io, room)
       // 20초 후 미선택자 → 지금 화면에 뜬 3장 중 균등 랜덤
       clearTimer(room)
       room.timer = setTimeout(async () => {
@@ -7821,7 +7909,7 @@ function emitRoundStart(
     for (const m of room.members.values()) {
       if (isTrumanIllusion(m, room.index)) emitIllusionRound(io, m)
     }
-    io.to(room.id).emit('room:state', roomState(room))
+    emitRoomState(io, room)
     applyRoundStartBuffs(io, room)
   }
   // 준비가 오래 걸리거나 영영 안 끝나도 라운드는 시작돼야 한다
@@ -7915,7 +8003,7 @@ function endRound(io: Server, room: Room, reason: 'cleared' | 'skip' | 'timeout'
   io.to(room.id).emit('round:reveal', { reason, slots: reveal, pauseSec: 3 })
   io.to(room.id).emit('round:skip_update', { votes: 0, need: skipVotesNeeded(connectedPlayerCount(room)) })
   // 맞췄죠?/대리 결산 점수 즉시 반영
-  io.to(room.id).emit('room:state', roomState(room))
+  emitRoomState(io, room)
   room.index += 1
   room.timer = setTimeout(() => startRound(io, room), 3000)
 }
@@ -7930,7 +8018,7 @@ function endGameAndBroadcast(io: Server, room: Room) {
     .map((m) => ({ nickname: m.nickname, score: m.score, userId: m.userId }))
     .sort((a, b) => b.score - a.score)
   io.to(room.id).emit('game:end', { results })
-  io.to(room.id).emit('room:state', roomState(room))
+  emitRoomState(io, room)
 
   // 전적 저장은 실패해도 결과 화면을 막지 않는다 (saveGameRecord 안에서 삼킨다)
   void saveGameRecord({
@@ -7951,7 +8039,7 @@ function beginRoundCountdown(io: Server, room: Room) {
   clearTimer(room)
   room.status = 'countdown'
   const q = room.queue[room.index]
-  io.to(room.id).emit('room:state', roomState(room))
+  emitRoomState(io, room)
   io.to(room.id).emit('round:countdown', {
     seconds: 3,
     endsAt: Date.now() + 3000,
@@ -7978,7 +8066,7 @@ async function finishAugmentIfReady(io: Server, room: Room) {
   if (room.status !== 'augment') return
   const allPicked = playerMembers(room).every((x) => x.heldAugmentId)
   if (!allPicked) {
-    io.to(room.id).emit('room:state', roomState(room))
+    emitRoomState(io, room)
     return
   }
   clearTimer(room)
@@ -8034,9 +8122,9 @@ async function finishAugmentIfReady(io: Server, room: Room) {
         },
       })
     }
-    io.to(room.id).emit('room:state', roomState(room))
+    emitRoomState(io, room)
   } catch (err) {
     console.error('[finishAugmentIfReady] auto-apply failed', err)
-    io.to(room.id).emit('room:state', roomState(room))
+    emitRoomState(io, room)
   }
 }

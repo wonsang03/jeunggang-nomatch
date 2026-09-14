@@ -5,7 +5,7 @@ import path from 'path'
 import { fileURLToPath } from 'url'
 import { createServer } from 'http'
 import { Server } from 'socket.io'
-import { corsOrigin, PORT, prisma } from './config.js'
+import { corsCredentials, corsOrigin, PORT, prisma } from './config.js'
 import { authRouter } from './routes/auth.js'
 import { questionRouter } from './routes/questions.js'
 import { notifyShutdown, registerSocket } from './socket.js'
@@ -15,8 +15,36 @@ const uploadsRoot = path.resolve(__dirname, '../uploads')
 const publicRoot = path.resolve(__dirname, '../public')
 
 const app = express()
-app.use(cors({ origin: corsOrigin, credentials: true }))
-app.use(express.json({ limit: '15mb' }))
+
+/**
+ * 배포는 Nginx 뒤에 있다. 이걸 켜지 않으면 req.ip 가 항상 127.0.0.1 이라
+ * IP 기준 레이트리밋이 "전원이 한 버킷" 이 되어 정상 사용자를 막아버린다.
+ * 신뢰하는 홉은 Nginx 하나뿐이므로 1.
+ */
+app.set('trust proxy', 1)
+
+app.use(cors({ origin: corsOrigin, credentials: corsCredentials }))
+
+// 최소한의 보안 헤더. CSP는 유튜브 임베드를 깨뜨릴 수 있어 넣지 않는다.
+app.use((_req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff')
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN')
+  res.setHeader('Referrer-Policy', 'no-referrer')
+  next()
+})
+
+/**
+ * 바디 상한을 경로별로 나눈다.
+ *
+ * 예전엔 전 라우트가 15mb였다. 즉 로그인조차 안 한 상대가 /api/auth/login 에
+ * 15mb JSON을 밀어넣어 파싱을 강제할 수 있었다. 큰 바디가 실제로 필요한 곳만
+ * 크게 열어두고 나머지는 좁힌다. (body-parser는 이미 파싱된 요청을 건너뛰므로
+ * 앞의 좁은 mount가 먼저 잡고, 나머지는 마지막 기본값으로 떨어진다.)
+ */
+app.use('/api/auth/avatar', express.json({ limit: '3mb' }))   // 1.5MB 이미지의 base64
+app.use('/api/questions', express.json({ limit: '15mb' }))    // 관리자 대량 등록(최대 2000곡)
+app.use(express.json({ limit: '200kb' }))
+
 app.use('/uploads', express.static(uploadsRoot))
 
 app.get('/health', (_req, res) => res.json({ ok: true }))
@@ -44,7 +72,7 @@ process.on('uncaughtException', (err) => {
 
 const httpServer = createServer(app)
 const io = new Server(httpServer, {
-  cors: { origin: corsOrigin, credentials: true },
+  cors: { origin: corsOrigin, credentials: corsCredentials },
   maxHttpBufferSize: 1e6,
 })
 registerSocket(io)
