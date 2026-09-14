@@ -1,11 +1,13 @@
 import { useState, useEffect, useRef, useCallback, useMemo, memo } from 'react'
 import { useGame, type ChatMsg, type RoomMember } from './GameContext'
-import { api, avatarSrc } from './api'
-import { PLAYABLE_GENRES, BANK_GENRES, emptyGenreCounts, YACHA_GENRE, type GenreName, type BankGenreName } from './genres'
-import { normalizeSongTags } from './tags'
+import { PLAYABLE_GENRES, emptyGenreCounts, type GenreName } from './genres'
 import { playSfx } from './sfx'
 import { serverNow } from './clockSync'
-import { HiddenYouTube, FlameKimOverlayBgm, PeckSongBgm, RoomSongPersistentBgm, ytId, loadYtApi, type YtPlayer } from './youtubePlayer'
+import { HiddenYouTube, FlameKimOverlayBgm, PeckSongBgm, RoomSongPersistentBgm } from './youtubePlayer'
+import { HomeScreen, LoginScreen } from './screens/AuthScreens'
+import { BankScreen } from './screens/BankScreen'
+import { ProfileScreen } from './screens/ProfileScreen'
+import type { Screen } from './screens/types'
 import {
   AppliedAugmentChip,
   AugmentNoPhoto,
@@ -18,7 +20,6 @@ import {
   CrumpleOverlay,
   Equalizer,
   F,
-  Field,
   FitAnswer,
   FloatingHoverPopup,
   GenreIntroFly,
@@ -26,13 +27,11 @@ import {
   HOSTILE_AUGMENT_TYPES,
   MarginLine,
   NoteCard,
-  PaperShell,
   PencilFilters,
   PrismKeyframes,
   RoundTimer,
   SketchInput,
   Tag,
-  TimerRing,
   crumpledPaper,
   notebookLines,
   prismBackdrop,
@@ -41,162 +40,6 @@ import {
   tierDisplayName,
 } from './ui'
 
-// ── Types ─────────────────────────────────────────────────────
-type Screen = 'home' | 'login' | 'lobby' | 'waiting' | 'game' | 'augment' | 'result' | 'bank' | 'profile'
-
-// ── Screens ───────────────────────────────────────────────────
-
-function HomeScreen({ nav }: { nav: (s: Screen) => void }) {
-  const { user } = useGame()
-  return (
-    <div style={{
-      minHeight: '100vh',
-      ...crumpledPaper,
-      display: 'flex', flexDirection: 'column',
-      alignItems: 'center', justifyContent: 'center',
-      padding: '60px 20px 100px', position: 'relative', overflow: 'hidden',
-    }}>
-      <div style={{
-        ...sk(), backgroundColor: C.card, padding: '52px 64px',
-        maxWidth: 540, width: '100%', textAlign: 'center',
-        position: 'relative', zIndex: 1, animation: 'slideUp 0.4s ease-out both',
-      }}>
-        <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: '5px', backgroundColor: C.blue, borderRadius: '5px 3px 0 0' }} />
-
-        <div style={{ fontFamily: F.brand, fontSize: 76, fontWeight: 700, color: C.text, lineHeight: 1.05, letterSpacing: '-0.02em' }}>
-          증강노맞
-        </div>
-
-        <div style={{
-          display: 'inline-block', backgroundColor: C.blueLight,
-          padding: '6px 16px', ...sk(C.blue, true),
-          fontFamily: F.ui, fontSize: 15, fontWeight: 400,
-          color: C.blue, marginTop: 12, marginBottom: 28,
-        }}>
-          실시간 멀티플레이 노래 맞히기 게임
-        </div>
-
-        <p style={{ fontFamily: F.ui, fontSize: 17, fontWeight: 400, color: C.muted, marginBottom: 36, lineHeight: 1.85 }}>
-          친구랑 모여<br />노래 맞히고 증강 골라 최강자가 되어봐요
-        </p>
-
-        <div style={{ display: 'flex', gap: 14, justifyContent: 'center', flexWrap: 'wrap' }}>
-          <Btn variant="primary" size="lg" onClick={() => nav(user ? 'lobby' : 'login')}>시작하기</Btn>
-          <Btn size="lg" onClick={() => nav('login')}>로그인</Btn>
-        </div>
-        <div style={{ marginTop: 22, fontFamily: F.ui, fontSize: 15, fontWeight: 400, color: C.muted }}>
-          처음 오셨나요?{' '}
-          <span style={{ color: C.blue, cursor: 'pointer', textDecoration: 'underline' }} onClick={() => nav('login')}>
-            회원가입
-          </span>
-        </div>
-      </div>
-
-      <div style={{ display: 'flex', gap: 10, marginTop: 28, flexWrap: 'wrap', justifyContent: 'center', zIndex: 1 }}>
-        {['최대 10인', '증강 시스템', '실시간 채팅', '장르별 플레이', '20문제마다 증강'].map(t => (
-          <div key={t} style={{
-            ...sk(C.blue, true), backgroundColor: C.blueLight, color: C.blue,
-            fontFamily: F.ui, fontSize: 14, fontWeight: 400, padding: '6px 14px',
-          }}>{t}</div>
-        ))}
-      </div>
-    </div>
-  )
-}
-
-function LoginScreen({ nav }: { nav: (s: Screen) => void }) {
-  const { login, register, user } = useGame()
-  const [id, setId] = useState('')
-  const [pw, setPw] = useState('')
-  const [nick, setNick] = useState('')
-  const [mode, setMode] = useState<'login' | 'signup'>('login')
-  const [error, setError] = useState('')
-  const [loading, setLoading] = useState(false)
-
-  useEffect(() => {
-    if (user) nav('lobby')
-  }, [user, nav])
-
-  const submit = async () => {
-    setError('')
-    setLoading(true)
-    try {
-      if (mode === 'login') await login(id.trim(), pw)
-      else await register(id.trim(), pw, nick.trim() || id.trim())
-      nav('lobby')
-    } catch (e) {
-      setError(e instanceof Error ? e.message : '실패')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  return (
-    <div style={{
-      minHeight: '100vh',
-      ...crumpledPaper,
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
-      padding: '40px 20px 100px', position: 'relative',
-    }}>
-      <div style={{ width: '100%', maxWidth: 440, position: 'relative', zIndex: 1 }}>
-        <div
-          style={{ marginBottom: 14, cursor: 'pointer', display: 'inline-block' }}
-          onClick={() => nav('home')}
-        >
-          <span style={{
-            ...sk(C.blue, true),
-            backgroundColor: C.card,
-            padding: '6px 12px',
-            fontFamily: F.ui, fontSize: 16, fontWeight: 400, color: C.blue,
-            display: 'inline-block',
-          }}>
-            ← 증강노맞
-          </span>
-        </div>
-
-        <div style={{ ...sk(), backgroundColor: C.card, padding: '32px 28px', overflow: 'hidden', position: 'relative' }}>
-          <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 5, backgroundColor: C.blue }} />
-
-          <div style={{ fontFamily: F.brand, fontSize: 42, fontWeight: 700, color: C.text, marginBottom: 8, textAlign: 'center' }}>
-            {mode === 'login' ? '로그인' : '회원가입'}
-          </div>
-          <div style={{
-            fontFamily: F.ui, fontSize: 16, fontWeight: 400, color: C.muted,
-            marginBottom: 24, textAlign: 'center', paddingBottom: 16,
-            borderBottom: `2px solid ${C.line}`,
-          }}>
-            {mode === 'login' ? '아이디와 비밀번호를 입력해주세요' : '새 계정을 만들어보세요'}
-          </div>
-
-          {mode === 'signup' && <Field label="닉네임" placeholder="게임에서 사용할 이름" value={nick} onChange={setNick} />}
-          <Field label="아이디" placeholder="test 또는 admin" value={id} onChange={setId} />
-          <Field label="비밀번호" type="password" placeholder="••••••••" value={pw} onChange={setPw} />
-
-          {error && (
-            <div style={{ fontFamily: F.ui, fontSize: 15, color: C.red, marginBottom: 10, textAlign: 'center' }}>{error}</div>
-          )}
-
-          <div style={{ marginTop: 8 }}>
-            <Btn variant="primary" fullWidth size="lg" onClick={submit} disabled={loading || !id || !pw}>
-              {loading ? '처리 중…' : mode === 'login' ? '로그인' : '회원가입'}
-            </Btn>
-          </div>
-
-          <div style={{ textAlign: 'center', marginTop: 12, fontFamily: F.ui, fontSize: 13, color: C.muted }}>
-            테스트 계정: test / test1234
-          </div>
-
-          <div style={{ textAlign: 'center', marginTop: 20, fontFamily: F.ui, fontSize: 15, fontWeight: 400, color: C.muted }}>
-            {mode === 'login'
-              ? <>계정이 없으신가요? <span style={{ color: C.blue, cursor: 'pointer' }} onClick={() => setMode('signup')}>회원가입</span></>
-              : <>이미 계정이 있으신가요? <span style={{ color: C.blue, cursor: 'pointer' }} onClick={() => setMode('login')}>로그인</span></>
-            }
-          </div>
-        </div>
-      </div>
-    </div>
-  )
-}
 
 // ── Lobby ──────────────────────────────────────────────────────
 
@@ -1183,7 +1026,7 @@ function GahoCutscene({
           color: 'transparent',
           animation: phase === 'hold' ? 'gahoShimmer 2.2s linear infinite' : undefined,
         }}>
-          가호 강림
+          프리즘 강림
         </div>
         <div style={{
           fontFamily: F.ui, fontSize: 11, fontWeight: 700,
@@ -1195,7 +1038,7 @@ function GahoCutscene({
           fontFamily: F.ui, fontSize: 15, fontWeight: 700,
           color: '#C9B8E0', marginBottom: 14,
         }}>
-          {item.nickname}님의 가호
+          {item.nickname}님의 프리즘
         </div>
         <div style={{
           width: '100%', aspectRatio: '1', marginBottom: 14,
@@ -1278,10 +1121,14 @@ const GameScoreboard = memo(function GameScoreboard({
               padding: '10px 10px', ...sk(line, true),
               backgroundColor: cc?.fill || (mine ? C.blueLight : surf),
               borderWidth: mine ? 3.5 : 2.5,
+              // 끊긴 사람은 자리·점수를 지켜주되 지금 못 맞힌다는 걸 보이게
+              opacity: s.disconnected ? 0.45 : 1,
             }}>
               <span style={{ fontFamily: F.ui, fontSize: 17, fontWeight: mine ? 900 : 500, color: nameColor, textAlign: 'center' }}>{i + 1}</span>
               <Avatar name={s.nickname} url={s.avatarUrl} size={32} border={cc?.line} tint={cc?.fill} />
-              <span style={{ fontFamily: F.ui, fontSize: 17, fontWeight: mine ? 900 : 500, color: nameColor, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.nickname}{mine ? ' · 나' : ''}</span>
+              <span style={{ fontFamily: F.ui, fontSize: 17, fontWeight: mine ? 900 : 500, color: nameColor, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {s.disconnected ? '📵 ' : ''}{s.nickname}{mine ? ' · 나' : ''}
+              </span>
               <span style={{ fontFamily: F.ui, fontSize: 17, fontWeight: mine ? 900 : 700, color: C.body }}>{s.score}점</span>
             </div>
           )
@@ -1550,10 +1397,23 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
     else if (room.status === 'lobby') nav('waiting')
   }, [room, nav])
 
+  // 1초 간격으로 그냥 돌면 "남은 초"가 바뀌는 순간과 틱이 어긋나 최대 1초까지 늦게 보인다.
+  // 라운드 링(RoundTimer, 250ms)과 숫자가 서로 다른 값을 가리키고, timer로 판정하는
+  // 초성 힌트 공개 시점도 사람마다 1초씩 밀린다. 남은 초가 바뀌는 순간에 맞춰 깨운다.
+  const roundEndsAtForTick = round?.endsAt ?? null
   useEffect(() => {
-    const t = setInterval(() => setNow(serverNow()), 1000)
-    return () => clearInterval(t)
-  }, [])
+    let id = 0
+    const tick = () => {
+      const n = serverNow()
+      setNow(n)
+      const untilNextSecond = roundEndsAtForTick != null
+        ? ((roundEndsAtForTick - n) % 1000 + 1000) % 1000
+        : 1000 - (n % 1000)
+      id = window.setTimeout(tick, untilNextSecond || 1000)
+    }
+    tick()
+    return () => window.clearTimeout(id)
+  }, [roundEndsAtForTick])
   // 3-2-1 오버레이는 느린 틱이면 남은 초가 부풀어 4가 잠깐 보임 → 빠르게
   useEffect(() => {
     const overlayOn = (startCountdown != null && startCountdown > 0)
@@ -1670,6 +1530,8 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
     || me?.heldAugmentEffectType === 'rock_throw'
     || me?.heldAugmentEffectType === 'steal_chain'
     || me?.heldAugmentEffectType === 'score_steal'
+    || me?.heldAugmentEffectType === 'zero_both'
+    || me?.heldAugmentEffectType === 'muffled_answer'
     || me?.heldAugmentEffectType === 'accuse_sleep'
     || me?.heldAugmentEffectType === 'gabuki_mark'
     || (me?.heldAugmentEffectType === 'flame_kim' && room.members.filter((m) => !m.isSpectator).length >= 2)
@@ -1700,7 +1562,9 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
   const isAutoTriggerHeld = me?.heldAugmentEffectType === 'cha_cha_cha'
   const useLocked = isSpectator || isAutoAugment || isPassiveHeld || isAutoTriggerHeld
   const needsGahoPick = !isSpectator && me?.heldAugmentEffectType === 'gaho_select'
-  const needsGenrePick = !isSpectator && me?.heldAugmentEffectType === 'ban_genre'
+  const needsGenrePick = !isSpectator
+    && (me?.heldAugmentEffectType === 'ban_genre' || me?.heldAugmentEffectType === 'genre_early_chosung')
+  const genrePickIsBan = me?.heldAugmentEffectType === 'ban_genre'
   const upcomingGenreEntries = Object.entries(room.upcomingGenreCounts || {})
     .filter(([, c]) => c > 0)
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'ko'))
@@ -1741,6 +1605,7 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
     }
     if (action === 'skip') {
       if (isSpectator || isReading || skipVoted || room.status !== 'playing' || inDuel) return false
+      if (room.noSkipActive) return false
       voteSkip()
       return true
     }
@@ -2565,7 +2430,7 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
                         : isAutoAugment
                           ? '자동 적용'
                           : needsGahoPick
-                            ? '가호 선택'
+                            ? '프리즘 선택'
                             : needsTargetPick
                               ? '대상 선택'
                               : needsGenrePick
@@ -2582,11 +2447,11 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
                       : isAutoAugment
                         ? '선택 후 자동 적용'
                         : needsGahoPick
-                          ? '가호 중 하나를 골라 적용'
+                          ? '프리즘 중 하나를 골라 적용'
                           : needsTargetPick
                             ? '대상을 골라 사용'
                             : needsGenrePick
-                              ? '밴픽 장르를 골라 사용'
+                              ? (genrePickIsBan ? '밴픽 장르를 골라 사용' : '장르를 골라 사용')
                               : '사용 버튼에 올리면 설명'}
                   </div>
                 </>
@@ -2919,7 +2784,9 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
               {me?.heldAugmentName || '밴픽'}
             </div>
             <div style={{ fontFamily: F.ui, fontSize: 15, color: C.muted, marginBottom: 18 }}>
-              밴할 장르를 선택하세요 (항상 성공 · 잔량은 다른 장르로 배분 · 총 곡 수 유지)
+              {genrePickIsBan
+                ? '밴할 장르를 선택하세요 (항상 성공 · 잔량은 다른 장르로 배분 · 총 곡 수 유지)'
+                : '장르를 선택하세요'}
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 18 }}>
               {upcomingGenreEntries.map(([g, c]) => (
@@ -2936,7 +2803,9 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
                 </Btn>
               ))}
               {upcomingGenreEntries.length === 0 && (
-                <div style={{ fontFamily: F.ui, fontSize: 15, color: C.muted }}>밴할 장르가 없습니다</div>
+                <div style={{ fontFamily: F.ui, fontSize: 15, color: C.muted }}>
+                  {genrePickIsBan ? '밴할 장르가 없습니다' : '고를 장르가 없습니다'}
+                </div>
               )}
             </div>
             <Btn onClick={() => setGenrePickOpen(false)}>취소</Btn>
@@ -2967,7 +2836,7 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
             boxShadow: `0 0 0 1px ${C.tierGaho}55, 0 12px 40px rgba(80,40,120,0.25)`,
           }}>
             <div style={{ fontFamily: F.brand, fontSize: 28, fontWeight: 700, marginBottom: 8, color: C.tierGaho }}>
-              가호 선택
+              프리즘 선택
             </div>
             <div style={{ fontFamily: F.ui, fontSize: 14, color: C.muted, marginBottom: 22 }}>
               3장 중 1개 · 리롤 없음 · 이름·사진만 (효과는 선택 후 확인)
@@ -3018,14 +2887,14 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
                           <AugmentNoPhoto name={g.name} accent={tierC} />
                         )}
                       </div>
-                      <div style={{ fontFamily: F.ui, fontSize: 12, fontWeight: 800, color: tierC }}>가호</div>
+                      <div style={{ fontFamily: F.ui, fontSize: 12, fontWeight: 800, color: tierC }}>프리즘</div>
                       <div style={{ fontFamily: F.brand, fontSize: 20, fontWeight: 700, lineHeight: 1.2 }}>{g.name}</div>
                     </button>
                   )
                 })}
                 {gahoCandidates.length === 0 && (
                   <div style={{ fontFamily: F.ui, fontSize: 15, color: C.muted, gridColumn: '1 / -1', textAlign: 'center' }}>
-                    선택 가능한 가호가 없습니다
+                    선택 가능한 프리즘이 없습니다
                   </div>
                 )}
               </div>
@@ -3098,7 +2967,7 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
         />
         <Btn
           variant="danger"
-          disabled={isSpectator || isReading || skipVoted || room.status !== 'playing' || inDuel}
+          disabled={isSpectator || isReading || skipVoted || room.status !== 'playing' || inDuel || !!room.noSkipActive}
           onClick={voteSkip}
         >
           {isSpectator
@@ -3107,6 +2976,8 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
             ? '리딩방'
             : inDuel
             ? '야차룰 중'
+            : room.noSkipActive
+            ? `스킵 불가 · ${room.noSkipBy || '조로룰'} ${room.noSkipRoundsLeft ?? '?'}R`
             : room.status === 'revealing'
               ? '공개 중'
               : room.status === 'countdown'
@@ -3308,7 +3179,7 @@ function AugmentScreen({ nav }: { nav: (s: Screen) => void }) {
     const endsAt = augmentOffer?.endsAt
     const finalize = () => {
       if (doneRef.current) return
-      // 가호 선택 중이면 타임아웃에도 랜덤 확정하되, 고른 가호가 있으면 그걸 보냄
+      // 프리즘 선택 중이면 타임아웃에도 랜덤 확정하되, 고른 가호가 있으면 그걸 보냄
       if (gahoOpen && selectedGahoIdRef.current) {
         doneRef.current = true
         pickAugment(selectedRef.current, selectedGahoIdRef.current)
@@ -3523,7 +3394,7 @@ function AugmentScreen({ nav }: { nav: (s: Screen) => void }) {
             boxShadow: `0 0 0 1px ${C.tierGaho}55, 0 12px 40px rgba(80,40,120,0.25)`,
           }}>
             <div style={{ fontFamily: F.brand, fontSize: 28, fontWeight: 700, marginBottom: 8, color: C.tierGaho }}>
-              가호 선택
+              프리즘 선택
             </div>
             <div style={{ fontFamily: F.ui, fontSize: 16, color: C.body, marginBottom: 6, fontWeight: 700 }}>
               남은 시간 {timer}초
@@ -3576,14 +3447,14 @@ function AugmentScreen({ nav }: { nav: (s: Screen) => void }) {
                           <AugmentNoPhoto name={g.name} accent={tierC} />
                         )}
                       </div>
-                      <div style={{ fontFamily: F.ui, fontSize: 12, fontWeight: 800, color: tierC }}>가호</div>
+                      <div style={{ fontFamily: F.ui, fontSize: 12, fontWeight: 800, color: tierC }}>프리즘</div>
                       <div style={{ fontFamily: F.brand, fontSize: 20, fontWeight: 700, lineHeight: 1.2 }}>{g.name}</div>
                     </button>
                   )
                 })}
                 {gahoCandidates.length === 0 && (
                   <div style={{ fontFamily: F.ui, fontSize: 15, color: C.muted, gridColumn: '1 / -1', textAlign: 'center' }}>
-                    선택 가능한 가호가 없습니다
+                    선택 가능한 프리즘이 없습니다
                   </div>
                 )}
               </div>
@@ -3593,7 +3464,7 @@ function AugmentScreen({ nav }: { nav: (s: Screen) => void }) {
                 disabled={!selectedGahoId}
                 onClick={() => selectedGahoId && confirmGaho(selectedGahoId)}
               >
-                이 가호로 보관
+                이 프리즘으로 보관
               </Btn>
               </>
             )}
@@ -3607,7 +3478,7 @@ function AugmentScreen({ nav }: { nav: (s: Screen) => void }) {
 // ── Result ─────────────────────────────────────────────────────
 
 function ResultScreen({ nav }: { nav: (s: Screen) => void }) {
-  const { results, leaveRoom, clearResults, room } = useGame()
+  const { results, leaveRoom, clearResults, backToWaiting, room } = useGame()
   const list = results || room?.members.map(m => ({ nickname: m.nickname, score: m.score, userId: m.userId })).sort((a, b) => b.score - a.score) || []
 
   return (
@@ -3628,7 +3499,10 @@ function ResultScreen({ nav }: { nav: (s: Screen) => void }) {
             </div>
           ))}
         </div>
-        <Btn variant="primary" size="lg" onClick={() => { clearResults(); leaveRoom(); nav('lobby') }}>로비로</Btn>
+        <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
+          <Btn variant="primary" size="lg" onClick={() => { backToWaiting().then(() => nav('waiting')).catch(() => {}) }}>대기실로</Btn>
+          <Btn size="lg" onClick={() => { clearResults(); leaveRoom(); nav('lobby') }}>로비로</Btn>
+        </div>
       </div>
     </div>
   )
@@ -3636,1047 +3510,7 @@ function ResultScreen({ nav }: { nav: (s: Screen) => void }) {
 
 // ── Profile ────────────────────────────────────────────────────
 
-function ProfileScreen({ nav }: { nav: (s: Screen) => void }) {
-  const { user, updateProfile, uploadAvatar, removeAvatar } = useGame()
-  const [nickname, setNickname] = useState(user?.nickname || '')
-  const [preview, setPreview] = useState<string | null>(null)
-  const [err, setErr] = useState('')
-  const [okMsg, setOkMsg] = useState('')
-  const [busy, setBusy] = useState(false)
-  const fileRef = useRef<HTMLInputElement>(null)
-
-  useEffect(() => {
-    if (!user) nav('login')
-  }, [user, nav])
-
-  useEffect(() => {
-    setNickname(user?.nickname || '')
-  }, [user?.nickname])
-
-  const readFileAsDataUrl = (file: File) =>
-    new Promise<string>((resolve, reject) => {
-      const reader = new FileReader()
-      reader.onload = () => resolve(String(reader.result || ''))
-      reader.onerror = () => reject(new Error('파일을 읽을 수 없습니다'))
-      reader.readAsDataURL(file)
-    })
-
-  /** 너무 큰 이미지는 캔버스로 줄여서 업로드 */
-  const compressImage = async (file: File): Promise<string> => {
-    const dataUrl = await readFileAsDataUrl(file)
-    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-      const el = new Image()
-      el.onload = () => resolve(el)
-      el.onerror = () => reject(new Error('이미지 로드 실패'))
-      el.src = dataUrl
-    })
-    const max = 512
-    const scale = Math.min(1, max / Math.max(img.width, img.height))
-    const w = Math.max(1, Math.round(img.width * scale))
-    const h = Math.max(1, Math.round(img.height * scale))
-    const canvas = document.createElement('canvas')
-    canvas.width = w
-    canvas.height = h
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return dataUrl
-    ctx.drawImage(img, 0, 0, w, h)
-    return canvas.toDataURL('image/jpeg', 0.86)
-  }
-
-  const onPick = async (file: File | null) => {
-    if (!file) return
-    if (!file.type.startsWith('image/')) {
-      setErr('이미지 파일만 선택할 수 있습니다')
-      return
-    }
-    setBusy(true); setErr(''); setOkMsg('')
-    try {
-      const dataUrl = await compressImage(file)
-      setPreview(dataUrl)
-      await uploadAvatar(dataUrl)
-      setOkMsg('프로필 사진이 저장되었습니다')
-      setPreview(null)
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : '업로드 실패')
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const saveNickname = async () => {
-    setBusy(true); setErr(''); setOkMsg('')
-    try {
-      const nick = nickname.trim()
-      if (!nick) throw new Error('닉네임을 입력하세요')
-      if (nick.length > 24) throw new Error('닉네임은 24자 이하입니다')
-      await updateProfile(nick)
-      setOkMsg('닉네임이 저장되었습니다')
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : '저장 실패')
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const clearAvatar = async () => {
-    setBusy(true); setErr(''); setOkMsg('')
-    try {
-      await removeAvatar()
-      setPreview(null)
-      setOkMsg('프로필 사진을 삭제했습니다')
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : '삭제 실패')
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  if (!user) return null
-  const shown = preview || avatarSrc(user.avatarUrl)
-
-  return (
-    <div style={{ minHeight: '100vh', ...notebookLines }}>
-      <div style={{
-        backgroundColor: C.card, borderBottom: `2.5px solid ${C.graphite}`,
-        boxShadow: `0 3px 0 ${C.graphite}50`, padding: '12px 28px',
-        display: 'flex', alignItems: 'center', gap: 14, filter: 'url(#pencilRough)',
-      }}>
-        <Btn size="sm" onClick={() => nav('lobby')}>← 로비</Btn>
-        <div style={{ fontFamily: F.ui, fontSize: 20, fontWeight: 900, flex: 1, color: C.body }}>프로필 수정</div>
-      </div>
-
-      <div style={{ maxWidth: 520, margin: '0 auto', padding: 24 }}>
-        <NoteCard>
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14, marginBottom: 24 }}>
-            <div
-              onClick={() => fileRef.current?.click()}
-              style={{ cursor: 'pointer', position: 'relative' }}
-              title="클릭해서 사진 변경"
-            >
-              {shown ? (
-                <div style={{
-                  width: 120, height: 120, borderRadius: '50%', overflow: 'hidden',
-                  ...sk(C.blue), backgroundColor: C.blueLight,
-                }}>
-                  <img src={shown} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                </div>
-              ) : (
-                <Avatar name={user.nickname} url={null} size={120} />
-              )}
-            </div>
-            <input
-              ref={fileRef}
-              type="file"
-              accept="image/png,image/jpeg,image/webp"
-              style={{ display: 'none' }}
-              onChange={e => onPick(e.target.files?.[0] || null)}
-            />
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
-              <Btn size="sm" onClick={() => fileRef.current?.click()} disabled={busy}>사진 선택</Btn>
-              {user.avatarUrl && (
-                <Btn size="sm" variant="danger" onClick={clearAvatar} disabled={busy}>사진 삭제</Btn>
-              )}
-            </div>
-            <div style={{ fontFamily: F.ui, fontSize: 13, color: C.muted, textAlign: 'center' }}>
-              PNG/JPG/WebP · 자동으로 작게 줄여 저장합니다
-            </div>
-          </div>
-
-          <div style={{ marginBottom: 24 }}>
-            <div style={{ fontFamily: F.ui, fontSize: '13px', fontWeight: 700, color: C.muted, marginBottom: '4px', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
-              아이디
-            </div>
-            <div style={{
-              fontFamily: F.ui, fontSize: 18, fontWeight: 700, color: C.muted,
-              padding: '9px 4px 6px', borderBottom: `2.5px solid ${C.line}`,
-            }}>
-              {user.username}
-            </div>
-            <div style={{ fontFamily: F.ui, fontSize: 12, color: C.muted, marginTop: 6 }}>
-              아이디는 변경할 수 없습니다
-            </div>
-          </div>
-          <Field label="닉네임" value={nickname} onChange={setNickname} placeholder="표시될 이름" />
-          <div style={{ display: 'flex', gap: 10, marginTop: 8 }}>
-            <Btn variant="primary" onClick={saveNickname} disabled={busy || nickname.trim() === user.nickname}>
-              닉네임 저장
-            </Btn>
-          </div>
-
-          {err && <div style={{ fontFamily: F.ui, color: C.red, marginTop: 12 }}>{err}</div>}
-          {okMsg && <div style={{ fontFamily: F.ui, color: C.green, marginTop: 12 }}>{okMsg}</div>}
-        </NoteCard>
-      </div>
-    </div>
-  )
-}
-
 // ── Admin Question Bank ────────────────────────────────────────
-
-type BankSlotDraft = { label: string; answer: string; accepts: string; hidden: boolean }
-type BankQuestion = {
-  id: string
-  youtubeUrl: string
-  startSec: number
-  endSec: number
-  genre: string
-  tags: string[]
-  slots: Array<{ id: string; label: string; answer?: string; acceptAnswers?: string[]; hidden?: boolean }>
-}
-
-function BankSegmentPreview({
-  url,
-  startSec,
-  endSec,
-  volume = 70,
-  onClose,
-  title,
-}: {
-  url: string
-  startSec: number
-  endSec: number
-  volume?: number
-  onClose: () => void
-  title?: string
-}) {
-  const id = ytId(url)
-  const hostRef = useRef<HTMLDivElement>(null)
-  const playerRef = useRef<YtPlayer | null>(null)
-  const start = Math.max(0, Math.floor(startSec))
-  const end = Math.max(start + 1, Math.floor(endSec))
-  const [err, setErr] = useState('')
-
-  useEffect(() => {
-    if (!id || !hostRef.current) return
-    let cancelled = false
-    let player: YtPlayer | null = null
-    let poll: ReturnType<typeof setInterval> | null = null
-
-    ;(async () => {
-      await loadYtApi()
-      if (cancelled || !hostRef.current || !window.YT) return
-      hostRef.current.innerHTML = ''
-      const mount = document.createElement('div')
-      hostRef.current.appendChild(mount)
-      const https = window.location.protocol === 'https:'
-      player = new window.YT.Player(mount, {
-        videoId: id,
-        width: 276,
-        height: 155,
-        playerVars: {
-          autoplay: 1,
-          mute: 1,
-          start,
-          // end 는 API에 안 넣고 폴링으로 컷 (http 임베드 오류 줄임)
-          controls: 1,
-          modestbranding: 1,
-          rel: 0,
-          playsinline: 1,
-          enablejsapi: 1,
-          ...(https ? { origin: window.location.origin } : {}),
-        },
-        events: {
-          onReady: (e) => {
-            if (cancelled) return
-            playerRef.current = e.target
-            try {
-              e.target.seekTo(start, true)
-              e.target.setVolume(Math.max(0, Math.min(100, volume)))
-              e.target.mute()
-              e.target.playVideo()
-              e.target.unMute()
-              e.target.setVolume(Math.max(0, Math.min(100, volume)))
-            } catch { /* ignore */ }
-            poll = setInterval(() => {
-              try {
-                const t = e.target.getCurrentTime?.() ?? 0
-                if (t >= end - 0.15) {
-                  e.target.pauseVideo()
-                  if (poll) clearInterval(poll)
-                }
-              } catch { /* ignore */ }
-            }, 200)
-          },
-          onError: (e) => {
-            if (cancelled) return
-            if (e.data === 101 || e.data === 150 || e.data === 153) {
-              setErr('이 영상은 외부 재생이 막혀 있습니다. 유튜브 링크를 바꿔주세요')
-            } else {
-              setErr('미리듣기를 재생할 수 없습니다')
-            }
-          },
-        },
-      })
-    })()
-
-    return () => {
-      cancelled = true
-      if (poll) clearInterval(poll)
-      try { player?.destroy() } catch { /* ignore */ }
-      playerRef.current = null
-    }
-  }, [id, start, end, volume])
-
-  if (!id) {
-    return (
-      <div style={{
-        position: 'fixed', right: 16, bottom: 16, zIndex: 90,
-        ...sk(C.red, true), backgroundColor: C.card, padding: 12, maxWidth: 320,
-      }}>
-        <div style={{ fontFamily: F.ui, color: C.red }}>유효한 유튜브 URL이 아닙니다</div>
-        <div style={{ marginTop: 8 }}>
-          <Btn size="sm" onClick={onClose}>닫기</Btn>
-        </div>
-      </div>
-    )
-  }
-
-  return (
-    <div style={{
-      position: 'fixed',
-      right: 16,
-      bottom: 16,
-      zIndex: 90,
-      ...sk(C.blue, true),
-      backgroundColor: C.card,
-      padding: 12,
-      width: 300,
-      boxShadow: `0 8px 0 ${C.graphite}40`,
-    }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
-        <div style={{ fontFamily: F.ui, fontWeight: 900, fontSize: 13, color: C.blue, flex: 1, lineHeight: 1.35 }}>
-          미리듣기 {title ? `· ${title}` : ''}
-          <div style={{ fontWeight: 700, color: C.muted, fontSize: 12 }}>{start}s ~ {end}s</div>
-        </div>
-        <Btn size="sm" onClick={onClose}>정지</Btn>
-      </div>
-      {err && <div style={{ fontFamily: F.ui, color: C.red, marginBottom: 8, fontSize: 13 }}>{err}</div>}
-      <div ref={hostRef} style={{ borderRadius: 8, overflow: 'hidden', width: 276, height: 155 }} />
-    </div>
-  )
-}
-
-function BankScreen({ nav }: { nav: (s: Screen) => void }) {
-  const { user } = useGame()
-  const PAGE_SIZE = 10
-  const [list, setList] = useState<BankQuestion[]>([])
-  const [total, setTotal] = useState(0)
-  const [page, setPage] = useState(1)
-  const [pageCount, setPageCount] = useState(1)
-  const [genres, setGenres] = useState<Array<{ name: string; count: number }>>([])
-  const [youtubeUrl, setYoutubeUrl] = useState('')
-  const [startSec, setStartSec] = useState('30')
-  const [endSec, setEndSec] = useState('70')
-  const [genreName, setGenreName] = useState<BankGenreName>('한국노래')
-  const [formTags, setFormTags] = useState<string[]>([])
-  const [tagInput, setTagInput] = useState('')
-  const [slots, setSlots] = useState<BankSlotDraft[]>([
-    { label: '노래 제목', answer: '', accepts: '', hidden: false },
-    { label: '가수', answer: '', accepts: '', hidden: false },
-  ])
-  const [editingId, setEditingId] = useState<string | null>(null)
-  const [searchQ, setSearchQ] = useState('')
-  const [searchInput, setSearchInput] = useState('')
-  const [filterGenre, setFilterGenre] = useState<BankGenreName | ''>('')
-  const [filterTag, setFilterTag] = useState('')
-  const [filterTagInput, setFilterTagInput] = useState('')
-  const [filterHidden, setFilterHidden] = useState<'all' | 'yes' | 'no'>('all')
-  const [bulkJson, setBulkJson] = useState('')
-  const [err, setErr] = useState('')
-  const [okMsg, setOkMsg] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [clipPreview, setClipPreview] = useState<{ url: string; startSec: number; endSec: number; title?: string } | null>(null)
-  const fileRef = useRef<HTMLInputElement>(null)
-  const formRef = useRef<HTMLDivElement>(null)
-  const listTopRef = useRef<HTMLDivElement>(null)
-
-  const parseAccepts = (raw: string) =>
-    [...new Set(raw.split(/[,，、/|]+/).map(x => x.trim()).filter(Boolean))]
-
-  const defaultTitleLabel = (genre: BankGenreName) => {
-    if (genre === '애니') return '애니 제목'
-    if (genre === '한국노래' || genre === '일본노래' || genre === '해외노래' || genre === '버튜버') return '노래 제목'
-    return '제목'
-  }
-
-  const emptySlots = (genre: BankGenreName = genreName): BankSlotDraft[] => [
-    { label: defaultTitleLabel(genre), answer: '', accepts: '', hidden: false },
-    { label: '가수', answer: '', accepts: '', hidden: false },
-  ]
-
-  const resetForm = () => {
-    setEditingId(null)
-    setYoutubeUrl('')
-    setStartSec('30')
-    setEndSec('70')
-    setGenreName('한국노래')
-    setFormTags([])
-    setTagInput('')
-    setSlots(emptySlots('한국노래'))
-  }
-
-  const load = useCallback(async () => {
-    try {
-      const params = new URLSearchParams({
-        limit: String(PAGE_SIZE),
-        page: String(page),
-      })
-      if (searchQ.trim()) params.set('q', searchQ.trim())
-      if (filterGenre) params.set('genre', filterGenre)
-      if (filterTag) params.set('tag', filterTag)
-      if (filterHidden === 'yes') params.set('hidden', 'yes')
-      if (filterHidden === 'no') params.set('hidden', 'no')
-      const [q, g] = await Promise.all([
-        api<{ questions: BankQuestion[]; total: number; page: number; pageCount: number }>(`/api/questions?${params}`),
-        api<{ genres: Array<{ name: string; count: number }> }>('/api/questions/genres'),
-      ])
-      setList(q.questions)
-      setTotal(q.total)
-      const pc = Math.max(1, q.pageCount || 1)
-      setPageCount(pc)
-      if (page > pc) setPage(pc)
-      setGenres(g.genres)
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : '목록 불러오기 실패')
-    }
-  }, [searchQ, filterGenre, filterTag, filterHidden, page])
-
-  useEffect(() => {
-    if (!user?.isAdmin) { nav('lobby'); return }
-    load()
-  }, [user, nav, load])
-
-  useEffect(() => {
-    setPage(1)
-  }, [searchQ, filterGenre, filterTag, filterHidden])
-
-  const goPage = (p: number) => {
-    const next = Math.max(1, Math.min(pageCount, p))
-    setPage(next)
-    setTimeout(() => listTopRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 40)
-  }
-
-  const pageItems = (() => {
-    const totalPages = pageCount
-    if (totalPages <= 9) return Array.from({ length: totalPages }, (_, i) => i + 1)
-    const items: Array<number | '…'> = []
-    const push = (x: number | '…') => {
-      if (items[items.length - 1] !== x) items.push(x)
-    }
-    push(1)
-    const start = Math.max(2, page - 2)
-    const end = Math.min(totalPages - 1, page + 2)
-    if (start > 2) push('…')
-    for (let i = start; i <= end; i += 1) push(i)
-    if (end < totalPages - 1) push('…')
-    push(totalPages)
-    return items
-  })()
-
-  const rangeFrom = total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1
-  const rangeTo = Math.min(total, page * PAGE_SIZE)
-
-  const addSlot = (label = `슬롯${slots.length + 1}`, hidden = false) => {
-    if (slots.length >= 8) {
-      setErr('슬롯은 최대 8개까지입니다')
-      return
-    }
-    if (hidden && slots.some(s => s.hidden)) {
-      setErr('히든 문제는 1개만 넣을 수 있습니다')
-      return
-    }
-    setErr('')
-    setSlots(s => [...s, {
-      label: hidden ? (label === `슬롯${slots.length + 1}` ? '히든 질문' : label) : label,
-      answer: '',
-      accepts: '',
-      hidden,
-    }])
-  }
-  const removeSlot = (i: number) => setSlots(s => s.length <= 1 ? s : s.filter((_, idx) => idx !== i))
-  const updateSlot = (i: number, patch: Partial<BankSlotDraft>) =>
-    setSlots(s => s.map((sl, idx) => (idx === i ? { ...sl, ...patch } : sl)))
-
-  const genreBtn = (_g: string, selected: boolean) => ({
-    ...sk(selected ? C.blue : C.graphite, true),
-    backgroundColor: selected ? C.blueLight : C.card,
-    color: selected ? C.blue : C.body,
-    fontFamily: F.ui, fontSize: '13px', fontWeight: 800 as const,
-    padding: '6px 12px', cursor: 'pointer', outline: 'none' as const,
-    border: `2px solid ${selected ? C.blue : C.graphite}`,
-  })
-
-  const addFormTag = () => {
-    const next = tagInput.trim()
-    if (!next) return
-    setFormTags(normalizeSongTags([...formTags, next]))
-    setTagInput('')
-  }
-
-  const removeFormTag = (tag: string) => {
-    setFormTags(formTags.filter(t => t !== tag))
-  }
-
-  const startEdit = (q: BankQuestion) => {
-    setEditingId(q.id)
-    setYoutubeUrl(q.youtubeUrl)
-    setStartSec(String(q.startSec))
-    setEndSec(String(q.endSec))
-    setGenreName((BANK_GENRES.includes(q.genre as BankGenreName) ? q.genre : YACHA_GENRE) as BankGenreName)
-    setFormTags(normalizeSongTags(q.tags || []))
-    setTagInput('')
-    setSlots(q.slots.map(s => ({
-      label: s.label,
-      answer: s.answer || '',
-      accepts: (s.acceptAnswers || []).filter(a => a !== s.answer).join(', '),
-      hidden: !!s.hidden,
-    })))
-    setErr('')
-    setOkMsg('수정 모드 · 아래 폼에서 저장하세요')
-    setTimeout(() => formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50)
-  }
-
-  const submit = async () => {
-    setBusy(true); setErr(''); setOkMsg('')
-    try {
-      const start = Number(startSec)
-      const end = Number(endSec)
-      if (!youtubeUrl.trim()) throw new Error('유튜브 URL을 입력하세요')
-      if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) throw new Error('구간(초)을 확인하세요')
-      if (slots.some(s => !s.label.trim() || !s.answer.trim())) throw new Error('슬롯 라벨/정답을 모두 입력하세요')
-
-      const body = {
-        youtubeUrl: youtubeUrl.trim(),
-        startSec: start,
-        endSec: end,
-        genreName,
-        tags: normalizeSongTags(formTags),
-        slots: slots.map(s => ({
-          label: s.label.trim(),
-          answer: s.answer.trim(),
-          acceptAnswers: parseAccepts(s.accepts),
-          hidden: !!s.hidden,
-        })),
-      }
-
-      if (editingId) {
-        await api(`/api/questions/${editingId}`, {
-          method: 'PATCH',
-          body: JSON.stringify(body),
-        })
-        setOkMsg(`수정 완료 · 슬롯 ${slots.length}개`)
-      } else {
-        await api('/api/questions', {
-          method: 'POST',
-          body: JSON.stringify(body),
-        })
-        setOkMsg(`등록 완료 · 슬롯 ${slots.length}개`)
-      }
-      resetForm()
-      await load()
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : (editingId ? '수정 실패' : '등록 실패'))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const submitBulk = async (raw: string) => {
-    setBusy(true); setErr(''); setOkMsg('')
-    try {
-      const parsed = JSON.parse(raw) as unknown
-      const questions = Array.isArray(parsed)
-        ? parsed
-        : (parsed as { questions?: unknown }).questions
-      if (!Array.isArray(questions) || questions.length === 0) {
-        throw new Error('JSON 배열(또는 { questions: [...] }) 형식이 필요합니다')
-      }
-      const res = await api<{ created: number; failed: number; errors: Array<{ index: number; error: string }> }>('/api/questions/bulk', {
-        method: 'POST',
-        body: JSON.stringify({ questions }),
-      })
-      setOkMsg(`${res.created}곡 등록 완료` + (res.failed ? ` / 실패 ${res.failed}곡` : ''))
-      if (res.errors?.length) {
-        setErr(`일부 실패 예: #${res.errors[0].index} ${res.errors[0].error}`)
-      }
-      setBulkJson('')
-      await load()
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : '대량 등록 실패')
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const onPickFile = async (file: File | null) => {
-    if (!file) return
-    const text = await file.text()
-    setBulkJson(text)
-    await submitBulk(text)
-  }
-
-  const remove = async (id: string) => {
-    if (!confirm('이 문제를 삭제할까요?')) return
-    setBusy(true); setErr('')
-    try {
-      await api(`/api/questions/${id}`, { method: 'DELETE' })
-      if (editingId === id) resetForm()
-      await load()
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : '삭제 실패')
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  if (!user?.isAdmin) return null
-
-  return (
-    <div style={{ minHeight: '100vh', ...notebookLines }}>
-      <div style={{
-        backgroundColor: C.card, borderBottom: `2.5px solid ${C.graphite}`,
-        boxShadow: `0 3px 0 ${C.graphite}50`, padding: '12px 28px',
-        display: 'flex', alignItems: 'center', gap: 14, filter: 'url(#pencilRough)',
-      }}>
-        <Btn size="sm" onClick={() => nav('lobby')}>← 로비</Btn>
-        <div style={{ fontFamily: F.ui, fontSize: 20, fontWeight: 900, flex: 1, color: C.body }}>문제 은행</div>
-        <Tag color={C.blue}>총 {total}곡</Tag>
-        <Tag color={C.blue}>관리자</Tag>
-      </div>
-
-      <div style={{ maxWidth: 980, margin: '0 auto', padding: '24px', display: 'flex', flexDirection: 'column', gap: 22 }}>
-        <NoteCard>
-          <div style={{ fontFamily: F.ui, fontSize: 18, fontWeight: 900, marginBottom: 8 }}>대량 등록 (1000곡+ 추천)</div>
-          <div style={{ fontFamily: F.ui, fontSize: 14, color: C.muted, marginBottom: 12, lineHeight: 1.6 }}>
-            JSON 파일/텍스트로 한 번에 넣을 수 있습니다. 장르는{' '}
-            <strong>{BANK_GENRES.join(', ')}</strong> 중 하나여야 합니다. (<code>{YACHA_GENRE}</code>는 야차룰 전용 · 일반전에 안 나옴)
-            선택으로 <code>tags</code> 문자열 배열을 넣을 수 있습니다 (예: <code>["남돌","10년대"]</code>).
-          </div>
-          <textarea
-            value={bulkJson}
-            onChange={e => setBulkJson(e.target.value)}
-            placeholder={`[\n  {\n    "youtubeUrl": "https://www.youtube.com/watch?v=...",\n    "startSec": 30,\n    "endSec": 70,\n    "genreName": "버튜버",\n    "tags": ["여돌", "20년대"],\n    "slots": [\n      { "label": "제목", "answer": "네리사에게 혼났습니다", "acceptAnswers": "네리사에게 혼났습니다.., Nerissa" },\n      { "label": "가수", "answer": "아오쿠모 린", "acceptAnswers": ["아오쿠모 린", "AOKUMO RIN"] },\n      { "label": "출시 연도는?", "answer": "2024", "hidden": true }\n    ]\n  }\n]`}
-            style={{
-              width: '100%', minHeight: 160, marginBottom: 12,
-              ...sk(), backgroundColor: C.card, fontFamily: 'ui-monospace, monospace',
-              fontSize: 13, padding: 12, color: C.body, resize: 'vertical', outline: 'none',
-            }}
-          />
-          <div style={{ fontFamily: F.ui, fontSize: 13, color: C.muted, marginBottom: 10, lineHeight: 1.5 }}>
-            acceptAnswers는 배열 또는 쉼표 문자열 모두 OK. 슬롯은 문제당 최대 8개.
-            히든은 <code>{`"hidden": true`}</code> (문제당 최대 1개, 없어도 됨).
-          </div>          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
-            <Btn variant="primary" onClick={() => submitBulk(bulkJson)} disabled={busy || !bulkJson.trim()}>JSON 등록</Btn>
-            <Btn onClick={() => fileRef.current?.click()} disabled={busy}>.json 파일 선택</Btn>
-            <input
-              ref={fileRef}
-              type="file"
-              accept="application/json,.json"
-              style={{ display: 'none' }}
-              onChange={e => onPickFile(e.target.files?.[0] || null)}
-            />
-          </div>
-        </NoteCard>
-
-        <NoteCard>
-          <div ref={formRef} style={{ fontFamily: F.ui, fontSize: 18, fontWeight: 900, marginBottom: 16 }}>
-            {editingId ? '문제 수정' : '단건 등록'}
-            {editingId && (
-              <span style={{ marginLeft: 10, fontSize: 13, fontWeight: 700, color: C.blue }}>수정 중</span>
-            )}
-          </div>
-          <Field label="유튜브 URL" value={youtubeUrl} onChange={setYoutubeUrl} placeholder="https://www.youtube.com/watch?v=..." />
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            <Field label="시작(초)" value={startSec} onChange={setStartSec} placeholder="30" />
-            <Field label="종료(초)" value={endSec} onChange={setEndSec} placeholder="70" />
-          </div>
-          <div style={{ marginBottom: 14 }}>
-            <Btn
-              size="sm"
-              variant="primary"
-              disabled={!youtubeUrl.trim()}
-              onClick={() => {
-                const start = Number(startSec)
-                const end = Number(endSec)
-                if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
-                  setErr('구간(초)을 확인하세요')
-                  return
-                }
-                setErr('')
-                setClipPreview({
-                  url: youtubeUrl.trim(),
-                  startSec: start,
-                  endSec: end,
-                  title: slots[0]?.answer || '폼 구간',
-                })
-              }}
-            >
-              미리듣기
-            </Btn>
-          </div>
-          <div style={{ fontFamily: F.ui, fontSize: 13, fontWeight: 700, color: C.muted, marginBottom: 8 }}>장르</div>
-          <div style={{ display: 'flex', gap: 6, marginBottom: 16, flexWrap: 'wrap' }}>
-            {BANK_GENRES.map(g => (
-              <button key={g} type="button" style={genreBtn(g, genreName === g)} onClick={() => {
-                setGenreName(g)
-                setSlots(prev => {
-                  if (prev.length === 0) return emptySlots(g)
-                  const next = [...prev]
-                  const first = next[0]
-                  if (first && !first.hidden && (first.label === '제목' || first.label === '노래 제목' || first.label === '애니 제목')) {
-                    next[0] = { ...first, label: defaultTitleLabel(g) }
-                  }
-                  return next
-                })
-              }}>{g}</button>
-            ))}
-          </div>
-          <div style={{ fontFamily: F.ui, fontSize: 13, fontWeight: 700, color: C.muted, marginBottom: 8 }}>태그</div>
-          <div style={{ display: 'flex', gap: 8, marginBottom: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-            <SketchInput
-              value={tagInput}
-              onChange={setTagInput}
-              placeholder="예: 남돌, 10년대, 드라마…"
-              style={{ flex: 1, minWidth: 160 }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault()
-                  addFormTag()
-                }
-              }}
-            />
-            <Btn size="sm" variant="primary" onClick={addFormTag} disabled={!tagInput.trim()}>
-              태그 추가하기
-            </Btn>
-          </div>
-          {formTags.length > 0 && (
-            <div style={{ display: 'flex', gap: 6, marginBottom: 16, flexWrap: 'wrap' }}>
-              {formTags.map(t => (
-                <button
-                  key={t}
-                  type="button"
-                  onClick={() => removeFormTag(t)}
-                  title="클릭하여 제거"
-                  style={{
-                    ...sk(C.blue, true),
-                    backgroundColor: C.blueLight,
-                    color: C.blue,
-                    fontFamily: F.ui,
-                    fontSize: 13,
-                    fontWeight: 800,
-                    padding: '4px 10px',
-                    cursor: 'pointer',
-                    outline: 'none',
-                    border: `2px solid ${C.blue}`,
-                  }}
-                >
-                  {t} ×
-                </button>
-              ))}
-            </div>
-          )}
-          {formTags.length === 0 && (
-            <div style={{ fontFamily: F.ui, fontSize: 12, color: C.muted, marginBottom: 16 }}>
-              태그가 없으면 비워 둡니다. (남돌+여돌을 같이 넣으면 성별 태그는 자동 제거)
-            </div>
-          )}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
-            <div style={{ fontFamily: F.ui, fontSize: 13, fontWeight: 700, color: C.muted, letterSpacing: '0.06em' }}>
-              정답 슬롯 ({slots.length}/8)
-            </div>
-            <div style={{ flex: 1 }} />
-            <Btn size="sm" onClick={() => addSlot('제목')} disabled={slots.length >= 8}>+ 제목</Btn>
-            <Btn size="sm" onClick={() => addSlot('가수')} disabled={slots.length >= 8}>+ 가수</Btn>
-            <Btn size="sm" onClick={() => addSlot('키워드')} disabled={slots.length >= 8}>+ 키워드</Btn>
-            <Btn
-              size="sm"
-              variant="primary"
-              onClick={() => addSlot('출시 연도는?', true)}
-              disabled={slots.length >= 8 || slots.some(s => s.hidden)}
-            >
-              + 히든
-            </Btn>
-            <Btn size="sm" onClick={() => addSlot()} disabled={slots.length >= 8}>+ 슬롯</Btn>
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 14 }}>
-            {slots.map((s, i) => {
-              const acceptsPreview = parseAccepts(s.accepts)
-              return (
-                <div
-                  key={i}
-                  style={{
-                    ...sk(s.hidden ? C.blue : C.graphite, true),
-                    backgroundColor: s.hidden ? C.blueLight : C.card,
-                    padding: 12,
-                  }}
-                >
-                  <div style={{ fontFamily: F.ui, fontSize: 12, fontWeight: 800, color: s.hidden ? C.blue : C.muted, marginBottom: 8 }}>
-                    {s.hidden ? '히든 문제' : `슬롯 ${i + 1}`} · 맞히면 {s.hidden ? '+3점' : '+1점'}
-                    {s.hidden && ' · 제목·가수 맞힌 뒤 등장'}
-                  </div>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
-                    <SketchInput
-                      value={s.label}
-                      onChange={v => updateSlot(i, { label: v })}
-                      placeholder={s.hidden ? '히든 질문 (예: 출시 연도는?)' : '라벨 (제목/가수/키워드)'}
-                      style={{ flex: '0 0 160px', minWidth: 120 }}
-                    />
-                    <SketchInput value={s.answer} onChange={v => updateSlot(i, { answer: v })} placeholder="대표 정답" style={{ flex: 1, minWidth: 120 }} />
-                    <Btn size="sm" variant="danger" onClick={() => removeSlot(i)} disabled={slots.length <= 1}>삭제</Btn>
-                  </div>
-                  <div style={{ fontFamily: F.ui, fontSize: 12, color: C.muted, marginBottom: 4 }}>
-                    인정 답안 (쉼표로 구분)
-                  </div>
-                  <SketchInput
-                    value={s.accepts}
-                    onChange={v => updateSlot(i, { accepts: v })}
-                    placeholder="예: 네리사에게 혼났습니다.., Nerissa, 네리사"
-                    style={{ width: '100%' }}
-                  />
-                  {(s.answer.trim() || acceptsPreview.length > 0) && (
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
-                      {s.answer.trim() && <Tag color={C.green}>정답: {s.answer.trim()}</Tag>}
-                      {acceptsPreview.map(a => (
-                        <Tag key={a} color={C.blue}>{a}</Tag>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )
-            })}
-          </div>
-          <div style={{ fontFamily: F.ui, fontSize: 13, color: C.muted, marginBottom: 12, lineHeight: 1.55 }}>
-            인정 답안 예: <code>아이유, IU, iu</code> · 구분자 <code>,</code> <code>/</code> <code>|</code> 가능.
-            히든은 선택(0~1개). 라벨이 질문으로 표시되며, 제목·가수를 모두 맞히면 등장합니다.
-          </div>
-          <div style={{ display: 'flex', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
-            <Btn variant="primary" onClick={submit} disabled={busy}>
-              {editingId ? '수정 저장' : '등록하기'}
-            </Btn>
-            {editingId && (
-              <Btn onClick={() => { resetForm(); setOkMsg(''); setErr('') }} disabled={busy}>수정 취소</Btn>
-            )}
-          </div>
-          {err && <div style={{ fontFamily: F.ui, color: C.red, marginBottom: 8 }}>{err}</div>}
-          {okMsg && <div style={{ fontFamily: F.ui, color: C.green, marginBottom: 8 }}>{okMsg}</div>}
-          <div style={{ fontFamily: F.ui, fontSize: 13, color: C.muted, lineHeight: 1.6 }}>
-            장르 현황: {genres.map(g => `${g.name} ${g.count}곡`).join(' · ') || '없음'}
-          </div>
-        </NoteCard>
-
-        <NoteCard>
-          <div ref={listTopRef} style={{ fontFamily: F.ui, fontSize: 18, fontWeight: 900, marginBottom: 12 }}>
-            등록 목록 ({rangeFrom}-{rangeTo} / 총 {total}곡)
-          </div>
-          <div style={{ display: 'flex', gap: 8, marginBottom: 10, flexWrap: 'wrap', alignItems: 'center' }}>
-            <SketchInput
-              value={searchInput}
-              onChange={setSearchInput}
-              placeholder="제목·가수·인정답·URL 검색"
-              style={{ flex: 1, minWidth: 180 }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') setSearchQ(searchInput.trim())
-              }}
-            />
-            <Btn size="sm" variant="primary" onClick={() => setSearchQ(searchInput.trim())} disabled={busy}>검색</Btn>
-            {(searchQ || filterGenre || filterTag || filterHidden !== 'all') && (
-              <Btn
-                size="sm"
-                onClick={() => {
-                  setSearchInput('')
-                  setSearchQ('')
-                  setFilterGenre('')
-                  setFilterTag('')
-                  setFilterTagInput('')
-                  setFilterHidden('all')
-                }}
-                disabled={busy}
-              >
-                초기화
-              </Btn>
-            )}
-          </div>
-          <div style={{ display: 'flex', gap: 6, marginBottom: 8, flexWrap: 'wrap' }}>
-            <button
-              type="button"
-              style={genreBtn('한국노래', filterGenre === '')}
-              onClick={() => setFilterGenre('')}
-            >
-              전체 장르
-            </button>
-            {BANK_GENRES.map(g => (
-              <button
-                key={g}
-                type="button"
-                style={genreBtn(g, filterGenre === g)}
-                onClick={() => setFilterGenre(g)}
-              >
-                {g}{g === YACHA_GENRE ? ' (야차)' : ''}
-              </button>
-            ))}
-          </div>
-          <div style={{ display: 'flex', gap: 6, marginBottom: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-            <span style={{ fontFamily: F.ui, fontSize: 13, color: C.muted, marginRight: 4 }}>히든</span>
-            {([
-              ['all', '전체'],
-              ['yes', '히든 있음'],
-              ['no', '히든 없음'],
-            ] as const).map(([k, label]) => (
-              <button
-                key={k}
-                type="button"
-                style={genreBtn(k, filterHidden === k)}
-                onClick={() => setFilterHidden(k)}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-          <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap', alignItems: 'center' }}>
-            <SketchInput
-              value={filterTagInput}
-              onChange={setFilterTagInput}
-              placeholder="태그로 필터 (예: 남돌)"
-              style={{ flex: 1, minWidth: 140 }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') setFilterTag(filterTagInput.trim())
-              }}
-            />
-            <Btn size="sm" onClick={() => setFilterTag(filterTagInput.trim())} disabled={busy}>태그 필터</Btn>
-            {filterTag && (
-              <Btn size="sm" onClick={() => { setFilterTag(''); setFilterTagInput('') }} disabled={busy}>태그 해제</Btn>
-            )}
-          </div>
-          {(searchQ || filterGenre || filterTag || filterHidden !== 'all') && (
-            <div style={{ fontFamily: F.ui, fontSize: 13, color: C.muted, marginBottom: 10 }}>
-              {[
-                searchQ ? `검색어: "${searchQ}"` : '',
-                filterGenre ? `장르: ${filterGenre}` : '',
-                filterTag ? `태그: ${filterTag}` : '',
-                filterHidden === 'yes' ? '히든: 있음' : filterHidden === 'no' ? '히든: 없음' : '',
-              ].filter(Boolean).join(' · ')}
-            </div>
-          )}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {list.length === 0 && (
-              <div style={{ fontFamily: F.ui, color: C.muted, textAlign: 'center', padding: 20 }}>
-                {searchQ || filterGenre || filterTag || filterHidden !== 'all' ? '검색 결과가 없습니다' : '아직 문제가 없습니다'}
-              </div>
-            )}
-            {list.map(q => (
-              <div
-                key={q.id}
-                style={{
-                  ...sk(editingId === q.id ? C.blue : C.graphite, true),
-                  backgroundColor: editingId === q.id ? C.blueLight : C.card,
-                  padding: '12px 14px',
-                }}
-              >
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 6, flexWrap: 'wrap' }}>
-                  <Tag>{q.genre}</Tag>
-                  {(q.tags || []).map(t => (
-                    <Tag key={t} color={C.blue}>{t}</Tag>
-                  ))}
-                  <Tag color={C.muted}>{q.slots.length}슬롯</Tag>
-                  {q.slots.some(s => s.hidden) && <Tag color={C.blue}>히든</Tag>}
-                  <div style={{ flex: 1, fontFamily: F.ui, fontSize: 13, color: C.muted }}>
-                    {q.startSec}s ~ {q.endSec}s
-                  </div>
-                  <Btn
-                    size="sm"
-                    variant="primary"
-                    onClick={() => {
-                      const title = q.slots.find(s => s.label.includes('제목'))?.answer || q.slots[0]?.answer
-                      setClipPreview({
-                        url: q.youtubeUrl,
-                        startSec: q.startSec,
-                        endSec: q.endSec,
-                        title,
-                      })
-                    }}
-                    disabled={busy}
-                  >
-                    미리듣기
-                  </Btn>
-                  <Btn size="sm" onClick={() => startEdit(q)} disabled={busy}>수정</Btn>
-                  <Btn size="sm" variant="danger" onClick={() => remove(q.id)} disabled={busy}>삭제</Btn>
-                </div>
-                <div style={{
-                  fontFamily: F.ui, fontSize: 13, color: C.body, marginBottom: 6,
-                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                }}>
-                  {q.youtubeUrl}
-                </div>
-                <div style={{ fontFamily: F.ui, fontSize: 14, color: C.body, marginBottom: 4 }}>
-                  {q.slots.map(s => `${s.hidden ? '[히든] ' : ''}${s.label}: ${s.answer || '?'}`).join(' / ')}
-                </div>
-                {q.slots.some(s => (s.acceptAnswers?.length || 0) > 1) && (
-                  <div style={{ fontFamily: F.ui, fontSize: 12, color: C.muted }}>
-                    인정: {q.slots.map(s => {
-                      const extras = (s.acceptAnswers || []).filter(a => a !== s.answer)
-                      if (!extras.length) return null
-                      return `${s.label}[${extras.join(', ')}]`
-                    }).filter(Boolean).join(' · ')}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-
-          {pageCount > 1 && (
-            <div style={{
-              display: 'flex', flexWrap: 'wrap', gap: 6, justifyContent: 'center',
-              alignItems: 'center', marginTop: 16, paddingTop: 12,
-              borderTop: `2px dashed ${C.line}`,
-            }}>
-              <Btn size="sm" disabled={page <= 1 || busy} onClick={() => goPage(page - 1)}>이전</Btn>
-              {pageItems.map((item, idx) => (
-                item === '…' ? (
-                  <span key={`e-${idx}`} style={{ fontFamily: F.ui, fontSize: 14, color: C.muted, padding: '0 4px' }}>…</span>
-                ) : (
-                  <button
-                    key={item}
-                    type="button"
-                    disabled={busy}
-                    onClick={() => goPage(item)}
-                    style={{
-                      ...sk(item === page ? C.blue : C.graphite, true),
-                      backgroundColor: item === page ? C.blueLight : C.card,
-                      color: item === page ? C.blue : C.body,
-                      fontFamily: F.ui,
-                      fontSize: 14,
-                      fontWeight: 800,
-                      minWidth: 34,
-                      padding: '6px 10px',
-                      cursor: 'pointer',
-                      outline: 'none',
-                    }}
-                  >
-                    {item}
-                  </button>
-                )
-              ))}
-              <Btn size="sm" disabled={page >= pageCount || busy} onClick={() => goPage(page + 1)}>다음</Btn>
-              <span style={{ fontFamily: F.ui, fontSize: 13, color: C.muted, marginLeft: 6 }}>
-                {page} / {pageCount} 페이지
-              </span>
-            </div>
-          )}
-        </NoteCard>
-      </div>
-      {clipPreview && (
-        <BankSegmentPreview
-          url={clipPreview.url}
-          startSec={clipPreview.startSec}
-          endSec={clipPreview.endSec}
-          title={clipPreview.title}
-          volume={user?.musicVolume ?? 70}
-          onClose={() => setClipPreview(null)}
-        />
-      )}
-    </div>
-  )
-}
 
 // ── App Root ──────────────────────────────────────────────────
 

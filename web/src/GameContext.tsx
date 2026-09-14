@@ -11,7 +11,7 @@ import {
 import { api, clearAuth, getStoredUser, setAuth, updateStoredUser, type AuthUser } from './api'
 import { connectSocket, disconnectSocket, getSocket } from './socket'
 import { playSfx, setSfxVolume as applySfxVolume } from './sfx'
-import { applyClockSample, resetClockSync, serverNow } from './clockSync'
+import { applyClockSample, noteClockGap, resetClockSync, serverNow } from './clockSync'
 
 export type GameMode = 'nomatch' | 'reading'
 
@@ -86,6 +86,8 @@ export type RoomMember = {
   isHost: boolean
   /** 관전: 채팅만 */
   isSpectator?: boolean
+  /** 연결이 끊겨 재접속 유예 중 (점수·증강은 그대로 보관) */
+  disconnected?: boolean
   /** 채팅 색 인덱스 (0~9 · 관전자는 null) */
   chatColor?: number | null
   /** 이미 디버프 적용 중 → 타겟 디버프 불가 */
@@ -236,6 +238,10 @@ export type RoomState = {
   status: 'lobby' | 'playing' | 'revealing' | 'augment' | 'countdown' | 'duel' | 'ended'
   maxPlayers: number
   maxSpectators?: number
+  /** 조로룰: 방 전체 스킵 금지 */
+  noSkipActive?: boolean
+  noSkipBy?: string | null
+  noSkipRoundsLeft?: number | null
   genreCounts: Record<string, number>
   /** 문제은행 장르별 보유 수 — 대기실 슬라이더 max */
   genreBankCounts?: Record<string, number>
@@ -394,6 +400,7 @@ type GameCtx = {
   }) => Promise<void>
   joinRoom: (opts: { roomId?: string; code?: string; asSpectator?: boolean }) => Promise<void>
   leaveRoom: () => void
+  backToWaiting: () => Promise<void>
   setReady: () => void
   setSpectator: (spectator: boolean) => Promise<void>
   setChatColor: (color: number | null) => Promise<void>
@@ -823,7 +830,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
       message?: string
     }) => {
       const tier = (p?.tier || '').toLowerCase()
-      const isGaho = tier === '가호' || tier === 'gaho'
+      const isGaho = tier === 'prism' || tier === '프리즘' || tier === '가호' || tier === 'gaho'
       if (isGaho && p?.name) {
         playSfx('gaho')
         setGahoCutscene({
@@ -920,28 +927,62 @@ export function GameProvider({ children }: { children: ReactNode }) {
       const s = getSocket()
       if (!s?.connected) return
       const t0 = Date.now()
-      s.timeout(2500).emit('ping:rtt', {}, (err: Error | null, res?: { t?: number }) => {
-        if (err) return
-        const t1 = Date.now()
-        const rtt = t1 - t0
-        setPingMs((prev) => (prev == null ? rtt : Math.round(prev * 0.5 + rtt * 0.5)))
-        // 재생 중에도 오프셋은 갱신(다음 곡에 반영). seek는 플레이어가 serverNow만 쓰므로 지금 곡은 안 건드림.
-        if (updateClock && typeof res?.t === 'number') {
-          if (applyClockSample(t0, res.t, t1)) {
-            setClockSamples((n) => n + 1)
+      s.timeout(2500).emit(
+        'ping:rtt',
+        {},
+        (err: Error | null, res?: { t?: number; t1?: number; t2?: number }) => {
+          if (err) return
+          const t3 = Date.now()
+          // 서버 수신(t1)·송신(t2)을 따로 받아 서버 처리시간을 지연에서 뺀다.
+          // 구버전 서버는 t/t1 만 주므로 그때는 t2 = t1 로 둔다 (기존 동작과 동일).
+          const t1 = typeof res?.t1 === 'number' ? res.t1 : res?.t
+          const t2 = typeof res?.t2 === 'number' ? res.t2 : t1
+          const serverBusy = typeof t1 === 'number' && typeof t2 === 'number' ? Math.max(0, t2 - t1) : 0
+          const rtt = Math.max(0, t3 - t0 - serverBusy)
+          setPingMs((prev) => (prev == null ? rtt : Math.round(prev * 0.5 + rtt * 0.5)))
+          // 재생 중에도 오프셋은 갱신(다음 곡에 반영). seek는 플레이어가 serverNow만 쓰므로 지금 곡은 안 건드림.
+          if (updateClock && typeof t1 === 'number' && typeof t2 === 'number') {
+            if (applyClockSample(t0, t1, t3, t2)) {
+              setClockSamples((n) => n + 1)
+            }
           }
-        }
-      })
+        },
+      )
     }
-    if (augmentOffer) {
+
+    /**
+     * 재접속·탭 복귀처럼 "그동안 무슨 일이 있었는지 모르는" 시점.
+     * 절전에서 깨어난 기기는 시계가 통째로 밀려 있을 수 있는데, 평소 감쇠로는
+     * 그 오차를 따라잡는 데 20초 넘게 걸려 그동안 노래가 어긋난 채로 플레이된다.
+     * 통계만 비우고(보정값은 유지) 곧바로 몇 번 빠르게 다시 잰다.
+     */
+    const resync = () => {
+      noteClockGap()
+      setClockSamples(0)
       measure(true)
-      const id = window.setInterval(() => measure(true), 400)
-      return () => window.clearInterval(id)
+      window.setTimeout(() => measure(true), 150)
+      window.setTimeout(() => measure(true), 400)
     }
-    // 플레이 중: 오프셋도 계속 맞춤(다음 곡용) · 핑은 더 자주
-    measure(true)
-    const id = window.setInterval(() => measure(true), 1200)
-    return () => window.clearInterval(id)
+
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return
+      resync()
+      // 백그라운드에서 놓친 라운드 상태를 서버에서 다시 받아온다
+      getSocket()?.emit('room:resync', {})
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    window.addEventListener('focus', onVisible)
+
+    // connected가 false→true로 바뀌며 이 이펙트가 다시 도는 것 자체가 재접속 신호다
+    resync()
+
+    const period = augmentOffer ? 400 : 1200
+    const id = window.setInterval(() => measure(true), period)
+    return () => {
+      window.clearInterval(id)
+      document.removeEventListener('visibilitychange', onVisible)
+      window.removeEventListener('focus', onVisible)
+    }
   }, [connected, augmentOffer])
 
   // 서버 endsAt 기준 카운트다운 (사람마다 로컬 틱 어긋남 완화)
@@ -1176,6 +1217,13 @@ export function GameProvider({ children }: { children: ReactNode }) {
     }
   }
   const clearResults = () => setResults(null)
+  const backToWaiting = async () => {
+    const res = await emitAck<{ ok: boolean; room?: RoomState; error?: string }>('room:back_to_lobby', {})
+    if (!res.ok) throw new Error(res.error || '대기실로 돌아가지 못했습니다')
+    setResults(null)
+    setRound(null)
+    if (res.room) setRoom(res.room)
+  }
   const clearTrumanReveal = () => setTrumanReveal(null)
   const clearGahoCutscene = () => setGahoCutscene(null)
   const clearAugmentNotice = () => {
@@ -1222,6 +1270,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
       createRoom,
       joinRoom,
       leaveRoom,
+      backToWaiting,
       setReady,
       setSpectator,
       setChatColor,

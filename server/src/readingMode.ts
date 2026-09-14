@@ -1,4 +1,5 @@
 import type { Server } from 'socket.io'
+import { saveGameRecord } from './records.js'
 
 export type GameMode = 'nomatch' | 'reading'
 export type ReadingPhase = 'decide' | 'claim' | 'vote' | 'pre_solve' | 'solve' | 'reveal'
@@ -41,6 +42,8 @@ export type ReadingState = {
 
 export type ReadingRoomLike = {
   id: string
+  /** 전적에 남길 방 이름 */
+  name: string
   gameMode: GameMode
   /** 리딩방 목표 점수 (도달 시 종료) */
   readingTargetScore: number
@@ -167,6 +170,14 @@ function endReadingGame(
   io.to(room.id).emit('game:end', { results })
   emitReadingRoomState(io, room, roomState)
   emitSystem(io, room, reason)
+
+  void saveGameRecord({
+    roomName: room.name,
+    gameMode: 'reading',
+    answerMode: 'title',
+    totalRounds: room.index,
+    entries: results,
+  })
 }
 
 function reachedTarget(room: ReadingRoomLike) {

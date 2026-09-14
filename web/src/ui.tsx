@@ -53,7 +53,7 @@ export function tierBorderColor(tier?: string | null): string {
   if (t === 'bronze' || t === '브론즈') return C.tierBronze
   if (t === 'silver' || t === '실버') return C.tierSilver
   if (t === 'gold' || t === '골드') return C.tierGold
-  if (t === '가호' || t === 'gaho') return C.tierGaho
+  if (t === 'prism' || t === '프리즘' || t === '가호' || t === 'gaho') return C.tierGaho
   return C.graphite
 }
 
@@ -62,7 +62,7 @@ export function tierDisplayName(tier?: string | null): string {
   if (t === 'bronze' || t === '브론즈') return '브론즈'
   if (t === 'silver' || t === '실버') return '실버'
   if (t === 'gold' || t === '골드') return '골드'
-  if (t === '가호' || t === 'gaho') return '가호'
+  if (t === 'prism' || t === '프리즘' || t === '가호' || t === 'gaho') return '프리즘'
   return tier || ''
 }
 
@@ -308,14 +308,15 @@ export const HOSTILE_AUGMENT_TYPES = new Set([
   'gabuki_mark', 'hide_hints', 'audio_stutter', 'power_off_others', 'party_music_others',
   'chat_isolate', 'slow_playback', 'answer_proxy', 'score_steal', 'rock_throw',
   'steal_chain', 'yacha_duel', 'flame_kim', 'mud_fight',
-  'destroy_held_augment',
+  'destroy_held_augment', 'zero_both', 'muffled_answer',
 ])
 
 /** 플레이어 1명 이상 지목 */
 const OPPONENT_TARGET_TYPES = new Set([
   'mute_chat', 'soft_chat_mute', 'slow_playback', 'answer_proxy', 'named_decoy',
   'sakura_decoy', 'answer_delay', 'yacha_duel', 'polite_suffix', 'answer_block',
-  'rock_throw', 'steal_chain', 'score_steal', 'accuse_sleep', 'gabuki_mark',
+  'rock_throw', 'steal_chain', 'score_steal', 'zero_both', 'muffled_answer',
+  'accuse_sleep', 'gabuki_mark',
   'steal_held_augment', 'flame_kim', 'hide_hints', 'audio_stutter', 'score_share',
   'destroy_held_augment', 'peck_song',
 ])
@@ -351,17 +352,19 @@ export function augmentTargetInfo(effectType?: string | null): AugmentTargetInfo
     || effectType === 'chat_isolate'
     || effectType === 'mud_fight'
     || effectType === 'extend_round'
+    || effectType === 'party_music_all'
+    || effectType === 'no_skip'
   ) {
     return { label: '전원', color: C.graphite, bg: '#E8EEF2' }
   }
-  if (effectType === 'ban_genre') {
+  if (effectType === 'ban_genre' || effectType === 'genre_early_chosung') {
     return { label: '장르 선택', color: C.green, bg: C.greenLight }
   }
   if (effectType === 'swap_genre_counts' || effectType === 'equalize_genre_remaining') {
     return { label: '큐 조작', color: C.graphite, bg: '#E8EEF2' }
   }
   if (effectType === 'gaho_select') {
-    return { label: '가호 선택', color: C.tierGaho, bg: '#EDE6F7' }
+    return { label: '프리즘 선택', color: C.tierGaho, bg: '#EDE6F7' }
   }
   if (effectType === 'chaos_cast') {
     return { label: '랜덤', color: C.graphite, bg: '#E8EEF2' }

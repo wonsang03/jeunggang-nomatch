@@ -6,6 +6,8 @@ import { getSocket } from './socket'
 const C = {
   blue: '#5D8CD7',
   graphite: '#2A3340',
+  red: '#D06060',
+  card: '#FFFDF7',
 }
 const F = {
   ui: '"Pretendard", "Noto Sans KR", system-ui, sans-serif',
@@ -122,6 +124,7 @@ export function HiddenYouTube({
   oneshot = false,
   /** 값이 바뀔 때마다 강제 재킥 (라운드 시작 등) */
   playEpoch = 0,
+  onUnplayable,
 }: {
   url: string
   startSec: number
@@ -150,6 +153,11 @@ export function HiddenYouTube({
   /** true면 한 번만 재생 — 끝나면 복구/볼륨 로직이 다시 틀지 않음 */
   oneshot?: boolean
   playEpoch?: number | string
+  /**
+   * 이 영상은 아무리 다시 틀어도 안 나온다 (임베드 차단·삭제·비공개·지역차단).
+   * 영상 하나당 한 번만 호출된다. 무한 재시도 대신 위로 알려서 처리하라고 있는 콜백.
+   */
+  onUnplayable?: (code: number) => void
 }) {
   const id = ytId(url)
   const hostRef = useRef<HTMLDivElement>(null)
@@ -186,6 +194,12 @@ export function HiddenYouTube({
   idRef.current = id
   const audioLockedRef = useRef(!!(audioUnlockAt && audioUnlockAt > serverNow()))
   const [blocked, setBlocked] = useState(false)
+  /** 되살릴 방법이 없는 영상 — 재시도 루프를 돌리지 않고 사실대로 표시한다 */
+  const [unplayable, setUnplayable] = useState(false)
+  const onUnplayableRef = useRef(onUnplayable)
+  onUnplayableRef.current = onUnplayable
+  /** 이미 보고한 영상 id — 같은 곡으로 중복 보고하지 않는다 */
+  const reportedBadRef = useRef<string | null>(null)
   const [ready, setReady] = useState(false)
   const start = Math.max(0, Math.floor(Number(startSec) || 0))
   const endFromProp = endSecProp != null && Number.isFinite(Number(endSecProp))
@@ -641,12 +655,24 @@ export function HiddenYouTube({
             }
           },
           onError: (e) => {
-            if (e.data === 101 || e.data === 150 || e.data === 153) {
-              setBlocked(true)
+            // 101/150/153 = 임베드 차단(지역 포함), 100/5/2 = 삭제·비공개·잘못된 id.
+            // 어느 쪽이든 같은 id로 다시 큐해봐야 절대 안 나온다.
+            const permanent = e.data === 101 || e.data === 150 || e.data === 153
+              || e.data === 100 || e.data === 5 || e.data === 2
+            const cur = idRef.current
+            if (permanent) {
+              setUnplayable(true)
+              setBlocked(false)
+              if (cur && reportedBadRef.current !== cur) {
+                reportedBadRef.current = cur
+                try {
+                  onUnplayableRef.current?.(e.data)
+                } catch { /* 보고 실패가 재생을 막지 않게 */ }
+              }
               return
             }
+            // 일시적 오류만 재시도한다
             const curP = playerRef.current
-            const cur = idRef.current
             if (curP && cur) {
               try {
                 curP.cueVideoById(loadOpts(cur))
@@ -808,8 +834,15 @@ export function HiddenYouTube({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, id])
 
+  // 곡이 바뀌면 "못 트는 영상" 표시를 내린다
+  useEffect(() => {
+    if (id && reportedBadRef.current !== id) setUnplayable(false)
+  }, [id])
+
   // 탭 전환·버퍼 끊김·뮤트 잔존으로 "갑자기 안 들림" 복구 — oneshot 종료 후에는 돌리지 않음
   useEffect(() => {
+    // 못 트는 영상에 2.5초마다 재시도를 거는 건 의미 없이 iframe만 두드리는 짓이다
+    if (unplayable) return
     if (!ready || !blocked || !id) return
     if (oneshotRef.current && endedRef.current) return
     const t = setInterval(() => {
@@ -822,7 +855,7 @@ export function HiddenYouTube({
     }, 2500)
     return () => clearInterval(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [blocked, ready, id])
+  }, [blocked, ready, id, unplayable])
 
   const forcePlay = () => {
     const p = playerRef.current
@@ -862,7 +895,29 @@ export function HiddenYouTube({
       >
         <div ref={hostRef} style={{ width: 200, height: 112 }} />
       </div>
-      {blocked && (
+      {unplayable && (
+        <div
+          style={{
+            position: 'fixed',
+            left: '50%',
+            bottom: 24,
+            transform: 'translateX(-50%)',
+            zIndex: 50,
+            ...sk(C.red),
+            backgroundColor: C.card,
+            color: C.red,
+            fontFamily: F.ui,
+            fontSize: 14,
+            fontWeight: 800,
+            padding: '10px 18px',
+            border: `2.5px solid ${C.graphite}`,
+            textAlign: 'center',
+          }}
+        >
+          이 곡은 재생할 수 없습니다 · 방장에게 스킵을 요청하세요
+        </div>
+      )}
+      {blocked && !unplayable && (
         <button
           type="button"
           onClick={forcePlay}
@@ -1068,6 +1123,11 @@ export function RoomSongPersistentBgm() {
       roundEndsAt={audibleRound ? session.endsAt : null}
       roundDurationSec={session.roundDuration}
       playEpoch={playEpoch}
+      onUnplayable={(code) => {
+        // 나 혼자 못 듣는 건지, 모두가 못 듣는 건지는 서버가 센다.
+        // 과반이 못 들으면 서버가 라운드를 넘긴다 — 40초 무음을 견디지 않아도 된다.
+        getSocket()?.emit('question:unplayable', { index: session.index, code })
+      }}
     />
   )
 }

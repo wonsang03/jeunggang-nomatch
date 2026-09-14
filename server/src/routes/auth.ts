@@ -6,6 +6,7 @@ import path from 'path'
 import { fileURLToPath } from 'url'
 import { prisma } from '../config.js'
 import { authMiddleware, signToken, type AuthUser } from '../auth.js'
+import { loadUserStats } from '../records.js'
 import type { Request } from 'express'
 
 export const authRouter = Router()
@@ -93,6 +94,17 @@ authRouter.get('/me', authMiddleware, async (req, res) => {
   const user = await prisma.user.findUnique({ where: { id: auth.id } })
   if (!user) return res.status(404).json({ error: '유저를 찾을 수 없습니다' })
   return res.json({ user: toUserPayload(user) })
+})
+
+/** 내 전적 — 판수·승수·평균점수·최근 기록 */
+authRouter.get('/me/stats', authMiddleware, async (req, res) => {
+  const user = (req as Request & { user: AuthUser }).user
+  try {
+    res.json(await loadUserStats(user.id))
+  } catch (err) {
+    console.error('[auth] 전적 조회 실패', err)
+    res.status(500).json({ error: '전적을 불러오지 못했습니다' })
+  }
 })
 
 authRouter.patch('/settings', authMiddleware, async (req, res) => {

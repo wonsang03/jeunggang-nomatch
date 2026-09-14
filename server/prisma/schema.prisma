@@ -18,7 +18,7 @@ model User {
   musicVolume  Int      @default(70) // 0~100 노래 볼륨
   sfxVolume    Int      @default(55) // 0~100 효과음 볼륨
   createdAt    DateTime @default(now())
-  scores       Score[]
+  gameEntries  GameRecordEntry[]
 }
 
 model Genre {
@@ -67,10 +67,33 @@ model Augment {
   @@unique([name, tier])
 }
 
-model Score {
-  id        String   @id @default(cuid())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id])
-  points    Int
-  createdAt DateTime @default(now())
+/**
+ * 한 판의 결과. 예전 Score 모델은 정의만 있고 한 번도 쓰이지 않아 걷어냈다.
+ * (판 단위로 묶여야 등수·모드·판수를 셀 수 있다)
+ */
+model GameRecord {
+  id          String   @id @default(cuid())
+  roomName    String
+  gameMode    String   // nomatch | reading
+  answerMode  String   // title | title_artist
+  totalRounds Int      @default(0)
+  playedAt    DateTime @default(now())
+  entries     GameRecordEntry[]
+
+  @@index([playedAt])
+}
+
+model GameRecordEntry {
+  id       String     @id @default(cuid())
+  gameId   String
+  game     GameRecord @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  userId   String
+  user     User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /** 그 판에서 쓰던 닉네임 (나중에 바꿔도 기록은 그대로) */
+  nickname String
+  score    Int
+  rank     Int
+
+  @@index([userId])
+  @@index([gameId])
 }

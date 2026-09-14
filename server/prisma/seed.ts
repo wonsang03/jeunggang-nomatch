@@ -148,7 +148,7 @@ async function main() {
       description: '전원 · 모든 플레이어의 점수를 현재 평균값으로 통일합니다.',
       effectType: 'equalize_scores',
       effectValue: '{}',
-      tier: '가호',
+      tier: 'prism',
       imageUrl: '/augments/sinchangseop-gaho.jpg',
     },
     {
@@ -180,7 +180,7 @@ async function main() {
       description: '본인 · 시작 10초 뒤 정답을 1초 동안 보여줍니다 (사용 즉시부터 8라운드)',
       effectType: 'flash_answer',
       effectValue: JSON.stringify({ delaySec: 10, ms: 1000, rounds: 8 }),
-      tier: '가호',
+      tier: 'prism',
       imageUrl: '/augments/seosangwon-gaho.jpg',
     },
     {
@@ -188,23 +188,49 @@ async function main() {
       description: '본인 · 시작 7초 뒤부터 답이 한 글자씩 공개됩니다 (괄호 안 제외 · 한글 1자/초, 알파벳 2자/초 · 사용 즉시부터 8라운드)',
       effectType: 'delayed_answer',
       effectValue: JSON.stringify({ delaySec: 7, rounds: 8, charIntervalMs: 1000 }),
-      tier: '가호',
+      tier: 'prism',
       imageUrl: null,
     },
     {
       name: '미룬이의 가호',
-      description: '본인 · 다음 라운드부터 5라운드 동안 다른 사람이 먼저 맞힌 정답도 스킵 전까지 제출하면 정답으로 인정됩니다.',
+      description: '본인 · 다음 라운드부터 6라운드 동안 다른 사람이 먼저 맞힌 정답도 스킵 전까지 제출하면 정답으로 인정됩니다.',
       effectType: 'late_answer',
-      effectValue: JSON.stringify({ rounds: 5 }),
-      tier: '가호',
+      effectValue: JSON.stringify({ rounds: 6 }),
+      tier: 'prism',
       imageUrl: '/augments/miruni-gaho.png',
     },
     {
-      name: '김동주의 가호',
-      description: '본인 · 지금부터 8라운드 동안 게임 분야에서 정답을 공개합니다',
-      effectType: 'reveal_game_song',
-      effectValue: JSON.stringify({ rounds: 8 }),
-      tier: '가호',
+      name: '조로룰',
+      description: '전원 · 지금부터 3라운드 동안 이 방에서는 스킵이 안 됩니다. (강제 스킵도 불가)',
+      effectType: 'no_skip',
+      effectValue: JSON.stringify({ rounds: 3 }),
+      tier: 'silver',
+      imageUrl: null,
+    },
+    {
+      name: '간다드래프트',
+      description:
+        '전원 · 사용 즉시 이번 라운드 동안 모두에게 방 노래와 이 곡이 같이 들립니다. 본인도 들립니다. 2회 사용 가능.',
+      effectType: 'party_music_all',
+      // TODO: youtubeUrl 은 나중에 채운다 (비어 있으면 사용 시 «재생할 영상 주소가 없습니다»)
+      effectValue: JSON.stringify({ rounds: 1, charges: 2, youtubeUrl: '', startSec: 0 }),
+      tier: 'bronze',
+      imageUrl: null,
+    },
+    {
+      name: '후루베 유라유라',
+      description: '상대 지목 · 본인 점수를 0으로 희생하고, 대상의 점수도 0으로 만듭니다. (둘 다 0)',
+      effectType: 'zero_both',
+      effectValue: JSON.stringify({}),
+      tier: 'prism',
+      imageUrl: null,
+    },
+    {
+      name: '만해',
+      description: '장르 선택 · 지금부터 10라운드 동안 그 장르 곡에서는 본인에게만 초성이 즉시 공개됩니다.',
+      effectType: 'genre_early_chosung',
+      effectValue: JSON.stringify({ rounds: 10 }),
+      tier: 'prism',
       imageUrl: null,
     },
     {
@@ -264,7 +290,7 @@ async function main() {
     {
       name: '혼돈',
       description:
-        '가호를 제외한 모든 등급에서 랜덤한 증강 2개의 효과를 즉시 사용합니다. 대상 지정형은 대상도 랜덤입니다. (혼돈·가호선택·전환 제외)',
+        '프리즘을 제외한 모든 등급에서 랜덤한 증강 2개의 효과를 즉시 사용합니다. 대상 지정형은 대상도 랜덤입니다. (혼돈·가호선택·전환 제외)',
       effectType: 'chaos_cast',
       effectValue: '{}',
       tier: 'gold',
@@ -347,7 +373,7 @@ async function main() {
         '본인 · 점프! 자신과 등수가 가장 가까운 사람과 동점이 됩니다. (거리가 같으면 위 등수 우선)',
       effectType: 'rank_jump_tie',
       effectValue: '{}',
-      tier: '가호',
+      tier: 'prism',
       imageUrl: null,
     },
     {
@@ -356,7 +382,7 @@ async function main() {
         '본인 · 화성의 외계인과 접촉. 지금부터 5라운드 동안 모든 정답 슬롯을 알 수 있지만 영타(정답→wjdekq)로 표기됩니다.',
       effectType: 'alien_qwerty_answer',
       effectValue: JSON.stringify({ rounds: 5 }),
-      tier: '가호',
+      tier: 'prism',
       imageUrl: '/augments/elon-musk-gaho.jpg',
     },
     {
@@ -400,6 +426,47 @@ async function main() {
       }),
       tier: 'gold',
       imageUrl: '/augments/peck.png',
+    },
+    {
+      name: '네르지마세요',
+      description:
+        '상대 지목 · 그 사람에게만 벌칙 곡을 끝까지 들려줍니다. (5회 · 스킵하거나 라운드가 넘어가도 곡이 끝날 때까지 계속 들립니다 · 이미 디버프가 걸린 사람이나 같은 사람에게도 쓸 수 있습니다)',
+      effectType: 'peck_song',
+      // TODO: youtubeUrl 은 나중에 채운다 (비어 있으면 사용 시 «재생할 영상 주소가 없습니다»)
+      effectValue: JSON.stringify({
+        charges: 5,
+        youtubeUrl: '',
+        startSec: 0,
+        songLabel: '네르지마세요',
+        maxSec: 900,
+      }),
+      tier: 'gold',
+      imageUrl: null,
+    },
+    {
+      name: '커뮤증',
+      description:
+        '상대 지목 · 다음 3라운드 동안 대상의 정답이 30% 확률로만 인정됩니다. 실패하면 대상에게 「목소리가 작아서 안 들렸다」가 뜹니다.',
+      effectType: 'muffled_answer',
+      effectValue: JSON.stringify({ rounds: 3, successChance: 0.3 }),
+      tier: 'gold',
+      imageUrl: null,
+    },
+    {
+      name: '돌리랑도트가제일좋아',
+      description:
+        '상대 지목 · 그 사람에게만 벌칙 곡을 끝까지 들려줍니다. (3회 · 스킵하거나 라운드가 넘어가도 곡이 끝날 때까지 계속 들립니다 · 이미 디버프가 걸린 사람이나 같은 사람에게도 쓸 수 있습니다)',
+      effectType: 'peck_song',
+      // TODO: youtubeUrl 은 나중에 채운다 (비어 있으면 사용 시 «재생할 영상 주소가 없습니다»)
+      effectValue: JSON.stringify({
+        charges: 3,
+        youtubeUrl: '',
+        startSec: 0,
+        songLabel: '돌리랑도트가제일좋아',
+        maxSec: 900,
+      }),
+      tier: 'gold',
+      imageUrl: null,
     },
     {
       name: '넘어가요!',
@@ -659,7 +726,7 @@ async function main() {
     {
       name: '가호선택',
       description:
-        '선택 시 가호 3장 중 하나를 골라 보관합니다. 리롤 없음 · 이름·사진만(효과는 선택 후 확인). 시간이 끝나면 후보 중 랜덤 배정됩니다.',
+        '선택 시 프리즘 3장 중 하나를 골라 보관합니다. 리롤 없음 · 이름·사진만(효과는 선택 후 확인). 시간이 끝나면 후보 중 랜덤 배정됩니다.',
       effectType: 'gaho_select',
       effectValue: '{}',
       tier: 'gold',
@@ -762,6 +829,15 @@ async function main() {
       effectValue: JSON.stringify({ rounds: 3, suffix: '이니라', bonus: 1 }),
       tier: 'silver',
       imageUrl: '/augments/jinjo-inira.png',
+    },
+    {
+      name: '알았다게~',
+      description:
+        '본인 · 지금부터 2라운드 동안 답 끝에 「게」를 붙여야 정답으로 인정됩니다. 맞히면 +1점 추가. (상대 지목 아님)',
+      effectType: 'self_suffix_bonus',
+      effectValue: JSON.stringify({ rounds: 2, suffix: '게', bonus: 1 }),
+      tier: 'bronze',
+      imageUrl: null,
     },
     {
       name: '영역전개',

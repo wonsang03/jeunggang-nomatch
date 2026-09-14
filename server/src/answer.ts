@@ -4,7 +4,7 @@ export function normalizeAnswer(s: string) {
     .normalize('NFKC')
     .toLowerCase()
     .replace(/[\s\u3000]/g, '')
-    .replace(/[."""'''『』「」\[\]()（）{}<>〈〉《》·・…~\-_/\\|:;!?！？。，、]/g, '')
+    .replace(/[."""'''『』「」\[\]()（）{}<>〈〉《》·・…~\-_/\\|:;!?！？。，、,]/g, '')
 }
 
 /**
