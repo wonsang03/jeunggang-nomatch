@@ -1,10 +1,12 @@
 import type { Server } from 'socket.io'
 import { saveGameRecord } from './records.js'
+import { markSongPlayed } from './songPick.js'
 
 export type GameMode = 'nomatch' | 'reading'
 export type ReadingPhase = 'decide' | 'claim' | 'vote' | 'pre_solve' | 'solve' | 'reveal'
 
 type ReadingQuestion = {
+  id: string
   youtubeUrl: string
   startSec: number
   endSec: number
@@ -50,6 +52,9 @@ export type ReadingRoomLike = {
   status: string
   queue: ReadingQuestion[]
   index: number
+  /** 곡 뽑기 가중치용 — 리딩방에서 튼 곡도 다음 판 뽑기에 반영돼야 한다 */
+  songLastPlayed: Map<string, number>
+  gameSeq: number
   roundEndsAt: number
   roundStartedAt: number
   roundDuration: number
@@ -290,6 +295,8 @@ export function beginDecidePhase(
     advanceTurnOrEnd(io, room, roomState)
     return
   }
+  // 이 곡이 이번 판에 나왔다고 기록 (같은 판 재진입은 같은 값으로 덮어써서 무해)
+  markSongPlayed(room, room.queue[room.index].id)
   const offeredUserId = r.turnOrder[r.turnIndex % r.turnOrder.length]
   if (!room.members.has(offeredUserId)) {
     // 퇴장한 사람 스킵 — 한 바퀴 다 돌았는데 아무도 없으면 종료

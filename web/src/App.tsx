@@ -51,16 +51,19 @@ function LobbyScreen({ nav }: { nav: (s: Screen) => void }) {
   const [busy, setBusy] = useState(false)
   const filtered = rooms.filter(r => r.name.includes(search) || r.genre.includes(search))
 
-  const [joinAsSpectator, setJoinAsSpectator] = useState(false)
-
   useEffect(() => {
     if (!user) nav('login')
   }, [user, nav])
 
-  const makeRoom = async () => {
+  const makeRoom = async (isPrivate: boolean) => {
     setBusy(true); setErr('')
     try {
-      await createRoom({ name: `${user?.nickname || '나'}의 방`, genreCounts: emptyGenreCounts('한국노래', 20), maxPlayers: 10 })
+      await createRoom({
+        name: `${user?.nickname || '나'}의 방`,
+        genreCounts: emptyGenreCounts('한국노래', 20),
+        maxPlayers: 10,
+        isPrivate,
+      })
       nav('waiting')
     } catch (e) { setErr(e instanceof Error ? e.message : '실패') }
     finally { setBusy(false) }
@@ -69,7 +72,8 @@ function LobbyScreen({ nav }: { nav: (s: Screen) => void }) {
   const enter = async (roomId: string) => {
     setBusy(true); setErr('')
     try {
-      await joinRoom({ roomId, asSpectator: joinAsSpectator })
+      // 역할(플레이어/관전)은 방 안에서 전환 · 입장 시엔 플레이어 우선(만원이면 서버가 관전으로)
+      await joinRoom({ roomId })
       nav('waiting')
     } catch (e) { setErr(e instanceof Error ? e.message : '실패') }
     finally { setBusy(false) }
@@ -79,7 +83,7 @@ function LobbyScreen({ nav }: { nav: (s: Screen) => void }) {
     if (!code.trim()) return
     setBusy(true); setErr('')
     try {
-      await joinRoom({ code: code.trim(), asSpectator: joinAsSpectator })
+      await joinRoom({ code: code.trim() })
       nav('waiting')
     } catch (e) { setErr(e instanceof Error ? e.message : '실패') }
     finally { setBusy(false) }
@@ -147,41 +151,16 @@ function LobbyScreen({ nav }: { nav: (s: Screen) => void }) {
 
       <div style={{ maxWidth: 920, margin: '0 auto', padding: '28px 24px 40px', position: 'relative', zIndex: 1 }}>
         <div style={{ display: 'flex', gap: 10, marginBottom: 24, flexWrap: 'wrap', alignItems: 'center' }}>
-          <Btn variant="primary" size="md" onClick={makeRoom} disabled={busy || !connected}>+ 방 만들기</Btn>
-          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-            <button
-              type="button"
-              onClick={() => setJoinAsSpectator(false)}
-              style={{
-                ...sk(!joinAsSpectator ? C.blue : C.graphite, true),
-                backgroundColor: !joinAsSpectator ? C.blueLight : C.card,
-                color: !joinAsSpectator ? C.blue : C.body,
-                fontFamily: F.ui, fontSize: 13, fontWeight: 800, padding: '6px 12px', cursor: 'pointer',
-              }}
-            >
-              플레이어
-            </button>
-            <button
-              type="button"
-              onClick={() => setJoinAsSpectator(true)}
-              style={{
-                ...sk(joinAsSpectator ? C.blue : C.graphite, true),
-                backgroundColor: joinAsSpectator ? C.blueLight : C.card,
-                color: joinAsSpectator ? C.blue : C.body,
-                fontFamily: F.ui, fontSize: 13, fontWeight: 800, padding: '6px 12px', cursor: 'pointer',
-              }}
-            >
-              관전
-            </button>
-          </div>
-          <div style={{ display: 'flex', gap: 8, flex: 1, minWidth: 200 }}>
+          <Btn variant="primary" size="md" onClick={() => makeRoom(false)} disabled={busy || !connected}>+ 공개 방</Btn>
+          <Btn size="md" onClick={() => makeRoom(true)} disabled={busy || !connected}>+ 비공개 방</Btn>
+          <div style={{ display: 'flex', gap: 8, flex: 1, minWidth: 220 }}>
             <SketchInput
               value={code} onChange={setCode}
-              placeholder="초대 코드 입력..."
+              placeholder="비공개 방 초대코드..."
               style={{ flex: 1, fontSize: '15px', padding: '10px 14px', fontWeight: 700 }}
             />
             <Btn onClick={enterCode} disabled={busy || !connected}>
-              {joinAsSpectator ? '관전 입장' : '코드 입장'}
+              코드 입장
             </Btn>
           </div>
           <SketchInput
@@ -210,19 +189,19 @@ function LobbyScreen({ nav }: { nav: (s: Screen) => void }) {
           {filtered.map(room => {
             const playerFull = room.players >= room.max
             const spectFull = (room.spectators ?? 0) >= (room.maxSpectators ?? 4)
-            const full = joinAsSpectator ? spectFull : playerFull
-            const canSpectFallback = !joinAsSpectator && playerFull && !spectFull
+            const bothFull = playerFull && spectFull
+            const canSpectFallback = playerFull && !spectFull
             return (
               <div
                 key={room.id}
-                onClick={() => !(full && !canSpectFallback) && !busy && enter(room.id)}
+                onClick={() => !bothFull && !busy && enter(room.id)}
                 style={{
                   ...sk(),
                   backgroundColor: C.card,
                   padding: '16px 24px',
                   display: 'flex', alignItems: 'center', gap: 16,
-                  cursor: (full && !canSpectFallback) ? 'not-allowed' : 'pointer',
-                  opacity: (full && !canSpectFallback) ? 0.72 : 1,
+                  cursor: bothFull ? 'not-allowed' : 'pointer',
+                  opacity: bothFull ? 0.72 : 1,
                 }}
               >
                 <Tag color={C.blue}>{room.genre}</Tag>
@@ -243,10 +222,8 @@ function LobbyScreen({ nav }: { nav: (s: Screen) => void }) {
                   {room.players}/{room.max}
                   {(room.spectators ?? 0) > 0 ? ` · 관${room.spectators}` : ''}
                 </span>
-                <Btn size="sm" variant={(full && !canSpectFallback) ? 'default' : 'primary'} disabled={(full && !canSpectFallback) || busy}>
-                  {(full && !canSpectFallback)
-                    ? '가득 참'
-                    : (joinAsSpectator || canSpectFallback ? '관전' : '입장')}
+                <Btn size="sm" variant={bothFull ? 'default' : 'primary'} disabled={bothFull || busy}>
+                  {bothFull ? '가득 참' : canSpectFallback ? '관전으로' : '입장'}
                 </Btn>
               </div>
             )
@@ -404,6 +381,8 @@ function WaitingScreen({ nav }: { nav: (s: Screen) => void }) {
   const [err, setErr] = useState('')
   const [leaveOpen, setLeaveOpen] = useState(false)
   const [roleBusy, setRoleBusy] = useState(false)
+  /** 비공개 초대코드 · 기본 숨김 (화면 공유/몰래보기 방지) */
+  const [showInviteCode, setShowInviteCode] = useState(false)
   const {
     scrollRef: chatRef,
     contentRef: chatContentRef,
@@ -488,12 +467,59 @@ function WaitingScreen({ nav }: { nav: (s: Screen) => void }) {
     filter: 'url(#pencilRough)',
   })
 
+  const inviteCode = (roomCode || room.code || '').trim()
+  const maskedInvite = inviteCode ? '•'.repeat(Math.max(6, inviteCode.length)) : '••••••'
+  const copyInvite = () => {
+    if (!inviteCode) return
+    void navigator.clipboard?.writeText(inviteCode)
+  }
+
   return (
     <div style={{ minHeight: '100vh', ...notebookLines }}>
       <div style={{ backgroundColor: C.card, borderBottom: `2.5px solid ${C.graphite}`, boxShadow: `0 3px 0 ${C.graphite}50`, padding: '12px 28px', display: 'flex', alignItems: 'center', gap: 14, filter: 'url(#pencilRough)' }}>
         <Btn size="sm" onClick={() => setLeaveOpen(true)}>← 로비</Btn>
         <div style={{ fontFamily: F.ui, fontSize: 20, fontWeight: 900, flex: 1, color: C.body }}>{room.name}</div>
-        {roomCode && <div style={{ fontFamily: F.ui, fontSize: 14, color: C.blue }}>코드: {roomCode}</div>}
+        {room.isPrivate ? (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 8,
+            ...sk(C.blue, true), backgroundColor: C.blueLight, padding: '6px 12px',
+          }}>
+            <span style={{ fontFamily: F.ui, fontSize: 12, fontWeight: 800, color: C.blue }}>비공개</span>
+            <span style={{
+              fontFamily: F.ui, fontSize: 16, fontWeight: 900, color: C.body,
+              letterSpacing: showInviteCode ? 1.5 : 2,
+              minWidth: 72, textAlign: 'center',
+            }}>
+              {showInviteCode ? (inviteCode || '······') : maskedInvite}
+            </span>
+            {!!inviteCode && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setShowInviteCode((v) => !v)}
+                  style={{
+                    fontFamily: F.ui, fontSize: 12, fontWeight: 800, color: C.blue,
+                    background: 'transparent', border: 'none', cursor: 'pointer', padding: 0,
+                  }}
+                >
+                  {showInviteCode ? '안보기' : '보기'}
+                </button>
+                <button
+                  type="button"
+                  onClick={copyInvite}
+                  style={{
+                    fontFamily: F.ui, fontSize: 12, fontWeight: 800, color: C.blue,
+                    background: 'transparent', border: 'none', cursor: 'pointer', padding: 0,
+                  }}
+                >
+                  복사
+                </button>
+              </>
+            )}
+          </div>
+        ) : (
+          <div style={{ fontFamily: F.ui, fontSize: 13, fontWeight: 800, color: C.muted }}>공개 방</div>
+        )}
         <div style={{ fontFamily: F.ui, fontSize: 14, fontWeight: 700, color: C.muted }}>
           {playerList.filter(p => p.ready).length}/{playerList.length} 준비 · 관전 {spectatorList.length}/{maxSpectators}
         </div>
@@ -581,6 +607,23 @@ function WaitingScreen({ nav }: { nav: (s: Screen) => void }) {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           <NoteCard>
             <div style={{ fontFamily: F.ui, fontSize: 16, fontWeight: 900, marginBottom: 12 }}>방 설정 {isHost ? '' : '(방장만)'}</div>
+            <div style={{ fontFamily: F.ui, fontSize: 13, color: C.muted, marginBottom: 6 }}>공개 여부</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 14 }}>
+              <button
+                type="button"
+                style={selBtn('public', room.isPrivate ? 'private' : 'public')}
+                onClick={() => isHost && updateSettings({ isPrivate: false })}
+              >
+                공개
+              </button>
+              <button
+                type="button"
+                style={selBtn('private', room.isPrivate ? 'private' : 'public')}
+                onClick={() => isHost && updateSettings({ isPrivate: true })}
+              >
+                비공개
+              </button>
+            </div>
             <div style={{ fontFamily: F.ui, fontSize: 13, color: C.muted, marginBottom: 6 }}>모드</div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 14 }}>
               <button
@@ -687,9 +730,6 @@ function WaitingScreen({ nav }: { nav: (s: Screen) => void }) {
             </div>
             <div style={{ fontFamily: F.ui, fontSize: 13, color: C.muted, marginBottom: 6 }}>
               최근곡 중복 방지
-            </div>
-            <div style={{ fontFamily: F.ui, fontSize: 12, color: C.muted, marginBottom: 8 }}>
-              ON이면 이 방에서 최근 나온 곡(약 3판 분량)을 다음 게임에서 빼고 뽑음 · 은행이 모자랄 때만 재사용
             </div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 14 }}>
               <button

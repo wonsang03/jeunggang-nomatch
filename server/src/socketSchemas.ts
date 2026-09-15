@@ -41,6 +41,7 @@ const roomSettingsFields = {
   gameMode: gameMode.optional(),
   readingTargetScore: z.number().int().min(1).max(1000).optional(),
   recentSongPenalty: z.number().int().min(0).max(10000).optional(),
+  isPrivate: z.boolean().optional(),
 }
 
 export const S = {
@@ -49,7 +50,6 @@ export const S = {
 
   roomCreate: z.object({
     ...roomSettingsFields,
-    isPrivate: z.boolean().optional(),
   }).strip(),
 
   roomSettings: z.object(roomSettingsFields).strip(),

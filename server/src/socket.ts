@@ -7,6 +7,14 @@ import { parseTagsJson } from './tags.js'
 import { PLAYABLE_GENRES, YACHA_GENRE, isPlayableGenre } from './genres.js'
 import { loadGenreBankCounts, loadGenreQuestions } from './bankCache.js'
 import { createSocketGuard, RATE } from './socketGuard.js'
+import {
+  markSongPlayed,
+  memoryWindow,
+  pruneSongMemory,
+  songWeight,
+  weightedShuffle,
+  type SongMemory,
+} from './songPick.js'
 import { saveGameRecord } from './records.js'
 import { S } from './socketSchemas.js'
 import type { ActiveBuff, Member, QuestionRuntime, Room, SlotPublic } from './gameTypes.js'
@@ -2199,6 +2207,9 @@ function roomState(room: Room, viewerUserId?: string) {
     status: room.status,
     maxPlayers: room.maxPlayers,
     maxSpectators: MAX_SPECTATORS,
+    isPrivate: !!room.isPrivate,
+    /** 방 멤버에게만 전달 · 비공개방 초대코드 (로비 목록에는 안 나감) */
+    code: room.isPrivate ? room.code : null,
     genreCounts: room.genreCounts,
     genreBankCounts: room.genreBankCounts || {},
     answerMode: room.answerMode || 'title_artist',
@@ -2523,9 +2534,7 @@ async function clampGenreCounts(counts: Record<string, number>): Promise<Record<
   return out
 }
 
-/** 약 3판(장르당~40곡) 분량까지 최근곡 기억 */
-const RECENT_SONG_HISTORY_MAX = 120
-/** 기본 ON: 최근곡 완전 제외 (은행 부족 시에만 재사용) */
+/** 기본 ON: 최근에 나온 곡일수록 덜 뽑힘 */
 const DEFAULT_RECENT_SONG_PENALTY = 1
 
 function clampRecentSongPenalty(n: unknown) {
@@ -2534,31 +2543,28 @@ function clampRecentSongPenalty(n: unknown) {
   return Math.max(0, Math.min(1, Math.round(v * 100) / 100))
 }
 
-function rememberQueueQuestions(room: Room, questions: QuestionRuntime[]) {
-  if (!questions.length) return
-  const next = [...(room.recentQuestionIds || [])]
-  for (const q of questions) {
-    const i = next.indexOf(q.id)
-    if (i >= 0) next.splice(i, 1)
-    next.push(q.id)
-  }
-  room.recentQuestionIds = next.slice(-RECENT_SONG_HISTORY_MAX)
-}
-
-/** 균등 비복원 추출 */
+/**
+ * 가중 비복원 추출.
+ *
+ * 순서를 정하는 방식만 다를 뿐 고르는 절차는 예전과 같다 — 풀을 섞고 앞에서부터
+ * 중복(같은 문제·같은 영상)을 걸러가며 count개를 뗀다. weightOf 가 전부 1이면
+ * 균등 추첨과 분포가 같다.
+ */
 function pickUniqueQuestions<T extends { id: string; youtubeUrl: string }>(
   list: T[],
   count: number,
   usedIds: Set<string>,
   usedYt: Set<string>,
+  weightOf: (q: T) => number,
 ): T[] {
-  const pool = shuffleArray(
+  const pool = weightedShuffle(
     list.filter((q) => {
       if (usedIds.has(q.id)) return false
       const yt = extractYoutubeId(q.youtubeUrl)
       if (yt && usedYt.has(yt)) return false
       return true
     }),
+    weightOf,
   )
   const picked: T[] = []
   for (const q of pool) {
@@ -2571,17 +2577,22 @@ function pickUniqueQuestions<T extends { id: string; youtubeUrl: string }>(
   return picked
 }
 
+/**
+ * 방 설정대로 큐를 뽑는다.
+ *
+ * penalty > 0 이면 이 방에서 최근에 나온 곡의 가중치를 낮춘다. 후보에서 빼는 게
+ * 아니라서 은행이 작아도 뽑을 곡이 마르지 않고, 기억 기간은 장르마다 은행 크기에
+ * 맞춰 따로 잡는다. penalty = 0 이면 전 곡 가중치가 같아 균등 추첨이 된다.
+ */
 async function pickQuestions(
   genreCounts: Record<string, number>,
-  opts?: { recentIds?: string[]; recentPenalty?: number },
+  opts?: { memory?: SongMemory; recentPenalty?: number },
 ): Promise<QuestionRuntime[]> {
   const out: QuestionRuntime[] = []
   const usedIds = new Set<string>()
   const usedYt = new Set<string>()
-  const recentSet = new Set(opts?.recentIds || [])
   const penalty = clampRecentSongPenalty(opts?.recentPenalty ?? 0)
-  /** penalty>0이면 최근곡 먼저 완전 제외 · 은행 부족할 때만 최근곡 보충 */
-  const excludeRecent = penalty > 0
+  const memory = penalty > 0 ? opts?.memory : undefined
 
   const entries = Object.entries(genreCounts).filter(
     ([genreName, count]) => count > 0 && isPlayableGenre(genreName),
@@ -2596,13 +2607,11 @@ async function pickQuestions(
 
   for (const row of genreRows) {
     if (!row) continue
-    const fresh = excludeRecent ? row.list.filter((q) => !recentSet.has(q.id)) : row.list
-    let picked = pickUniqueQuestions(fresh, row.count, usedIds, usedYt)
-    if (picked.length < row.count && excludeRecent) {
-      const need = row.count - picked.length
-      const reuse = row.list.filter((q) => recentSet.has(q.id))
-      picked = [...picked, ...pickUniqueQuestions(reuse, need, usedIds, usedYt)]
-    }
+    const window = memoryWindow(row.list.length, row.count)
+    const weightOf = memory
+      ? (q: { id: string }) => songWeight(memory, q.id, window, penalty)
+      : () => 1
+    const picked = pickUniqueQuestions(row.list, row.count, usedIds, usedYt, weightOf)
     for (const q of picked) out.push(toQuestionRuntime(q))
   }
   return shuffleArray(out)
@@ -5735,7 +5744,8 @@ export function registerSocket(io: Server) {
         gameMode,
         readingTargetScore,
         reading: null,
-        recentQuestionIds: [],
+        songLastPlayed: new Map(),
+        gameSeq: 0,
         recentSongPenalty,
         members: new Map(),
         status: 'lobby',
@@ -5783,6 +5793,13 @@ export function registerSocket(io: Server) {
       }
       if (!room) return cb?.({ ok: false, error: '방을 찾을 수 없습니다' })
       if (room.status !== 'lobby') return cb?.({ ok: false, error: '이미 시작된 방입니다' })
+      // 비공개방은 초대코드로만 입장 (roomId만으로는 불가)
+      if (room.isPrivate) {
+        const given = (payload.code || '').trim().toUpperCase()
+        if (!room.code || given !== room.code) {
+          return cb?.({ ok: false, error: '초대 코드가 필요합니다' })
+        }
+      }
       const wantSpectator = !!payload.asSpectator
       let joinAsSpectator = wantSpectator
       if (wantSpectator) {
@@ -5931,6 +5948,15 @@ export function registerSocket(io: Server) {
       if (typeof payload.recentSongPenalty === 'number') {
         room.recentSongPenalty = clampRecentSongPenalty(payload.recentSongPenalty)
       }
+      if (typeof payload.isPrivate === 'boolean') {
+        room.isPrivate = payload.isPrivate
+        if (room.isPrivate) {
+          if (!room.code) room.code = newRoomCode()
+        } else {
+          room.code = null
+        }
+        io.emit('lobby:rooms', publicRooms())
+      }
       if (room.gameMode !== 'reading') {
         if (payload.answerMode === 'title' || payload.answerMode === 'title_artist') {
           room.answerMode = payload.answerMode
@@ -6051,8 +6077,11 @@ export function registerSocket(io: Server) {
 
       room.genreBankCounts = await loadGenreBankCounts()
       room.genreCounts = await clampGenreCounts(room.genreCounts)
+      // 뽑기 전에 판 번호를 올려야 직전 판에 나온 곡의 "나이"가 1판이 된다
+      room.gameSeq += 1
+      pruneSongMemory(room)
       const queue = await pickQuestions(room.genreCounts, {
-        recentIds: room.recentQuestionIds || [],
+        memory: room,
         recentPenalty: room.recentSongPenalty,
       })
       if (queue.length === 0) return cb?.({ ok: false, error: '문제 은행이 비어 있습니다' })
@@ -6064,7 +6093,6 @@ export function registerSocket(io: Server) {
         room.answerMode = 'title'
       }
       room.queue = queue.map((q) => applyAnswerMode(q, modeForQueue, room.gameMode !== 'reading'))
-      rememberQueueQuestions(room, room.queue)
       room.index = 0
       room.lastAugmentAt = -1
       room.duel = null
@@ -7852,6 +7880,9 @@ function startRound(io: Server, room: Room) {
     endGameAndBroadcast(io, room)
     return
   }
+  // 큐에 담긴 시점이 아니라 실제로 트는 시점에 기록한다 — 3곡만 듣고 접은 판의
+  // 나머지 57곡까지 "최근에 나온 곡"이 되면 안 된다. 증강이 중간에 꽂은 곡도 여기서 잡힌다.
+  markSongPlayed(room, q.id)
   systemChat(io, room, `--------${room.index + 1}R--------`)
   const duration = 40
   room.roundDuration = duration
@@ -7995,8 +8026,6 @@ function endRound(io: Server, room: Room, reason: 'cleared' | 'skip' | 'timeout'
   tickChatIsolate(room, room.index)
   tickNoSkip(room, room.index)
   settleAllAnswerProxies(io, room)
-
-  systemChat(io, room, `--------${room.index + 1}R--------`)
 
   const reveal = buildRevealSlots(room, q, reason)
 

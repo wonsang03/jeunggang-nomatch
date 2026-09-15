@@ -224,9 +224,11 @@ export type Room = {
   /** 리딩방 목표 점수 */
   readingTargetScore: number
   reading: ReadingState | null
-  /** 이 방에서 최근에 나온 문제 id (다음 뽑기 가중치↓) */
-  recentQuestionIds: string[]
-  /** 0=끔 · >0=최근곡 완전 제외 (기본 1, 은행 부족 시에만 재사용) */
+  /** 이 방에서 곡이 마지막으로 나온 판 번호 (questionId → gameSeq · 다음 뽑기 가중치↓) */
+  songLastPlayed: Map<string, number>
+  /** 이 방에서 시작한 판 번호. 판을 시작할 때마다 +1 */
+  gameSeq: number
+  /** 0=끔(균등 추첨) · 1=최근에 나온 곡일수록 덜 뽑힘 (기본 1) */
   recentSongPenalty: number
   members: Map<string, Member>
   status: 'lobby' | 'playing' | 'revealing' | 'augment' | 'countdown' | 'duel' | 'ended'

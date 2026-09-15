@@ -238,6 +238,10 @@ export type RoomState = {
   status: 'lobby' | 'playing' | 'revealing' | 'augment' | 'countdown' | 'duel' | 'ended'
   maxPlayers: number
   maxSpectators?: number
+  /** 비공개방(초대코드) */
+  isPrivate?: boolean
+  /** 비공개방 초대코드 · 방 멤버에게만 */
+  code?: string | null
   /** 조로룰: 방 전체 스킵 금지 */
   noSkipActive?: boolean
   noSkipBy?: string | null
@@ -251,7 +255,7 @@ export type RoomState = {
   augmentsEnabled?: boolean
   gameMode?: GameMode
   readingTargetScore?: number
-  /** 0=끔 · >0=최근곡 제외 (기본 1) */
+  /** 0=끔(균등 추첨) · 1=최근에 나온 곡일수록 덜 뽑힘 (기본 1) */
   recentSongPenalty?: number
   reading?: ReadingPublic | null
   /** 앞으로 나올 곡(현재 제외) 장르별 잔량 */
@@ -413,6 +417,7 @@ type GameCtx = {
     gameMode?: GameMode
     readingTargetScore?: number
     recentSongPenalty?: number
+    isPrivate?: boolean
   }) => void
   startGame: () => Promise<void>
   sendChat: (text: string) => void
@@ -585,6 +590,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
     s.on('lobby:rooms', (list: PublicRoom[]) => setRooms(list))
     s.on('room:state', (st: RoomState) => {
       setRoom(st)
+      setRoomCode(st.isPrivate && st.code ? st.code : null)
       if (st.status === 'augment') {
         setRound(null)
         setStartCountdown(null)
@@ -1082,7 +1088,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
     const res = await emitAck<{ ok: boolean; room?: RoomState; code?: string | null; error?: string }>('room:create', opts)
     if (!res.ok || !res.room) throw new Error(res.error || '방 생성 실패')
     setRoom(res.room)
-    setRoomCode(res.code || null)
+    setRoomCode(res.room.isPrivate && (res.room.code || res.code) ? (res.room.code || res.code || null) : null)
     setChats([])
     setResults(null)
   }
@@ -1091,6 +1097,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
     const res = await emitAck<{ ok: boolean; room?: RoomState; error?: string }>('room:join', opts)
     if (!res.ok || !res.room) throw new Error(res.error || '입장 실패')
     setRoom(res.room)
+    setRoomCode(res.room.isPrivate && res.room.code ? res.room.code : null)
     setChats([])
     setResults(null)
   }
