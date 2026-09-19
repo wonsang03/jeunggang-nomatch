@@ -351,7 +351,6 @@ export function augmentTargetInfo(effectType?: string | null): AugmentTargetInfo
     || effectType === 'named_decoy_all'
     || effectType === 'chat_isolate'
     || effectType === 'mud_fight'
-    || effectType === 'extend_round'
     || effectType === 'party_music_all'
     || effectType === 'no_skip'
   ) {

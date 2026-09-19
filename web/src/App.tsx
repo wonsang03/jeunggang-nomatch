@@ -1340,6 +1340,8 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
   const { user, room, chats, round, skip, skipVoted, augmentHint, startCountdown, musicVolume, setMusicVolume, sfxVolume, setSfxVolume, submitAnswer, sendChat, voteSkip, useAugment, fetchGahoCandidates, leaveRoom, connected, pingMs, readingAccept, readingPass, readingClaim, readingVote } = useGame()
   const [input, setInput] = useState('')
   const [showUsedList, setShowUsedList] = useState(false)
+  /** 2칸일 때 어느 카드를 쓸지 */
+  const [heldPickId, setHeldPickId] = useState<string | null>(null)
   const [augHover, setAugHover] = useState(false)
   const [augHoverAnchor, setAugHoverAnchor] = useState<DOMRect | null>(null)
   const [queueHover, setQueueHover] = useState(false)
@@ -1557,37 +1559,51 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
   const songPlaybackRate = (!inDuel && me?.playbackRate && me.playbackRate > 0 && me.playbackRate !== 1)
     ? me.playbackRate
     : 1
+  // 보유 슬롯은 최대 2칸 (혼돈 2장 · 인수인계로 떠넘겨진 잠긴 카드).
+  // 사용 UI는 «지금 고른 카드» 하나를 기준으로 돈다.
+  const heldCards = me?.heldAugments || []
+  const usableHeldCards = heldCards.filter((h) => !h.locked)
+  const heldCard = usableHeldCards.find((h) => h.id === heldPickId) || usableHeldCards[0] || null
+  /** 잠긴 카드만 들고 있어도 칸은 보여준다 */
+  const displayCard = heldCard || heldCards[0] || null
+  const heldId = heldCard?.id || null
+  const heldEffectType = heldCard?.effectType || null
+  const heldName = displayCard?.name || null
+  const heldDescription = displayCard?.description || null
+  const heldImageUrl = displayCard?.imageUrl || null
+  const heldTier = displayCard?.tier || null
+
   const needsTargetPick = !isSpectator && (
-    me?.heldAugmentEffectType === 'soft_chat_mute'
-    || me?.heldAugmentEffectType === 'slow_playback'
-    || me?.heldAugmentEffectType === 'answer_proxy'
-    || me?.heldAugmentEffectType === 'named_decoy'
-    || me?.heldAugmentEffectType === 'peck_song'
-    || me?.heldAugmentEffectType === 'sakura_decoy'
-    || me?.heldAugmentEffectType === 'answer_delay'
-    || me?.heldAugmentEffectType === 'yacha_duel'
-    || me?.heldAugmentEffectType === 'polite_suffix'
-    || me?.heldAugmentEffectType === 'rock_throw'
-    || me?.heldAugmentEffectType === 'steal_chain'
-    || me?.heldAugmentEffectType === 'score_steal'
-    || me?.heldAugmentEffectType === 'zero_both'
-    || me?.heldAugmentEffectType === 'muffled_answer'
-    || me?.heldAugmentEffectType === 'accuse_sleep'
-    || me?.heldAugmentEffectType === 'gabuki_mark'
-    || (me?.heldAugmentEffectType === 'flame_kim' && room.members.filter((m) => !m.isSpectator).length >= 2)
-    || me?.heldAugmentEffectType === 'steal_held_augment'
-    || me?.heldAugmentEffectType === 'hide_hints'
-    || me?.heldAugmentEffectType === 'audio_stutter'
-    || me?.heldAugmentEffectType === 'score_share'
-    || me?.heldAugmentEffectType === 'destroy_held_augment'
+    heldEffectType === 'soft_chat_mute'
+    || heldEffectType === 'slow_playback'
+    || heldEffectType === 'answer_proxy'
+    || heldEffectType === 'named_decoy'
+    || heldEffectType === 'peck_song'
+    || heldEffectType === 'sakura_decoy'
+    || heldEffectType === 'answer_delay'
+    || heldEffectType === 'yacha_duel'
+    || heldEffectType === 'polite_suffix'
+    || heldEffectType === 'rock_throw'
+    || heldEffectType === 'steal_chain'
+    || heldEffectType === 'score_steal'
+    || heldEffectType === 'zero_both'
+    || heldEffectType === 'muffled_answer'
+    || heldEffectType === 'accuse_sleep'
+    || heldEffectType === 'gabuki_mark'
+    || (heldEffectType === 'flame_kim' && room.members.filter((m) => !m.isSpectator).length >= 2)
+    || heldEffectType === 'steal_held_augment'
+    || heldEffectType === 'hide_hints'
+    || heldEffectType === 'audio_stutter'
+    || heldEffectType === 'score_share'
+    || heldEffectType === 'destroy_held_augment'
   )
-  const isTrumanTargetPick = me?.heldAugmentEffectType === 'sakura_decoy'
-  const heldNeedsDebuffFree = !!(me?.heldAugmentEffectType && HOSTILE_AUGMENT_TYPES.has(me.heldAugmentEffectType))
+  const isTrumanTargetPick = heldEffectType === 'sakura_decoy'
+  const heldNeedsDebuffFree = !!(heldEffectType && HOSTILE_AUGMENT_TYPES.has(heldEffectType))
   const targetCandidates = room.members.filter((player) => (
     player.userId !== user.id
     && !player.isSpectator
     && (!heldNeedsDebuffFree || !player.augmentBusy)
-    && (me?.heldAugmentEffectType !== 'steal_held_augment' || !!player.heldAugmentId)
+    && (heldEffectType !== 'steal_held_augment' || (player.heldAugments || []).some((h) => !h.locked))
   ))
   const busyTargets = heldNeedsDebuffFree
     ? room.members.filter((player) => (
@@ -1596,15 +1612,15 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
       && !!player.augmentBusy
     ))
     : []
-  const isAutoAugment = me?.heldAugmentEffectType === 'water_ghost'
-    || me?.heldAugmentEffectType === 'combo_clear_double'
-  const isPassiveHeld = me?.heldAugmentEffectType === 'reflect_debuff'
-  const isAutoTriggerHeld = me?.heldAugmentEffectType === 'cha_cha_cha'
+  const isAutoAugment = heldEffectType === 'water_ghost'
+    || heldEffectType === 'combo_clear_double'
+  const isPassiveHeld = heldEffectType === 'reflect_debuff'
+  const isAutoTriggerHeld = heldEffectType === 'cha_cha_cha'
   const useLocked = isSpectator || isAutoAugment || isPassiveHeld || isAutoTriggerHeld
-  const needsGahoPick = !isSpectator && me?.heldAugmentEffectType === 'gaho_select'
+  const needsGahoPick = !isSpectator && heldEffectType === 'gaho_select'
   const needsGenrePick = !isSpectator
-    && (me?.heldAugmentEffectType === 'ban_genre' || me?.heldAugmentEffectType === 'genre_early_chosung')
-  const genrePickIsBan = me?.heldAugmentEffectType === 'ban_genre'
+    && (heldEffectType === 'ban_genre' || heldEffectType === 'genre_early_chosung')
+  const genrePickIsBan = heldEffectType === 'ban_genre'
   const upcomingGenreEntries = Object.entries(room.upcomingGenreCounts || {})
     .filter(([, c]) => c > 0)
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'ko'))
@@ -1649,14 +1665,14 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
       voteSkip()
       return true
     }
-    if (!me?.heldAugmentId || useLocked) return false
+    if (!heldId || useLocked) return false
     if (needsGahoPick) void openGahoPick()
     else if (needsTargetPick) {
       setSelectedTargetIds([])
       setTargetPickOpen(true)
     }
     else if (needsGenrePick) setGenrePickOpen(true)
-    else useAugment()
+    else useAugment({ augmentId: heldId || undefined })
     return true
   }
   const isReadingSolver = !!(reading && reading.solverId === user.id)
@@ -2393,49 +2409,78 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
               <div style={{ fontFamily: F.ui, fontSize: 20, color: C.muted }}>증강</div>
               <Btn size="sm" onClick={() => setShowUsedList(true)}>사용 목록</Btn>
             </div>
+            {heldCards.length > 1 && (
+              <div style={{ display: 'flex', gap: 6 }}>
+                {heldCards.map((h) => {
+                  const on = !!displayCard && h.id === displayCard.id
+                  return (
+                    <button
+                      key={h.id}
+                      type="button"
+                      onClick={() => { if (!h.locked) setHeldPickId(h.id) }}
+                      title={h.locked
+                        ? `${h.lockedByNickname || '누군가'}님이 떠넘김 · 사용 불가`
+                        : h.name}
+                      style={{
+                        flex: 1, minWidth: 0, padding: '6px 8px',
+                        cursor: h.locked ? 'not-allowed' : 'pointer',
+                        fontFamily: F.ui, fontSize: 13, fontWeight: 800,
+                        color: C.muted,
+                        backgroundColor: on ? C.card : 'transparent',
+                        border: `2px solid ${h.locked ? C.graphite : tierBorderColor(h.tier)}`,
+                        opacity: h.locked ? 0.55 : 1,
+                        whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                      }}
+                    >
+                      {h.locked ? '🔒 ' : ''}{h.name}
+                    </button>
+                  )
+                })}
+              </div>
+            )}
             <div style={{
-              flex: 1, ...sk(me?.heldAugmentTier ? tierBorderColor(me.heldAugmentTier) : C.graphite),
+              flex: 1, ...sk(heldTier ? tierBorderColor(heldTier) : C.graphite),
               backgroundColor: C.card, padding: '16px 14px',
               display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
               textAlign: 'center', gap: 12, minHeight: 184, position: 'relative',
-              border: me?.heldAugmentTier
-                ? `2.5px solid ${tierBorderColor(me.heldAugmentTier)}`
+              border: heldTier
+                ? `2.5px solid ${tierBorderColor(heldTier)}`
                 : undefined,
             }}>
-              {me?.heldAugmentId ? (
+              {displayCard ? (
                 <>
                   <div style={{
                     width: 104, height: 104, flexShrink: 0,
-                    ...sk(tierBorderColor(me.heldAugmentTier), true),
+                    ...sk(tierBorderColor(heldTier), true),
                     overflow: 'hidden', backgroundColor: '#F2F0EB',
                   }}>
-                    {me.heldAugmentImageUrl ? (
+                    {heldImageUrl ? (
                       <img
-                        src={me.heldAugmentImageUrl}
-                        alt={me.heldAugmentName || '증강'}
+                        src={heldImageUrl}
+                        alt={heldName || '증강'}
                         style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
                       />
                     ) : (
-                      <AugmentNoPhoto name={me.heldAugmentName} accent={tierBorderColor(me.heldAugmentTier)} compact />
+                      <AugmentNoPhoto name={heldName} accent={tierBorderColor(heldTier)} compact />
                     )}
                   </div>
-                  {me.heldAugmentTier && (
+                  {heldTier && (
                     <div style={{
                       fontFamily: F.ui, fontSize: 12, fontWeight: 800,
-                      color: tierBorderColor(me.heldAugmentTier),
+                      color: tierBorderColor(heldTier),
                       display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, flexWrap: 'wrap',
                     }}>
-                      {tierDisplayName(me.heldAugmentTier)}
-                      <AugmentTargetBadge effectType={me.heldAugmentEffectType} />
+                      {tierDisplayName(heldTier)}
+                      <AugmentTargetBadge effectType={heldEffectType} />
                     </div>
                   )}
-                  {!me.heldAugmentTier && me.heldAugmentEffectType && (
+                  {!heldTier && heldEffectType && (
                     <div style={{ display: 'flex', justifyContent: 'center' }}>
-                      <AugmentTargetBadge effectType={me.heldAugmentEffectType} />
+                      <AugmentTargetBadge effectType={heldEffectType} />
                     </div>
                   )}
                   <div style={{ fontFamily: F.brand, fontSize: 23, fontWeight: 700, lineHeight: 1.2 }}>
-                    {me.heldAugmentName || '보유 중'}
+                    {heldName || '보유 중'}
                   </div>
                   <div
                     style={{ width: '100%', position: 'relative' }}
@@ -2451,19 +2496,21 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
                     <Btn
                       variant="primary"
                       fullWidth
-                      disabled={useLocked}
+                      disabled={useLocked || !heldId}
                       onClick={() => {
-                        if (useLocked) return
+                        if (useLocked || !heldId) return
                         if (needsGahoPick) void openGahoPick()
                         else if (needsTargetPick) {
                           setSelectedTargetIds([])
                           setTargetPickOpen(true)
                         }
                         else if (needsGenrePick) setGenrePickOpen(true)
-                        else useAugment()
+                        else useAugment({ augmentId: heldId || undefined })
                       }}
                     >
-                      {isAutoTriggerHeld
+                      {!heldId
+                        ? '떠넘겨진 증강 · 사용 불가'
+                        : isAutoTriggerHeld
                         ? '자동 사용'
                         : isPassiveHeld
                         ? '피격 시 자동'
@@ -2480,7 +2527,9 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
                     </Btn>
                   </div>
                   <div style={{ fontFamily: F.ui, fontSize: 12, color: C.muted }}>
-                    {isAutoTriggerHeld
+                    {!heldId
+                      ? `${displayCard?.lockedByNickname || '누군가'}님이 떠넘김 · 다음 증강 선택 때 사라집니다`
+                      : isAutoTriggerHeld
                       ? '동시 정답 시 우선권'
                       : isPassiveHeld
                       ? '지목당하면 자동 반사'
@@ -2704,53 +2753,53 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
         }}>
           <div style={{ ...sk(), backgroundColor: C.card, padding: '28px 32px', maxWidth: 400, width: '100%', textAlign: 'center' }}>
             <div style={{ fontFamily: F.brand, fontSize: 28, fontWeight: 700, marginBottom: 8 }}>
-              {me?.heldAugmentName || '대상 선택'}
+              {heldName || '대상 선택'}
             </div>
             <div style={{ fontFamily: F.ui, fontSize: 15, color: C.muted, marginBottom: 18 }}>
-              {me?.heldAugmentEffectType === 'sakura_decoy'
+              {heldEffectType === 'sakura_decoy'
                 ? '트루먼으로 만들 플레이어를 1~2명 선택하세요'
-                : me?.heldAugmentEffectType === 'slow_playback'
-                ? (me.heldAugmentName?.includes('알레그로')
+                : heldEffectType === 'slow_playback'
+                ? (heldName?.includes('알레그로')
                   ? '노래를 빠르게 틀어줄 플레이어를 선택하세요'
                   : '노래를 느리게 틀어줄 플레이어를 선택하세요')
-                : me?.heldAugmentEffectType === 'audio_stutter'
+                : heldEffectType === 'audio_stutter'
                 ? '노래를 끊을 플레이어를 선택하세요'
-                : me?.heldAugmentEffectType === 'hide_hints'
+                : heldEffectType === 'hide_hints'
                 ? '힌트를 가릴 플레이어를 선택하세요'
-                : me?.heldAugmentEffectType === 'score_share'
+                : heldEffectType === 'score_share'
                 ? '기생할 플레이어를 선택하세요 (그 사람 득점만큼 나도 획득)'
-                : me?.heldAugmentEffectType === 'answer_proxy'
+                : heldEffectType === 'answer_proxy'
                   ? '대리할 플레이어를 선택하세요 (대상은 공개되지 않습니다)'
-                  : me?.heldAugmentEffectType === 'named_decoy'
+                  : heldEffectType === 'named_decoy'
                       ? '연애서큘레이션을 틀어줄 플레이어를 선택하세요'
-                      : me?.heldAugmentEffectType === 'peck_song'
+                      : heldEffectType === 'peck_song'
                       ? '쪼아요~를 들려줄 플레이어를 선택하세요 (그 사람만 들림)'
-                      : me?.heldAugmentEffectType === 'answer_delay'
-                      ? (me.heldAugmentName?.includes('잠깐')
+                      : heldEffectType === 'answer_delay'
+                      ? (heldName?.includes('잠깐')
                         ? '잠깐 기다리게 할 플레이어를 선택하세요'
                         : '제출을 늦출 플레이어를 선택하세요')
-                      : me?.heldAugmentEffectType === 'yacha_duel'
+                      : heldEffectType === 'yacha_duel'
                         ? '야차룰로 맞붙을 플레이어를 선택하세요'
-                        : me?.heldAugmentEffectType === 'polite_suffix'
-                          ? (me.heldAugmentName === '다요'
+                        : heldEffectType === 'polite_suffix'
+                          ? (heldName === '다요'
                             ? '답 끝에 「다요」를 붙이게 할 플레이어를 선택하세요'
                             : '답 끝에 「입니다」를 붙이게 할 플레이어를 선택하세요')
-                          : me?.heldAugmentEffectType === 'soft_chat_mute'
+                          : heldEffectType === 'soft_chat_mute'
                             ? '라운드 시작마다 잠시 채팅·제출을 막을 플레이어를 선택하세요'
-                            : me?.heldAugmentEffectType === 'rock_throw'
-                              || me?.heldAugmentEffectType === 'steal_chain'
+                            : heldEffectType === 'rock_throw'
+                              || heldEffectType === 'steal_chain'
                               ? '돌을 던질 플레이어를 선택하세요'
-                              : me?.heldAugmentEffectType === 'score_steal'
+                              : heldEffectType === 'score_steal'
                                 ? '점수를 뜯을 플레이어를 선택하세요'
-                                : me?.heldAugmentEffectType === 'pair_average'
+                                : heldEffectType === 'pair_average'
                                   ? '점수를 맞출 플레이어를 선택하세요'
-                                  : me?.heldAugmentEffectType === 'accuse_sleep'
+                                  : heldEffectType === 'accuse_sleep'
                                     ? '범인으로 지목할 플레이어를 선택하세요'
-                                    : me?.heldAugmentEffectType === 'gabuki_mark'
+                                    : heldEffectType === 'gabuki_mark'
                                       ? '가불기를 걸 플레이어를 선택하세요'
-                                      : me?.heldAugmentEffectType === 'flame_kim'
+                                      : heldEffectType === 'flame_kim'
                                         ? '불태울 플레이어를 선택하세요'
-                                      : me?.heldAugmentEffectType === 'steal_held_augment'
+                                      : heldEffectType === 'steal_held_augment'
                                         ? '증강을 뺏을 플레이어를 선택하세요'
                                     : '대상을 선택하세요'}
             </div>
@@ -2768,7 +2817,7 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
                           ? [...current, p.userId]
                           : current)
                     } else {
-                      useAugment({ targetUserId: p.userId })
+                      useAugment({ augmentId: heldId || undefined, targetUserId: p.userId })
                       setTargetPickOpen(false)
                     }
                   }}
@@ -2778,7 +2827,7 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
               ))}
               {targetCandidates.length === 0 && (
                 <div style={{ fontFamily: F.ui, fontSize: 15, color: C.muted }}>
-                  {me?.heldAugmentEffectType === 'steal_held_augment'
+                  {heldEffectType === 'steal_held_augment'
                     ? '증강을 보유한 다른 플레이어가 없습니다'
                     : busyTargets.length > 0
                       ? '이미 디버프가 적용 중인 대상만 있어 사용할 수 없습니다'
@@ -2797,7 +2846,7 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
                   variant="primary"
                   disabled={selectedTargetIds.length < 1 || selectedTargetIds.length > 2}
                   onClick={() => {
-                    useAugment({ targetUserIds: selectedTargetIds })
+                    useAugment({ augmentId: heldId || undefined, targetUserIds: selectedTargetIds })
                     setTargetPickOpen(false)
                     setSelectedTargetIds([])
                   }}
@@ -2821,7 +2870,7 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
         }}>
           <div style={{ ...sk(), backgroundColor: C.card, padding: '28px 32px', maxWidth: 400, width: '100%', textAlign: 'center' }}>
             <div style={{ fontFamily: F.brand, fontSize: 28, fontWeight: 700, marginBottom: 8 }}>
-              {me?.heldAugmentName || '밴픽'}
+              {heldName || '밴픽'}
             </div>
             <div style={{ fontFamily: F.ui, fontSize: 15, color: C.muted, marginBottom: 18 }}>
               {genrePickIsBan
@@ -2835,7 +2884,7 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
                   fullWidth
                   variant="primary"
                   onClick={() => {
-                    useAugment({ genreName: g })
+                    useAugment({ augmentId: heldId || undefined, genreName: g })
                     setGenrePickOpen(false)
                   }}
                 >
@@ -2897,7 +2946,7 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
                       key={g.id}
                       type="button"
                       onClick={() => {
-                        useAugment({ gahoAugmentId: g.id })
+                        useAugment({ augmentId: heldId || undefined, gahoAugmentId: g.id })
                         // 대상/장르 추가 선택이 필요하면 held가 바뀌며 창을 유지하지 않음 · room:state로 UI 갱신
                         setGahoPickOpen(false)
                         setGahoCandidates([])
@@ -3063,10 +3112,10 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
         </FloatingHoverPopup>
       )}
 
-      {augHover && me?.heldAugmentDescription && (
+      {augHover && heldDescription && (
         <FloatingHoverPopup
           anchor={augHoverAnchor}
-          borderColor={tierBorderColor(me.heldAugmentTier)}
+          borderColor={tierBorderColor(heldTier)}
           width={260}
         >
           <div style={{
@@ -3074,15 +3123,15 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
             display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
           }}>
             증강 설명
-            <AugmentTargetBadge effectType={me.heldAugmentEffectType} />
+            <AugmentTargetBadge effectType={heldEffectType} />
           </div>
-          {me.heldAugmentName && (
+          {heldName && (
             <div style={{ fontFamily: F.brand, fontSize: 18, fontWeight: 700, marginBottom: 6 }}>
-              {me.heldAugmentName}
+              {heldName}
             </div>
           )}
           <div style={{ fontFamily: F.ui, fontSize: 14, color: C.body, lineHeight: 1.45 }}>
-            {me.heldAugmentDescription}
+            {heldDescription}
           </div>
         </FloatingHoverPopup>
       )}

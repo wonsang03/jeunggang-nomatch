@@ -84,6 +84,8 @@ export const S = {
   }).strip(),
 
   augmentUse: z.object({
+    /** 보유 2칸이 될 수 있으므로 어느 카드를 쓰는지 (없으면 쓸 수 있는 첫 장) */
+    augmentId: shortId.optional(),
     targetUserId: shortId.optional(),
     targetUserIds: z.array(shortId).max(20).optional(),
     gahoAugmentId: shortId.optional(),

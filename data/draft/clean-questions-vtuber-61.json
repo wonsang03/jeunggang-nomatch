@@ -1,0 +1,1467 @@
+[
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=fgSXAKsq-Vo",
+    "startSec": 83,
+    "endSec": 123,
+    "genreName": "버튜버",
+    "tags": [
+      "이세돌",
+      "싱글1집"
+    ],
+    "slots": [
+      {
+        "label": "노래 제목",
+        "answer": "RE : WIND",
+        "acceptAnswers": [
+          "RE : WIND",
+          "RE:WIND"
+        ]
+      },
+      {
+        "label": "가수",
+        "answer": "이세계아이돌",
+        "acceptAnswers": [
+          "이세계아이돌"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=JY-gJkMuJ94",
+    "startSec": 73,
+    "endSec": 113,
+    "genreName": "버튜버",
+    "tags": [
+      "이세돌",
+      "싱글2집"
+    ],
+    "slots": [
+      {
+        "label": "노래 제목",
+        "answer": "겨울봄",
+        "acceptAnswers": [
+          "겨울봄"
+        ]
+      },
+      {
+        "label": "가수",
+        "answer": "이세계아이돌",
+        "acceptAnswers": [
+          "이세계아이돌"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=rDFUl2mHIW4",
+    "startSec": 65,
+    "endSec": 105,
+    "genreName": "버튜버",
+    "tags": [
+      "이세돌",
+      "싱글3집"
+    ],
+    "slots": [
+      {
+        "label": "노래 제목",
+        "answer": "KIDDING",
+        "acceptAnswers": [
+          "KIDDING"
+        ]
+      },
+      {
+        "label": "가수",
+        "answer": "이세계아이돌",
+        "acceptAnswers": [
+          "이세계아이돌"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=QgMFpuos4Rg",
+    "startSec": 61,
+    "endSec": 101,
+    "genreName": "버튜버",
+    "tags": [
+      "마법소녀 이세계아이돌 OST"
+    ],
+    "slots": [
+      {
+        "label": "노래 제목",
+        "answer": "LOCKDOWN",
+        "acceptAnswers": [
+          "LOCKDOWN"
+        ]
+      },
+      {
+        "label": "가수",
+        "answer": "이세계아이돌",
+        "acceptAnswers": [
+          "이세계아이돌"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=8KTFf2X-ago",
+    "startSec": 56,
+    "endSec": 96,
+    "genreName": "버튜버",
+    "tags": [
+      "웹툰 OST"
+    ],
+    "slots": [
+      {
+        "label": "노래 제목",
+        "answer": "Another World",
+        "acceptAnswers": [
+          "Another World",
+          "AnotherWorld"
+        ]
+      },
+      {
+        "label": "가수",
+        "answer": "이세계아이돌",
+        "acceptAnswers": [
+          "이세계아이돌"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=DJLa8QYUtmQ",
+    "startSec": 74,
+    "endSec": 114,
+    "genreName": "버튜버",
+    "tags": [
+      "이세돌",
+      "2025"
+    ],
+    "slots": [
+      {
+        "label": "노래 제목",
+        "answer": "Misty Rainbow",
+        "acceptAnswers": [
+          "Misty Rainbow",
+          "MistyRainbow"
+        ]
+      },
+      {
+        "label": "가수",
+        "answer": "이세계아이돌",
+        "acceptAnswers": [
+          "이세계아이돌"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=nz2_gNQDiVM",
+    "startSec": 66,
+    "endSec": 106,
+    "genreName": "버튜버",
+    "tags": [
+      "이세돌",
+      "2025"
+    ],
+    "slots": [
+      {
+        "label": "노래 제목",
+        "answer": "Stargazers",
+        "acceptAnswers": [
+          "Stargazers"
+        ]
+      },
+      {
+        "label": "가수",
+        "answer": "이세계아이돌",
+        "acceptAnswers": [
+          "이세계아이돌"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=zFmKBpHrKY8",
+    "startSec": 68,
+    "endSec": 108,
+    "genreName": "버튜버",
+    "tags": [
+      "이세돌",
+      "미니앨범"
+    ],
+    "slots": [
+      {
+        "label": "노래 제목",
+        "answer": "Be My Light",
+        "acceptAnswers": [
+          "Be My Light",
+          "BeMyLight"
+        ]
+      },
+      {
+        "label": "가수",
+        "answer": "이세계아이돌",
+        "acceptAnswers": [
+          "이세계아이돌"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=qkLUVeFdZfQ",
+    "startSec": 59,
+    "endSec": 99,
+    "genreName": "버튜버",
+    "tags": [
+      "이세돌",
+      "스페셜싱글"
+    ],
+    "slots": [
+      {
+        "label": "노래 제목",
+        "answer": "White",
+        "acceptAnswers": [
+          "White"
+        ]
+      },
+      {
+        "label": "가수",
+        "answer": "이세계아이돌",
+        "acceptAnswers": [
+          "이세계아이돌"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=tGMwZ0O2-Oc",
+    "startSec": 57,
+    "endSec": 97,
+    "genreName": "버튜버",
+    "tags": [
+      "이세돌",
+      "스페셜싱글"
+    ],
+    "slots": [
+      {
+        "label": "노래 제목",
+        "answer": "Smile For You",
+        "acceptAnswers": [
+          "Smile For You",
+          "SmileForYou"
+        ]
+      },
+      {
+        "label": "가수",
+        "answer": "이세계아이돌",
+        "acceptAnswers": [
+          "이세계아이돌"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=i4SRH9jfUMQ",
+    "startSec": 66,
+    "endSec": 106,
+    "genreName": "버튜버",
+    "tags": [
+      "이세계 페스티벌"
+    ],
+    "slots": [
+      {
+        "label": "노래 제목",
+        "answer": "OVER",
+        "acceptAnswers": [
+          "OVER"
+        ]
+      },
+      {
+        "label": "가수",
+        "answer": "이세계아이돌",
+        "acceptAnswers": [
+          "이세계아이돌"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=CVCIMhJT2lA",
+    "startSec": 60,
+    "endSec": 100,
+    "genreName": "버튜버",
+    "tags": [
+      "유튜브 공개곡"
+    ],
+    "slots": [
+      {
+        "label": "노래 제목",
+        "answer": "But You Want More",
+        "acceptAnswers": [
+          "But You Want More",
+          "ButYouWantMore"
+        ]
+      },
+      {
+        "label": "가수",
+        "answer": "이세계아이돌",
+        "acceptAnswers": [
+          "이세계아이돌"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=Casatf2Hzis",
+    "startSec": 43,
+    "endSec": 83,
+    "genreName": "버튜버",
+    "tags": [
+      "원곡 IVE"
+    ],
+    "slots": [
+      {
+        "label": "노래 제목",
+        "answer": "LOVE DIVE",
+        "acceptAnswers": [
+          "LOVE DIVE",
+          "LOVEDIVE"
+        ]
+      },
+      {
+        "label": "커버",
+        "answer": "이세계아이돌",
+        "acceptAnswers": [
+          "이세계아이돌"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=xZnVxReWkb0",
+    "startSec": 77,
+    "endSec": 117,
+    "genreName": "버튜버",
+    "tags": [
+      "원곡 동방신기"
+    ],
+    "slots": [
+      {
+        "label": "노래 제목",
+        "answer": "풍선",
+        "acceptAnswers": [
+          "풍선"
+        ]
+      },
+      {
+        "label": "커버",
+        "answer": "이세계아이돌",
+        "acceptAnswers": [
+          "이세계아이돌"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=-JTvi51SPGQ",
+    "startSec": 61,
+    "endSec": 101,
+    "genreName": "버튜버",
+    "tags": [
+      "원곡 소녀시대"
+    ],
+    "slots": [
+      {
+        "label": "노래 제목",
+        "answer": "Kissing You",
+        "acceptAnswers": [
+          "Kissing You",
+          "KissingYou"
+        ]
+      },
+      {
+        "label": "커버",
+        "answer": "이세계아이돌",
+        "acceptAnswers": [
+          "이세계아이돌"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=LxIAQTXvEYE",
+    "startSec": 68,
+    "endSec": 108,
+    "genreName": "버튜버",
+    "tags": [
+      "원곡 IZ*ONE"
+    ],
+    "slots": [
+      {
+        "label": "노래 제목",
+        "answer": "Panorama",
+        "acceptAnswers": [
+          "Panorama"
+        ]
+      },
+      {
+        "label": "커버",
+        "answer": "이세계아이돌",
+        "acceptAnswers": [
+          "이세계아이돌"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=MK9jshYOK9I",
+    "startSec": 32,
+    "endSec": 72,
+    "genreName": "버튜버",
+    "tags": [
+      "아이마스"
+    ],
+    "slots": [
+      {
+        "label": "노래 제목",
+        "answer": "부탁할게! 신데렐라",
+        "acceptAnswers": [
+          "부탁할게! 신데렐라",
+          "부탁할게!신데렐라"
+        ]
+      },
+      {
+        "label": "커버",
+        "answer": "이세계아이돌",
+        "acceptAnswers": [
+          "이세계아이돌"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=eFQMQaaU1lg",
+    "startSec": 73,
+    "endSec": 113,
+    "genreName": "버튜버",
+    "tags": [
+      "최애의 아이"
+    ],
+    "slots": [
+      {
+        "label": "노래 제목",
+        "answer": "아이돌 (アイドル)",
+        "acceptAnswers": [
+          "아이돌 (アイドル)",
+          "아이돌",
+          "アイドル",
+          "아이돌(アイドル)"
+        ]
+      },
+      {
+        "label": "커버",
+        "answer": "주르르 · 비챤",
+        "acceptAnswers": [
+          "주르르 · 비챤",
+          "주르르·비챤",
+          "주르르",
+          "비챤"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=q12MoUhob-o",
+    "startSec": 62,
+    "endSec": 102,
+    "genreName": "버튜버",
+    "tags": [
+      "원곡 (여자)아이들"
+    ],
+    "slots": [
+      {
+        "label": "노래 제목",
+        "answer": "TOMBOY",
+        "acceptAnswers": [
+          "TOMBOY"
+        ]
+      },
+      {
+        "label": "커버",
+        "answer": "징버거 · 고세구",
+        "acceptAnswers": [
+          "징버거 · 고세구",
+          "징버거·고세구",
+          "징버거",
+          "고세구"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=4jqxG4JOlIU",
+    "startSec": 77,
+    "endSec": 117,
+    "genreName": "버튜버",
+    "tags": [
+      "원곡 BTS"
+    ],
+    "slots": [
+      {
+        "label": "노래 제목",
+        "answer": "Butter",
+        "acceptAnswers": [
+          "Butter"
+        ]
+      },
+      {
+        "label": "커버",
+        "answer": "비챤 · 릴파",
+        "acceptAnswers": [
+          "비챤 · 릴파",
+          "비챤·릴파",
+          "비챤",
+          "릴파"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=9zrIVkmp_tI",
+    "startSec": 62,
+    "endSec": 102,
+    "genreName": "버튜버",
+    "tags": [
+      "원곡 트와이스"
+    ],
+    "slots": [
+      {
+        "label": "노래 제목",
+        "answer": "SCIENTIST",
+        "acceptAnswers": [
+          "SCIENTIST"
+        ]
+      },
+      {
+        "label": "커버",
+        "answer": "주르르 · 아이네",
+        "acceptAnswers": [
+          "주르르 · 아이네",
+          "주르르·아이네",
+          "주르르",
+          "아이네"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=tv-qZyTavUg",
+    "startSec": 50,
+    "endSec": 90,
+    "genreName": "버튜버",
+    "tags": [
+      "보컬로이드"
+    ],
+    "slots": [
+      {
+        "label": "노래 제목",
+        "answer": "나는 아픈 건 딱 질색이니까",
+        "acceptAnswers": [
+          "나는 아픈 건 딱 질색이니까",
+          "나는아픈건딱질색이니까"
+        ]
+      },
+      {
+        "label": "커버",
+        "answer": "고세구 · 비챤",
+        "acceptAnswers": [
+          "고세구 · 비챤",
+          "고세구·비챤",
+          "고세구",
+          "비챤"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=HKh1PthQ05Q",
+    "startSec": 80,
+    "endSec": 120,
+    "genreName": "버튜버",
+    "tags": [
+      "원곡 확인 필요"
+    ],
+    "slots": [
+      {
+        "label": "노래 제목",
+        "answer": "염라",
+        "acceptAnswers": [
+          "염라"
+        ]
+      },
+      {
+        "label": "커버",
+        "answer": "아이네 · 비챤",
+        "acceptAnswers": [
+          "아이네 · 비챤",
+          "아이네·비챤",
+          "아이네",
+          "비챤"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=PkrRbTpzPFs",
+    "startSec": 71,
+    "endSec": 111,
+    "genreName": "버튜버",
+    "tags": [
+      "원곡 확인 필요"
+    ],
+    "slots": [
+      {
+        "label": "노래 제목",
+        "answer": "Unbreakable",
+        "acceptAnswers": [
+          "Unbreakable"
+        ]
+      },
+      {
+        "label": "커버",
+        "answer": "주르르 · 고세구 · 비챤",
+        "acceptAnswers": [
+          "주르르 · 고세구 · 비챤",
+          "주르르·고세구·비챤",
+          "주르르",
+          "고세구",
+          "비챤"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=4LiCpBbjJMA",
+    "startSec": 96,
+    "endSec": 136,
+    "genreName": "버튜버",
+    "tags": [
+      "원곡 악뮤"
+    ],
+    "slots": [
+      {
+        "label": "노래 제목",
+        "answer": "아이와 나의 바다",
+        "acceptAnswers": [
+          "아이와 나의 바다",
+          "아이와나의바다"
+        ]
+      },
+      {
+        "label": "커버",
+        "answer": "징버거 · 릴파 · 비챤 · 해루석",
+        "acceptAnswers": [
+          "징버거 · 릴파 · 비챤 · 해루석",
+          "징버거·릴파·비챤·해루석",
+          "징버거",
+          "릴파",
+          "비챤",
+          "해루석"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=ILLhLQYnlFY",
+    "startSec": 47,
+    "endSec": 87,
+    "genreName": "버튜버",
+    "tags": [
+      "원곡 확인 필요"
+    ],
+    "slots": [
+      {
+        "label": "노래 제목",
+        "answer": "사인은 B",
+        "acceptAnswers": [
+          "사인은 B",
+          "사인은B"
+        ]
+      },
+      {
+        "label": "커버",
+        "answer": "징버거 · 릴파 · 주르르",
+        "acceptAnswers": [
+          "징버거 · 릴파 · 주르르",
+          "징버거·릴파·주르르",
+          "징버거",
+          "릴파",
+          "주르르"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=NCf4-uhszZU",
+    "startSec": 76,
+    "endSec": 116,
+    "genreName": "버튜버",
+    "tags": [
+      "원곡 볼빨간사춘기"
+    ],
+    "slots": [
+      {
+        "label": "노래 제목",
+        "answer": "나만, 봄",
+        "acceptAnswers": [
+          "나만, 봄",
+          "나만,봄",
+          "나만"
+        ]
+      },
+      {
+        "label": "커버",
+        "answer": "고세구",
+        "acceptAnswers": [
+          "고세구"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=8kfIXe12LnI",
+    "startSec": 75,
+    "endSec": 115,
+    "genreName": "버튜버",
+    "tags": [
+      "보컬로이드"
+    ],
+    "slots": [
+      {
+        "label": "노래 제목",
+        "answer": "팬서비스",
+        "acceptAnswers": [
+          "팬서비스"
+        ]
+      },
+      {
+        "label": "커버",
+        "answer": "고세구",
+        "acceptAnswers": [
+          "고세구"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=Gbf1jPQXyJA",
+    "startSec": 68,
+    "endSec": 108,
+    "genreName": "버튜버",
+    "tags": [
+      "원곡 산들"
+    ],
+    "slots": [
+      {
+        "label": "노래 제목",
+        "answer": "취기를 빌려",
+        "acceptAnswers": [
+          "취기를 빌려",
+          "취기를빌려"
+        ]
+      },
+      {
+        "label": "커버",
+        "answer": "비챤",
+        "acceptAnswers": [
+          "비챤"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=QJiWhjPv0dg",
+    "startSec": 116,
+    "endSec": 156,
+    "genreName": "버튜버",
+    "tags": [
+      "원곡 박재범"
+    ],
+    "slots": [
+      {
+        "label": "노래 제목",
+        "answer": "슈퍼 참치",
+        "acceptAnswers": [
+          "슈퍼 참치",
+          "슈퍼참치"
+        ]
+      },
+      {
+        "label": "커버",
+        "answer": "징버거",
+        "acceptAnswers": [
+          "징버거"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=uCL8GPhTZpQ",
+    "startSec": 72,
+    "endSec": 112,
+    "genreName": "버튜버",
+    "tags": [
+      "원곡 방탄소년단"
+    ],
+    "slots": [
+      {
+        "label": "노래 제목",
+        "answer": "너로피어오라",
+        "acceptAnswers": [
+          "너로피어오라"
+        ]
+      },
+      {
+        "label": "커버",
+        "answer": "릴파",
+        "acceptAnswers": [
+          "릴파"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=19fYrNT2qrg",
+    "startSec": 44,
+    "endSec": 84,
+    "genreName": "버튜버",
+    "tags": [
+      "위대한 쇼맨"
+    ],
+    "slots": [
+      {
+        "label": "노래 제목",
+        "answer": "Never Enough",
+        "acceptAnswers": [
+          "Never Enough",
+          "NeverEnough"
+        ]
+      },
+      {
+        "label": "커버",
+        "answer": "릴파",
+        "acceptAnswers": [
+          "릴파"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=8l5vRGs6M84",
+    "startSec": 103,
+    "endSec": 143,
+    "genreName": "버튜버",
+    "tags": [
+      "아이마스"
+    ],
+    "slots": [
+      {
+        "label": "노래 제목",
+        "answer": "M@STERPIECE",
+        "acceptAnswers": [
+          "M@STERPIECE"
+        ]
+      },
+      {
+        "label": "커버",
+        "answer": "주르르",
+        "acceptAnswers": [
+          "주르르"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=YcyDo-jp4YM",
+    "startSec": 58,
+    "endSec": 98,
+    "genreName": "버튜버",
+    "tags": [
+      "1st Single",
+      "2024.02.21"
+    ],
+    "slots": [
+      {
+        "label": "노래 제목",
+        "answer": "Milky Way",
+        "acceptAnswers": [
+          "Milky Way",
+          "MilkyWay"
+        ]
+      },
+      {
+        "label": "가수",
+        "answer": "스텔라이브",
+        "acceptAnswers": [
+          "스텔라이브"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=n3olyokZ5Ak",
+    "startSec": 59,
+    "endSec": 99,
+    "genreName": "버튜버",
+    "tags": [
+      "유닛곡",
+      "2024.04.03"
+    ],
+    "slots": [
+      {
+        "label": "노래 제목",
+        "answer": "Hit On Shot",
+        "acceptAnswers": [
+          "Hit On Shot",
+          "HitOnShot"
+        ]
+      },
+      {
+        "label": "가수",
+        "answer": "아이리 칸나 · 아카네 리제",
+        "acceptAnswers": [
+          "아이리 칸나 · 아카네 리제",
+          "아이리칸나·아카네리제",
+          "아이리 칸나",
+          "아카네 리제"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=9CcW-nhYPAI",
+    "startSec": 73,
+    "endSec": 113,
+    "genreName": "버튜버",
+    "tags": [
+      "유닛곡",
+      "2024.04.21"
+    ],
+    "slots": [
+      {
+        "label": "노래 제목",
+        "answer": "Dear My Fairy",
+        "acceptAnswers": [
+          "Dear My Fairy",
+          "DearMyFairy"
+        ]
+      },
+      {
+        "label": "가수",
+        "answer": "시라유키 히나 · 네네코 마시로",
+        "acceptAnswers": [
+          "시라유키 히나 · 네네코 마시로",
+          "시라유키히나·네네코마시로",
+          "시라유키 히나",
+          "네네코 마시로"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=Jt6UCd7JhAA",
+    "startSec": 85,
+    "endSec": 125,
+    "genreName": "버튜버",
+    "tags": [
+      "2기 1st Single",
+      "2024.04.30"
+    ],
+    "slots": [
+      {
+        "label": "노래 제목",
+        "answer": "Stars Align",
+        "acceptAnswers": [
+          "Stars Align",
+          "StarsAlign"
+        ]
+      },
+      {
+        "label": "가수",
+        "answer": "Universe (히나 · 마시로 · 리제 · 타비)",
+        "acceptAnswers": [
+          "Universe (히나 · 마시로 · 리제 · 타비)",
+          "Universe",
+          "히나 · 마시로 · 리제 · 타비",
+          "Universe(히나·마시로·리제·타비)",
+          "Universe (히나",
+          "마시로",
+          "리제",
+          "타비)",
+          "히나·마시로·리제·타비",
+          "히나",
+          "타비"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=WB9Mbkjry0k",
+    "startSec": 68,
+    "endSec": 108,
+    "genreName": "버튜버",
+    "tags": [
+      "3기 1st Single",
+      "2024.08.24"
+    ],
+    "slots": [
+      {
+        "label": "노래 제목",
+        "answer": "Our Tales",
+        "acceptAnswers": [
+          "Our Tales",
+          "OurTales"
+        ]
+      },
+      {
+        "label": "가수",
+        "answer": "Cliché (시부키 · 린 · 나나 · 리코)",
+        "acceptAnswers": [
+          "Cliché (시부키 · 린 · 나나 · 리코)",
+          "Cliché",
+          "시부키 · 린 · 나나 · 리코",
+          "Cliché(시부키·린·나나·리코)",
+          "Cliché (시부키",
+          "나나",
+          "리코)",
+          "시부키·린·나나·리코",
+          "시부키",
+          "리코"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=XR81lQrRceg",
+    "startSec": 63,
+    "endSec": 103,
+    "genreName": "버튜버",
+    "tags": [
+      "3기 2nd Single",
+      "2026.05.19"
+    ],
+    "slots": [
+      {
+        "label": "노래 제목",
+        "answer": "유성우",
+        "acceptAnswers": [
+          "유성우"
+        ]
+      },
+      {
+        "label": "가수",
+        "answer": "Cliché (시부키 · 린 · 나나 · 리코)",
+        "acceptAnswers": [
+          "Cliché (시부키 · 린 · 나나 · 리코)",
+          "Cliché",
+          "시부키 · 린 · 나나 · 리코",
+          "Cliché(시부키·린·나나·리코)",
+          "Cliché (시부키",
+          "나나",
+          "리코)",
+          "시부키·린·나나·리코",
+          "시부키",
+          "리코"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=he2W_4xY5Zo",
+    "startSec": 69,
+    "endSec": 109,
+    "genreName": "버튜버",
+    "tags": [
+      "1st EP STAR TRAIL",
+      "2026.05.08"
+    ],
+    "slots": [
+      {
+        "label": "노래 제목",
+        "answer": "Twinkle",
+        "acceptAnswers": [
+          "Twinkle"
+        ]
+      },
+      {
+        "label": "가수",
+        "answer": "스텔라이브",
+        "acceptAnswers": [
+          "스텔라이브"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=m-rIYEw5uAs",
+    "startSec": 59,
+    "endSec": 99,
+    "genreName": "버튜버",
+    "tags": [
+      "1st EP STAR TRAIL"
+    ],
+    "slots": [
+      {
+        "label": "노래 제목",
+        "answer": "히로인이 되고 싶어",
+        "acceptAnswers": [
+          "히로인이 되고 싶어",
+          "히로인이되고싶어"
+        ]
+      },
+      {
+        "label": "가수",
+        "answer": "스텔라이브",
+        "acceptAnswers": [
+          "스텔라이브"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=rQaluJS-Tc0",
+    "startSec": 77,
+    "endSec": 117,
+    "genreName": "버튜버",
+    "tags": [
+      "솔로 1st Single",
+      "2024.09.11"
+    ],
+    "slots": [
+      {
+        "label": "노래 제목",
+        "answer": "하나 (夏拏)",
+        "acceptAnswers": [
+          "하나 (夏拏)",
+          "하나",
+          "夏拏",
+          "하나(夏拏)"
+        ]
+      },
+      {
+        "label": "가수",
+        "answer": "시라유키 히나",
+        "acceptAnswers": [
+          "시라유키 히나",
+          "시라유키히나"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=00pp5w9_Cr0",
+    "startSec": 30,
+    "endSec": 70,
+    "genreName": "버튜버",
+    "tags": [
+      "로고송",
+      "2025.04.23"
+    ],
+    "slots": [
+      {
+        "label": "노래 제목",
+        "answer": "꿈의 신호",
+        "acceptAnswers": [
+          "꿈의 신호",
+          "꿈의신호"
+        ]
+      },
+      {
+        "label": "가수",
+        "answer": "시라유키 히나",
+        "acceptAnswers": [
+          "시라유키 히나",
+          "시라유키히나"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=3_0Ut2tlxLM",
+    "startSec": 65,
+    "endSec": 105,
+    "genreName": "버튜버",
+    "tags": [
+      "솔로 1st Single"
+    ],
+    "slots": [
+      {
+        "label": "노래 제목",
+        "answer": "Festa!",
+        "acceptAnswers": [
+          "Festa!"
+        ]
+      },
+      {
+        "label": "가수",
+        "answer": "아카네 리제",
+        "acceptAnswers": [
+          "아카네 리제",
+          "아카네리제"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=G5tTozKJRD4",
+    "startSec": 62,
+    "endSec": 102,
+    "genreName": "버튜버",
+    "tags": [
+      "솔로 1st Single"
+    ],
+    "slots": [
+      {
+        "label": "노래 제목",
+        "answer": "여로",
+        "acceptAnswers": [
+          "여로"
+        ]
+      },
+      {
+        "label": "가수",
+        "answer": "아라하시 타비",
+        "acceptAnswers": [
+          "아라하시 타비",
+          "아라하시타비"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=kPdB6iGYBBc",
+    "startSec": 65,
+    "endSec": 105,
+    "genreName": "버튜버",
+    "tags": [
+      "솔로 1st Single",
+      "2023.05.26"
+    ],
+    "slots": [
+      {
+        "label": "노래 제목",
+        "answer": "ADDICT!ON",
+        "acceptAnswers": [
+          "ADDICT!ON"
+        ]
+      },
+      {
+        "label": "가수",
+        "answer": "아이리 칸나",
+        "acceptAnswers": [
+          "아이리 칸나",
+          "아이리칸나"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=iCCqSFvz9kM",
+    "startSec": 74,
+    "endSec": 114,
+    "genreName": "버튜버",
+    "tags": [
+      "솔로 2nd Single",
+      "2023.11.09"
+    ],
+    "slots": [
+      {
+        "label": "노래 제목",
+        "answer": "최종화 (The Last Flower)",
+        "acceptAnswers": [
+          "최종화 (The Last Flower)",
+          "최종화",
+          "The Last Flower",
+          "최종화(TheLastFlower)",
+          "TheLastFlower"
+        ]
+      },
+      {
+        "label": "가수",
+        "answer": "아이리 칸나",
+        "acceptAnswers": [
+          "아이리 칸나",
+          "아이리칸나"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=tZHAWd6yIz4",
+    "startSec": 20,
+    "endSec": 60,
+    "genreName": "버튜버",
+    "tags": [
+      "솔로 3rd Single",
+      "2024.07.25"
+    ],
+    "slots": [
+      {
+        "label": "노래 제목",
+        "answer": "푸른 보석과 어린 용",
+        "acceptAnswers": [
+          "푸른 보석과 어린 용",
+          "푸른보석과어린용"
+        ]
+      },
+      {
+        "label": "가수",
+        "answer": "아이리 칸나",
+        "acceptAnswers": [
+          "아이리 칸나",
+          "아이리칸나"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=jIfhoPC0IRA",
+    "startSec": 35,
+    "endSec": 75,
+    "genreName": "버튜버",
+    "tags": [
+      "솔로 EP",
+      "2025.11.12"
+    ],
+    "slots": [
+      {
+        "label": "노래 제목",
+        "answer": "슈퍼삐질게하는법",
+        "acceptAnswers": [
+          "슈퍼삐질게하는법"
+        ]
+      },
+      {
+        "label": "가수",
+        "answer": "아야츠노 유니",
+        "acceptAnswers": [
+          "아야츠노 유니",
+          "아야츠노유니"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=U58NhG-zD90",
+    "startSec": 92,
+    "endSec": 132,
+    "genreName": "버튜버",
+    "tags": [
+      "크리스마스 싱글"
+    ],
+    "slots": [
+      {
+        "label": "노래 제목",
+        "answer": "Christmas On The Merry Go Round",
+        "acceptAnswers": [
+          "Christmas On The Merry Go Round",
+          "ChristmasOnTheMerryGoRound"
+        ]
+      },
+      {
+        "label": "가수",
+        "answer": "아야츠노 유니",
+        "acceptAnswers": [
+          "아야츠노 유니",
+          "아야츠노유니"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=ajvbsBzxzVI",
+    "startSec": 64,
+    "endSec": 104,
+    "genreName": "버튜버",
+    "tags": [
+      "명조: 워더링 웨이브 OST",
+      "2025.05.26"
+    ],
+    "slots": [
+      {
+        "label": "노래 제목",
+        "answer": "Lulala! Lululala!",
+        "acceptAnswers": [
+          "Lulala! Lululala!",
+          "Lulala!Lululala!"
+        ]
+      },
+      {
+        "label": "가수",
+        "answer": "유즈하 리코",
+        "acceptAnswers": [
+          "유즈하 리코",
+          "유즈하리코"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=AH8sMk7otKU",
+    "startSec": 57,
+    "endSec": 97,
+    "genreName": "버튜버",
+    "tags": [
+      "원곡 Hump Back"
+    ],
+    "slots": [
+      {
+        "label": "노래 제목",
+        "answer": "친애하는 소년이여 (拝啓、少年よ)",
+        "acceptAnswers": [
+          "친애하는 소년이여 (拝啓、少年よ)",
+          "친애하는 소년이여",
+          "拝啓、少年よ",
+          "친애하는소년이여(拝啓、少年よ)",
+          "친애하는소년이여"
+        ]
+      },
+      {
+        "label": "커버",
+        "answer": "텐코 시부키",
+        "acceptAnswers": [
+          "텐코 시부키",
+          "텐코시부키"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=_pTBkDP1TE0",
+    "startSec": 44,
+    "endSec": 84,
+    "genreName": "버튜버",
+    "tags": [
+      "원곡 biz・ZERA"
+    ],
+    "slots": [
+      {
+        "label": "노래 제목",
+        "answer": "Loveit?",
+        "acceptAnswers": [
+          "Loveit?"
+        ]
+      },
+      {
+        "label": "커버",
+        "answer": "하나코 나나",
+        "acceptAnswers": [
+          "하나코 나나",
+          "하나코나나"
+        ]
+      }
+    ]
+  }
+]

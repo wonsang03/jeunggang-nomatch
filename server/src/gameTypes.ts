@@ -59,6 +59,21 @@ export type ActiveBuff = {
   roundsLeft: number
 }
 
+/** 보유 슬롯에 들어 있는 증강 한 장 */
+export type HeldAugment = {
+  id: string
+  name: string
+  description: string
+  imageUrl: string | null
+  effectType: string | null
+  effectValue: string | null
+  tier: string | null
+  /** 인수인계로 떠넘겨진 카드 — 사용 불가 · 다음 증강 선택 페이즈를 한 번 잡아먹고 사라진다 */
+  locked?: boolean
+  /** 누가 떠넘겼는지 (UI 표시용) */
+  lockedByNickname?: string | null
+}
+
 export type Member = {
   userId: string
   nickname: string
@@ -76,19 +91,18 @@ export type Member = {
   isSpectator: boolean
   /** 채팅 말풍선 색 인덱스 (0 ~ CHAT_COLOR_COUNT-1 · 관전자는 색 없음) */
   chatColor: number | null
-  heldAugmentId: string | null
-  heldAugmentName: string | null
-  heldAugmentDescription: string | null
-  heldAugmentImageUrl: string | null
-  heldAugmentEffectType: string | null
-  heldAugmentEffectValue: string | null
-  heldAugmentTier: string | null
+  /**
+   * 보유 증강 (최대 MAX_HELD_AUGMENTS칸).
+   * 평소엔 0~1장 — 증강 선택은 «빈손일 때만» 받는다.
+   * 2칸이 차는 건 혼돈(2장 보관)과 인수인계(남이 떠넘긴 잠긴 카드)뿐이다.
+   */
+  heldAugments: HeldAugment[]
   usedAugments: string[]
   /** 이번 증강 선택 페이즈에서 이미 보여준 후보 id (리롤 시 제외) */
   offerSeenAugmentIds: string[]
   /** 지금 화면에 떠 있는 후보 3장 (타임아웃 랜덤은 여기서만) */
   lastOfferCandidateIds: string[]
-  /** 가호선택: 고정 3장 후보 (리롤 없음) */
+  /** 프리즘 선택: 고정 3장 후보 (리롤 없음) */
   gahoPickIds: string[] | null
   activeBuffs: ActiveBuff[]
   /** 엄→준→식 등 다단계 수집 */
@@ -193,6 +207,8 @@ export type Member = {
     id: string
     youtubeUrl: string
     startSec: number
+    /** 구간 지정 벌칙곡 — 이 초에서 끝난다 (없으면 곡 끝까지) */
+    endSec: number | null
     startedAt: number
     /** 안전장치: 클라가 끝을 못 알려도 이 시각엔 해제 */
     hardEndsAt: number
@@ -259,6 +275,13 @@ export type Room = {
   augmentOfferLockedTier: 'bronze' | 'silver' | 'gold' | null
   /** 증강 선택 마감 시각 */
   augmentOfferEndsAt: number
+  /**
+   * 이번 증강 페이즈에 방 안에서 이미 누군가에게 나간 카드 id.
+   * 같은 등급 풀 하나를 전원이 공유하다 보니 각자 독립으로 뽑으면 후보가 심하게 겹친다
+   * (브론즈 16장 기준 5인방이면 겹칠 확률 100%). 나간 카드를 방 단위로 기억해 두고
+   * 아직 안 나간 카드부터 채운다.
+   */
+  augmentOfferDealtIds: Set<string>
   /** 점수가 2배: 이번 라운드 -1 이미 적용한 유저 */
   riskyBustApplied: Set<string>
   /** 맞췄죠?: 이번 라운드 성공 결산 완료한 유저 */

@@ -77,6 +77,19 @@ export type AudioTrick = {
   source: 'mud' | 'sakura' | 'flame' | 'party'
 }
 
+/** 보유 슬롯 한 칸 */
+export type HeldAugmentView = {
+  id: string
+  name: string
+  description?: string | null
+  imageUrl?: string | null
+  effectType?: string | null
+  tier?: string | null
+  /** 인수인계로 떠넘겨진 카드 — 사용 불가 */
+  locked?: boolean
+  lockedByNickname?: string | null
+}
+
 export type RoomMember = {
   userId: string
   nickname: string
@@ -92,12 +105,8 @@ export type RoomMember = {
   chatColor?: number | null
   /** 이미 디버프 적용 중 → 타겟 디버프 불가 */
   augmentBusy?: boolean
-  heldAugmentId: string | null
-  heldAugmentName: string | null
-  heldAugmentDescription?: string | null
-  heldAugmentImageUrl?: string | null
-  heldAugmentEffectType?: string | null
-  heldAugmentTier?: string | null
+  /** 보유 슬롯 (최대 2칸) · 혼돈으로 2장, 인수인계로 받은 카드는 locked */
+  heldAugments?: HeldAugmentView[]
   usedAugments: string[]
   activeBuffs?: ActiveBuffPublic[]
   /** 쉬었음청년 등: 채팅·제출 차단 */
@@ -165,6 +174,8 @@ export type RoomMember = {
   playbackRate?: number | null
   /** 스타카토 계열: 1초 켜 / 1초 꺼 */
   audioStutter?: { onMs: number; offMs: number; byName?: string } | null
+  /** 야랄: periodMs마다 곡의 딴 지점으로 튐 */
+  audioScramble?: { periodMs: number; seed: number; byName?: string } | null
   /** 눈찌르기·리신: 힌트 숨김 */
   hintsHidden?: boolean
   hintsHiddenBy?: string | null
@@ -190,6 +201,7 @@ export type RoomMember = {
     id: string
     youtubeUrl: string
     startSec: number
+    endSec?: number | null
     startedAt: number
     byName: string
     byNickname: string
@@ -429,7 +441,7 @@ type GameCtx = {
   voteSkip: () => void
   pickAugment: (augmentId: string | null, gahoAugmentId?: string | null) => void
   rerollAugment: () => Promise<void>
-  useAugment: (payload?: { targetUserId?: string; targetUserIds?: string[]; gahoAugmentId?: string; genreName?: string }) => void
+  useAugment: (payload?: { augmentId?: string; targetUserId?: string; targetUserIds?: string[]; gahoAugmentId?: string; genreName?: string }) => void
   fetchGahoCandidates: () => Promise<{
     candidates: Array<AugmentItem & { description?: string }>
     endsAt: number | null
@@ -723,16 +735,6 @@ export function GameProvider({ children }: { children: ReactNode }) {
           artistChosung: payload.artistChosung ?? '',
           artistHint: '',
           hasHidden: false,
-        }
-      })
-    })
-    s.on('round:extend', (payload: { endsAt: number; duration: number; addedSec?: number }) => {
-      setRound((r) => {
-        if (!r) return r
-        return {
-          ...r,
-          endsAt: payload.endsAt,
-          duration: payload.duration,
         }
       })
     })
@@ -1205,7 +1207,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
       )
     }
   }
-  const useAugment = (payload?: { targetUserId?: string; targetUserIds?: string[]; gahoAugmentId?: string; genreName?: string }) =>
+  const useAugment = (payload?: { augmentId?: string; targetUserId?: string; targetUserIds?: string[]; gahoAugmentId?: string; genreName?: string }) =>
     getSocket()?.emit('augment:use', payload || {})
   const fetchGahoCandidates = async () => {
     const res = await emitAck<{

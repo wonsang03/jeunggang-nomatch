@@ -1,0 +1,1027 @@
+[
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=KLTJvCIUhXM",
+    "startSec": 56,
+    "endSec": 96,
+    "genreName": "게임",
+    "tags": [
+      "국산온라인",
+      "BGM"
+    ],
+    "slots": [
+      {
+        "label": "게임 이름",
+        "answer": "메이플스토리",
+        "acceptAnswers": [
+          "메이플스토리"
+        ]
+      },
+      {
+        "label": "맵",
+        "answer": "엘리니아",
+        "acceptAnswers": [
+          "엘리니아"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=ryZJGm1XaIA",
+    "startSec": 66,
+    "endSec": 106,
+    "genreName": "게임",
+    "tags": [
+      "국산온라인",
+      "BGM"
+    ],
+    "slots": [
+      {
+        "label": "게임 이름",
+        "answer": "메이플스토리",
+        "acceptAnswers": [
+          "메이플스토리"
+        ]
+      },
+      {
+        "label": "맵",
+        "answer": "커닝시티",
+        "acceptAnswers": [
+          "커닝시티"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=bkcbxlolAII",
+    "startSec": 40,
+    "endSec": 80,
+    "genreName": "게임",
+    "tags": [
+      "국산온라인",
+      "보스전"
+    ],
+    "slots": [
+      {
+        "label": "게임 이름",
+        "answer": "던전앤파이터",
+        "acceptAnswers": [
+          "던전앤파이터"
+        ]
+      },
+      {
+        "label": "보스 이름",
+        "answer": "오즈마",
+        "acceptAnswers": [
+          "오즈마"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=TV_e0yTr2oc",
+    "startSec": 45,
+    "endSec": 85,
+    "genreName": "게임",
+    "tags": [
+      "국산온라인",
+      "BGM"
+    ],
+    "slots": [
+      {
+        "label": "게임 이름",
+        "answer": "마비노기",
+        "acceptAnswers": [
+          "마비노기"
+        ]
+      },
+      {
+        "label": "맵",
+        "answer": "티르 코네일",
+        "acceptAnswers": [
+          "티르 코네일",
+          "티르코네일"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=T-W4TJHlE0s",
+    "startSec": 58,
+    "endSec": 98,
+    "genreName": "게임",
+    "tags": [
+      "국산온라인",
+      "BGM"
+    ],
+    "slots": [
+      {
+        "label": "게임 이름",
+        "answer": "마비노기",
+        "acceptAnswers": [
+          "마비노기"
+        ]
+      },
+      {
+        "label": "맵",
+        "answer": "던바튼",
+        "acceptAnswers": [
+          "던바튼"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=qd55aYQLmXE",
+    "startSec": 82,
+    "endSec": 122,
+    "genreName": "게임",
+    "tags": [
+      "국산온라인",
+      "BGM"
+    ],
+    "slots": [
+      {
+        "label": "게임 이름",
+        "answer": "라그나로크 온라인",
+        "acceptAnswers": [
+          "라그나로크 온라인",
+          "라그나로크온라인"
+        ]
+      },
+      {
+        "label": "맵",
+        "answer": "프론테라",
+        "acceptAnswers": [
+          "프론테라"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=bjRW09-aUPc",
+    "startSec": 56,
+    "endSec": 96,
+    "genreName": "게임",
+    "tags": [
+      "국산온라인",
+      "BGM"
+    ],
+    "slots": [
+      {
+        "label": "게임 이름",
+        "answer": "라그나로크 온라인",
+        "acceptAnswers": [
+          "라그나로크 온라인",
+          "라그나로크온라인"
+        ]
+      },
+      {
+        "label": "맵",
+        "answer": "페이욘",
+        "acceptAnswers": [
+          "페이욘"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=GWUZzt0BooY",
+    "startSec": 41,
+    "endSec": 81,
+    "genreName": "게임",
+    "tags": [
+      "국산온라인",
+      "BGM"
+    ],
+    "slots": [
+      {
+        "label": "게임 이름",
+        "answer": "바람의나라",
+        "acceptAnswers": [
+          "바람의나라"
+        ]
+      },
+      {
+        "label": "맵",
+        "answer": "부여성",
+        "acceptAnswers": [
+          "부여성"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=BoE_KXJu9pM",
+    "startSec": 20,
+    "endSec": 60,
+    "genreName": "게임",
+    "tags": [
+      "국산온라인",
+      "BGM"
+    ],
+    "slots": [
+      {
+        "label": "게임 이름",
+        "answer": "리니지",
+        "acceptAnswers": [
+          "리니지"
+        ]
+      },
+      {
+        "label": "맵",
+        "answer": "기란",
+        "acceptAnswers": [
+          "기란"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=EJbHaCbTHn0",
+    "startSec": 58,
+    "endSec": 98,
+    "genreName": "게임",
+    "tags": [
+      "국산온라인",
+      "BGM"
+    ],
+    "slots": [
+      {
+        "label": "게임 이름",
+        "answer": "카트라이더",
+        "acceptAnswers": [
+          "카트라이더"
+        ]
+      },
+      {
+        "label": "맵",
+        "answer": "문힐시티",
+        "acceptAnswers": [
+          "문힐시티"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=2RQRumw3urA",
+    "startSec": 47,
+    "endSec": 87,
+    "genreName": "게임",
+    "tags": [
+      "국산온라인",
+      "보스전"
+    ],
+    "slots": [
+      {
+        "label": "게임 이름",
+        "answer": "로스트아크",
+        "acceptAnswers": [
+          "로스트아크"
+        ]
+      },
+      {
+        "label": "보스 이름",
+        "answer": "카멘",
+        "acceptAnswers": [
+          "카멘"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=e1iidpnGM3g",
+    "startSec": 39,
+    "endSec": 79,
+    "genreName": "게임",
+    "tags": [
+      "국산온라인",
+      "보스전"
+    ],
+    "slots": [
+      {
+        "label": "게임 이름",
+        "answer": "로스트아크",
+        "acceptAnswers": [
+          "로스트아크"
+        ]
+      },
+      {
+        "label": "보스 이름",
+        "answer": "발탄",
+        "acceptAnswers": [
+          "발탄"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=K6wVTP3LiEU",
+    "startSec": 42,
+    "endSec": 82,
+    "genreName": "게임",
+    "tags": [
+      "국산모바일",
+      "BGM"
+    ],
+    "slots": [
+      {
+        "label": "게임 이름",
+        "answer": "블루 아카이브",
+        "acceptAnswers": [
+          "블루 아카이브",
+          "블루아카이브"
+        ]
+      },
+      {
+        "label": "노래 제목",
+        "answer": "Constant Moderato",
+        "acceptAnswers": [
+          "Constant Moderato",
+          "ConstantModerato"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=pKsda_gOR-Q",
+    "startSec": 51,
+    "endSec": 91,
+    "genreName": "게임",
+    "tags": [
+      "보컬"
+    ],
+    "slots": [
+      {
+        "label": "게임 이름",
+        "answer": "리그 오브 레전드",
+        "acceptAnswers": [
+          "리그 오브 레전드",
+          "리그오브레전드"
+        ]
+      },
+      {
+        "label": "노래 제목",
+        "answer": "Warriors",
+        "acceptAnswers": [
+          "Warriors"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=F5tSoaJ93ac",
+    "startSec": 64,
+    "endSec": 104,
+    "genreName": "게임",
+    "tags": [
+      "보컬"
+    ],
+    "slots": [
+      {
+        "label": "게임 이름",
+        "answer": "아케인 (LoL)",
+        "acceptAnswers": [
+          "아케인 (LoL)",
+          "아케인",
+          "LoL",
+          "아케인(LoL)"
+        ]
+      },
+      {
+        "label": "노래 제목",
+        "answer": "Enemy",
+        "acceptAnswers": [
+          "Enemy"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=6F0QpsudE7o",
+    "startSec": 90,
+    "endSec": 130,
+    "genreName": "게임",
+    "tags": [
+      "보컬"
+    ],
+    "slots": [
+      {
+        "label": "게임 이름",
+        "answer": "킹덤 하츠",
+        "acceptAnswers": [
+          "킹덤 하츠",
+          "킹덤하츠"
+        ]
+      },
+      {
+        "label": "노래 제목",
+        "answer": "Simple and Clean",
+        "acceptAnswers": [
+          "Simple and Clean",
+          "SimpleandClean"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=im5tc4fcg5w",
+    "startSec": 88,
+    "endSec": 128,
+    "genreName": "게임",
+    "tags": [
+      "보컬"
+    ],
+    "slots": [
+      {
+        "label": "게임 이름",
+        "answer": "킹덤 하츠 II",
+        "acceptAnswers": [
+          "킹덤 하츠 II",
+          "킹덤하츠II"
+        ]
+      },
+      {
+        "label": "노래 제목",
+        "answer": "Sanctuary",
+        "acceptAnswers": [
+          "Sanctuary"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=q5d2wOvkf1g",
+    "startSec": 83,
+    "endSec": 123,
+    "genreName": "게임",
+    "tags": [
+      "보스전"
+    ],
+    "slots": [
+      {
+        "label": "게임 이름",
+        "answer": "파이널 판타지 VII",
+        "acceptAnswers": [
+          "파이널 판타지 VII",
+          "파이널판타지VII"
+        ]
+      },
+      {
+        "label": "보스 이름",
+        "answer": "세피로스",
+        "acceptAnswers": [
+          "세피로스"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=z8YOiDagGDk",
+    "startSec": 97,
+    "endSec": 137,
+    "genreName": "게임",
+    "tags": [
+      "보컬"
+    ],
+    "slots": [
+      {
+        "label": "게임 이름",
+        "answer": "파이널 판타지 X",
+        "acceptAnswers": [
+          "파이널 판타지 X",
+          "파이널판타지X"
+        ]
+      },
+      {
+        "label": "노래 제목",
+        "answer": "멋지네요 (素敵だね)",
+        "acceptAnswers": [
+          "멋지네요 (素敵だね)",
+          "멋지네요",
+          "素敵だね",
+          "멋지네요(素敵だね)"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=HkXy8XgKjis",
+    "startSec": 103,
+    "endSec": 143,
+    "genreName": "게임",
+    "tags": [
+      "보컬",
+      "엔딩"
+    ],
+    "slots": [
+      {
+        "label": "게임 이름",
+        "answer": "니어: 오토마타",
+        "acceptAnswers": [
+          "니어: 오토마타",
+          "니어:오토마타"
+        ]
+      },
+      {
+        "label": "노래 제목",
+        "answer": "Weight of the World",
+        "acceptAnswers": [
+          "Weight of the World",
+          "WeightoftheWorld"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=ebbHTtQhCUM",
+    "startSec": 117,
+    "endSec": 157,
+    "genreName": "게임",
+    "tags": [
+      "보스전"
+    ],
+    "slots": [
+      {
+        "label": "게임 이름",
+        "answer": "니어 레플리칸트",
+        "acceptAnswers": [
+          "니어 레플리칸트",
+          "니어레플리칸트"
+        ]
+      },
+      {
+        "label": "노래 제목",
+        "answer": "이니시에노우타 (イニシエノウタ)",
+        "acceptAnswers": [
+          "이니시에노우타 (イニシエノウタ)",
+          "이니시에노우타",
+          "イニシエノウタ",
+          "이니시에노우타(イニシエノウタ)"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=Kk7PLbyiDlc",
+    "startSec": 71,
+    "endSec": 111,
+    "genreName": "게임",
+    "tags": [
+      "보컬",
+      "전투"
+    ],
+    "slots": [
+      {
+        "label": "게임 이름",
+        "answer": "페르소나 5",
+        "acceptAnswers": [
+          "페르소나 5",
+          "페르소나5"
+        ]
+      },
+      {
+        "label": "노래 제목",
+        "answer": "Last Surprise",
+        "acceptAnswers": [
+          "Last Surprise",
+          "LastSurprise"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=tlit7vJuTHk",
+    "startSec": 95,
+    "endSec": 135,
+    "genreName": "게임",
+    "tags": [
+      "보컬",
+      "보스전"
+    ],
+    "slots": [
+      {
+        "label": "게임 이름",
+        "answer": "페르소나 5",
+        "acceptAnswers": [
+          "페르소나 5",
+          "페르소나5"
+        ]
+      },
+      {
+        "label": "노래 제목",
+        "answer": "Rivers in the Desert",
+        "acceptAnswers": [
+          "Rivers in the Desert",
+          "RiversintheDesert"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=h3fx7tC3M8E",
+    "startSec": 64,
+    "endSec": 104,
+    "genreName": "게임",
+    "tags": [
+      "보컬"
+    ],
+    "slots": [
+      {
+        "label": "게임 이름",
+        "answer": "사이버펑크 2077",
+        "acceptAnswers": [
+          "사이버펑크 2077",
+          "사이버펑크2077"
+        ]
+      },
+      {
+        "label": "노래 제목",
+        "answer": "Chippin' In",
+        "acceptAnswers": [
+          "Chippin' In",
+          "Chippin'In"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=l3NSJR7uThY",
+    "startSec": 72,
+    "endSec": 112,
+    "genreName": "게임",
+    "tags": [
+      "보컬"
+    ],
+    "slots": [
+      {
+        "label": "게임 이름",
+        "answer": "위쳐 3",
+        "acceptAnswers": [
+          "위쳐 3",
+          "위쳐3"
+        ]
+      },
+      {
+        "label": "노래 제목",
+        "answer": "늑대의 폭풍우 (The Wolven Storm)",
+        "acceptAnswers": [
+          "늑대의 폭풍우 (The Wolven Storm)",
+          "늑대의 폭풍우",
+          "The Wolven Storm",
+          "늑대의폭풍우(TheWolvenStorm)",
+          "늑대의폭풍우",
+          "TheWolvenStorm"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=5OWdMHIRld8",
+    "startSec": 71,
+    "endSec": 111,
+    "genreName": "게임",
+    "tags": [
+      "BGM"
+    ],
+    "slots": [
+      {
+        "label": "게임 이름",
+        "answer": "엘더스크롤 V: 스카이림",
+        "acceptAnswers": [
+          "엘더스크롤 V: 스카이림",
+          "엘더스크롤V:스카이림"
+        ]
+      },
+      {
+        "label": "노래 제목",
+        "answer": "Dragonborn",
+        "acceptAnswers": [
+          "Dragonborn"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=dVVZaZ8yO6o",
+    "startSec": 42,
+    "endSec": 82,
+    "genreName": "게임",
+    "tags": [
+      "보컬",
+      "엔딩"
+    ],
+    "slots": [
+      {
+        "label": "게임 이름",
+        "answer": "포탈 2",
+        "acceptAnswers": [
+          "포탈 2",
+          "포탈2"
+        ]
+      },
+      {
+        "label": "노래 제목",
+        "answer": "Want You Gone",
+        "acceptAnswers": [
+          "Want You Gone",
+          "WantYouGone"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=DrkTe3Tc7Jg",
+    "startSec": 53,
+    "endSec": 93,
+    "genreName": "게임",
+    "tags": [
+      "보컬",
+      "인디"
+    ],
+    "slots": [
+      {
+        "label": "게임 이름",
+        "answer": "하데스",
+        "acceptAnswers": [
+          "하데스"
+        ]
+      },
+      {
+        "label": "노래 제목",
+        "answer": "Good Riddance",
+        "acceptAnswers": [
+          "Good Riddance",
+          "GoodRiddance"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=VdFQfaf0yu8",
+    "startSec": 42,
+    "endSec": 82,
+    "genreName": "게임",
+    "tags": [
+      "인디",
+      "BGM"
+    ],
+    "slots": [
+      {
+        "label": "게임 이름",
+        "answer": "카타나 제로",
+        "acceptAnswers": [
+          "카타나 제로",
+          "카타나제로"
+        ]
+      },
+      {
+        "label": "노래 제목",
+        "answer": "Snow",
+        "acceptAnswers": [
+          "Snow"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=V31PVkwzpEY",
+    "startSec": 44,
+    "endSec": 84,
+    "genreName": "게임",
+    "tags": [
+      "인디",
+      "보스전"
+    ],
+    "slots": [
+      {
+        "label": "게임 이름",
+        "answer": "델타룬",
+        "acceptAnswers": [
+          "델타룬"
+        ]
+      },
+      {
+        "label": "노래 제목",
+        "answer": "BIG SHOT",
+        "acceptAnswers": [
+          "BIG SHOT",
+          "BIGSHOT"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=xIQrC4CerB8",
+    "startSec": 65,
+    "endSec": 105,
+    "genreName": "게임",
+    "tags": [
+      "BGM"
+    ],
+    "slots": [
+      {
+        "label": "게임 이름",
+        "answer": "마인크래프트",
+        "acceptAnswers": [
+          "마인크래프트"
+        ]
+      },
+      {
+        "label": "노래 제목",
+        "answer": "Sweden",
+        "acceptAnswers": [
+          "Sweden"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=jSpKSYl1UeI",
+    "startSec": 35,
+    "endSec": 75,
+    "genreName": "게임",
+    "tags": [
+      "보스전"
+    ],
+    "slots": [
+      {
+        "label": "게임 이름",
+        "answer": "다크 소울",
+        "acceptAnswers": [
+          "다크 소울",
+          "다크소울"
+        ]
+      },
+      {
+        "label": "보스 이름",
+        "answer": "그윈",
+        "acceptAnswers": [
+          "그윈"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=2n5MGtzApxU",
+    "startSec": 76,
+    "endSec": 116,
+    "genreName": "게임",
+    "tags": [
+      "BGM"
+    ],
+    "slots": [
+      {
+        "label": "게임 이름",
+        "answer": "몬스터헌터",
+        "acceptAnswers": [
+          "몬스터헌터"
+        ]
+      },
+      {
+        "label": "노래 제목",
+        "answer": "영웅의 증표 (英雄の証)",
+        "acceptAnswers": [
+          "영웅의 증표 (英雄の証)",
+          "영웅의 증표",
+          "英雄の証",
+          "영웅의증표(英雄の証)",
+          "영웅의증표"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=rMysKW2_Axo",
+    "startSec": 58,
+    "endSec": 98,
+    "genreName": "게임",
+    "tags": [
+      "BGM"
+    ],
+    "slots": [
+      {
+        "label": "게임 이름",
+        "answer": "젤다의 전설 브레스 오브 더 와일드",
+        "acceptAnswers": [
+          "젤다의 전설 브레스 오브 더 와일드",
+          "젤다의전설브레스오브더와일드"
+        ]
+      },
+      {
+        "label": "노래 제목",
+        "answer": "메인 테마",
+        "acceptAnswers": [
+          "메인 테마",
+          "메인테마"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=4MUSRtNlmx0",
+    "startSec": 82,
+    "endSec": 122,
+    "genreName": "게임",
+    "tags": [
+      "보컬"
+    ],
+    "slots": [
+      {
+        "label": "게임 이름",
+        "answer": "소닉 어드벤처 2",
+        "acceptAnswers": [
+          "소닉 어드벤처 2",
+          "소닉어드벤처2"
+        ]
+      },
+      {
+        "label": "노래 제목",
+        "answer": "Live and Learn",
+        "acceptAnswers": [
+          "Live and Learn",
+          "LiveandLearn"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=16IsswbTarE",
+    "startSec": 42,
+    "endSec": 82,
+    "genreName": "게임",
+    "tags": [
+      "보컬"
+    ],
+    "slots": [
+      {
+        "label": "게임 이름",
+        "answer": "소닉 어드벤처 2",
+        "acceptAnswers": [
+          "소닉 어드벤처 2",
+          "소닉어드벤처2"
+        ]
+      },
+      {
+        "label": "맵",
+        "answer": "시티 이스케이프",
+        "acceptAnswers": [
+          "시티 이스케이프",
+          "시티이스케이프"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=mD4GbGmvNRc",
+    "startSec": 89,
+    "endSec": 129,
+    "genreName": "게임",
+    "tags": [
+      "BGM",
+      "레트로"
+    ],
+    "slots": [
+      {
+        "label": "게임 이름",
+        "answer": "스타크래프트",
+        "acceptAnswers": [
+          "스타크래프트"
+        ]
+      },
+      {
+        "label": "노래 제목",
+        "answer": "Terran Theme 1",
+        "acceptAnswers": [
+          "Terran Theme 1",
+          "TerranTheme1"
+        ]
+      }
+    ]
+  },
+  {
+    "youtubeUrl": "https://www.youtube.com/watch?v=NhFG_a8hCjQ",
+    "startSec": 62,
+    "endSec": 102,
+    "genreName": "게임",
+    "tags": [
+      "보컬"
+    ],
+    "slots": [
+      {
+        "label": "게임 이름",
+        "answer": "붕괴 3rd",
+        "acceptAnswers": [
+          "붕괴 3rd",
+          "붕괴3rd"
+        ]
+      },
+      {
+        "label": "노래 제목",
+        "answer": "Rubia",
+        "acceptAnswers": [
+          "Rubia"
+        ]
+      }
+    ]
+  }
+]

@@ -221,7 +221,7 @@ async function main() {
       effectType: 'delayed_answer',
       effectValue: JSON.stringify({ delaySec: 7, rounds: 8, charIntervalMs: 1000 }),
       tier: 'prism',
-      imageUrl: null,
+      imageUrl: '/augments/sindonghyeok-gaho.jpg',
     },
     {
       name: '미룬이의 가호',
@@ -237,17 +237,22 @@ async function main() {
       effectType: 'no_skip',
       effectValue: JSON.stringify({ rounds: 3 }),
       tier: 'silver',
-      imageUrl: null,
+      imageUrl: '/augments/zoro-rule.png',
     },
     {
       name: '간다드래프트',
       description:
         '전원 · 사용 즉시 이번 라운드 동안 모두에게 방 노래와 이 곡이 같이 들립니다. 본인도 들립니다. 2회 사용 가능.',
       effectType: 'party_music_all',
-      // TODO: youtubeUrl 은 나중에 채운다 (비어 있으면 사용 시 «재생할 영상 주소가 없습니다»)
-      effectValue: JSON.stringify({ rounds: 1, charges: 2, youtubeUrl: '', startSec: 0 }),
+      effectValue: JSON.stringify({
+        rounds: 1,
+        charges: 2,
+        youtubeUrl: 'https://www.youtube.com/watch?v=i_cCiMG-fyg',
+        startSec: 20,
+        endSec: 28,
+      }),
       tier: 'bronze',
-      imageUrl: null,
+      imageUrl: '/augments/ganda-draft.jpg',
     },
     {
       name: '후루베 유라유라',
@@ -255,7 +260,7 @@ async function main() {
       effectType: 'zero_both',
       effectValue: JSON.stringify({}),
       tier: 'prism',
-      imageUrl: null,
+      imageUrl: '/augments/furube-yurayura.jpg',
     },
     {
       name: '만해',
@@ -263,7 +268,7 @@ async function main() {
       effectType: 'genre_early_chosung',
       effectValue: JSON.stringify({ rounds: 10 }),
       tier: 'prism',
-      imageUrl: null,
+      imageUrl: '/augments/manhae.jpg',
     },
     {
       name: '예의바른청년',
@@ -322,7 +327,7 @@ async function main() {
     {
       name: '혼돈',
       description:
-        '프리즘을 제외한 모든 등급에서 랜덤한 증강 2개의 효과를 즉시 사용합니다. 대상 지정형은 대상도 랜덤입니다. (혼돈·가호선택·전환 제외)',
+        '프리즘을 제외한 모든 등급에서 랜덤한 증강 2장을 뽑아 보관합니다. 원할 때 하나씩 골라 쓰면 됩니다. (혼돈·프리즘 선택·전환·자동 적용형 제외)',
       effectType: 'chaos_cast',
       effectValue: '{}',
       tier: 'gold',
@@ -406,7 +411,7 @@ async function main() {
       effectType: 'rank_jump_tie',
       effectValue: '{}',
       tier: 'prism',
-      imageUrl: null,
+      imageUrl: '/augments/parkjinseong-gaho.jpg',
     },
     {
       name: '일론 머스크의 가호',
@@ -460,45 +465,29 @@ async function main() {
       imageUrl: '/augments/peck.png',
     },
     {
-      name: '네르지마세요',
-      description:
-        '상대 지목 · 그 사람에게만 벌칙 곡을 끝까지 들려줍니다. (5회 · 스킵하거나 라운드가 넘어가도 곡이 끝날 때까지 계속 들립니다 · 이미 디버프가 걸린 사람이나 같은 사람에게도 쓸 수 있습니다)',
-      effectType: 'peck_song',
-      // TODO: youtubeUrl 은 나중에 채운다 (비어 있으면 사용 시 «재생할 영상 주소가 없습니다»)
-      effectValue: JSON.stringify({
-        charges: 5,
-        youtubeUrl: '',
-        startSec: 0,
-        songLabel: '네르지마세요',
-        maxSec: 900,
-      }),
-      tier: 'gold',
-      imageUrl: null,
-    },
-    {
       name: '커뮤증',
       description:
         '상대 지목 · 다음 3라운드 동안 대상의 정답이 30% 확률로만 인정됩니다. 실패하면 대상에게 「목소리가 작아서 안 들렸다」가 뜹니다.',
       effectType: 'muffled_answer',
       effectValue: JSON.stringify({ rounds: 3, successChance: 0.3 }),
       tier: 'gold',
-      imageUrl: null,
+      imageUrl: '/augments/commu-jeung.png',
     },
     {
       name: '돌리랑도트가제일좋아',
       description:
         '상대 지목 · 그 사람에게만 벌칙 곡을 끝까지 들려줍니다. (3회 · 스킵하거나 라운드가 넘어가도 곡이 끝날 때까지 계속 들립니다 · 이미 디버프가 걸린 사람이나 같은 사람에게도 쓸 수 있습니다)',
       effectType: 'peck_song',
-      // TODO: youtubeUrl 은 나중에 채운다 (비어 있으면 사용 시 «재생할 영상 주소가 없습니다»)
       effectValue: JSON.stringify({
         charges: 3,
-        youtubeUrl: '',
+        youtubeUrl: 'https://www.youtube.com/watch?v=TRs2lhwxIIE',
         startSec: 0,
+        endSec: 23,
         songLabel: '돌리랑도트가제일좋아',
-        maxSec: 900,
+        maxSec: 28,
       }),
       tier: 'gold',
-      imageUrl: null,
+      imageUrl: '/augments/dolly-dot.jpg',
     },
     {
       name: '넘어가요!',
@@ -559,6 +548,15 @@ async function main() {
       effectValue: JSON.stringify({ rounds: 5, onMs: 1000, offMs: 1000 }),
       tier: 'gold',
       imageUrl: '/augments/staccato.png',
+    },
+    {
+      name: '야랄',
+      description:
+        '상대 지목 · 다음 3라운드 동안 그 플레이어의 노래가 5초마다 곡의 딴 지점으로 튑니다. (튄 자리에서 계속 재생)',
+      effectType: 'audio_scramble',
+      effectValue: JSON.stringify({ rounds: 3, periodMs: 5000 }),
+      tier: 'gold',
+      imageUrl: '/augments/yaral.jpg',
     },
     {
       name: '알레그로',
@@ -756,13 +754,13 @@ async function main() {
       imageUrl: '/augments/ban-pick.png',
     },
     {
-      name: '가호선택',
+      name: '프리즘 선택',
       description:
         '선택 시 프리즘 3장 중 하나를 골라 보관합니다. 리롤 없음 · 이름·사진만(효과는 선택 후 확인). 시간이 끝나면 후보 중 랜덤 배정됩니다.',
       effectType: 'gaho_select',
       effectValue: '{}',
       tier: 'gold',
-      imageUrl: '/augments/gaho-select.jpg',
+      imageUrl: '/augments/prism-select.png',
     },
     {
       name: '가불기',
@@ -795,6 +793,15 @@ async function main() {
       effectValue: JSON.stringify({ lookAhead: 5, pick: 3 }),
       tier: 'gold',
       imageUrl: '/augments/future-sight.jpg',
+    },
+    {
+      name: '인수인계',
+      description:
+        '상대 지목 · 보유 증강 한 장을 그 사람에게 떠넘깁니다. 받은 사람은 그 카드를 사용할 수 없고, 다음 증강 선택 때 사라집니다. (넘길 증강이 없으면 인수인계 자체가 넘어갑니다)',
+      effectType: 'hand_over_augment',
+      effectValue: '{}',
+      tier: 'bronze',
+      imageUrl: '/augments/handover.jpg',
     },
     {
       name: '조커뽑기',
@@ -869,7 +876,7 @@ async function main() {
       effectType: 'self_suffix_bonus',
       effectValue: JSON.stringify({ rounds: 2, suffix: '게', bonus: 1 }),
       tier: 'bronze',
-      imageUrl: null,
+      imageUrl: '/augments/aratdage.jpg',
     },
     {
       name: '영역전개',
@@ -887,14 +894,6 @@ async function main() {
       effectValue: JSON.stringify({ amount: 2 }),
       tier: 'bronze',
       imageUrl: '/augments/first-place-only.png',
-    },
-    {
-      name: '5분만 더',
-      description: '지금 진행 중인 라운드의 제한 시간을 10초 늘립니다. (전원 공용 · 플레이 중에만)',
-      effectType: 'extend_round',
-      effectValue: JSON.stringify({ seconds: 10 }),
-      tier: 'silver',
-      imageUrl: '/augments/five-more-minutes.jpg',
     },
     {
       name: '내가 왕이 될 상인가',

@@ -17,7 +17,7 @@ import {
 } from './songPick.js'
 import { saveGameRecord } from './records.js'
 import { S } from './socketSchemas.js'
-import type { ActiveBuff, Member, QuestionRuntime, Room, SlotPublic } from './gameTypes.js'
+import type { ActiveBuff, HeldAugment, Member, QuestionRuntime, Room, SlotPublic } from './gameTypes.js'
 import {
   buffApplies,
   isArtistLikeLabel,
@@ -695,6 +695,8 @@ const DEBUFF_AUGMENT_TYPES = new Set([
   'gabuki_mark',
   'hide_hints',
   'audio_stutter',
+  'audio_scramble',
+  'hand_over_augment',
   'power_off_others',
   'party_music_others',
   'chat_isolate',
@@ -1226,11 +1228,15 @@ function resolveOverlayTrick(m: Member, room: Room): AudioTrick | null {
     const youtubeUrl = String(b.effectValue.bgmUrl || b.effectValue.youtubeUrl || '').trim()
     if (!youtubeUrl) continue
     const startRaw = Number(b.effectValue.bgmStartSec ?? b.effectValue.startSec)
+    const startSec = Number.isFinite(startRaw) && startRaw >= 0 ? Math.floor(startRaw) : 0
+    // 구간(endSec)이 지정된 풍악은 그 구간만 반복 재생한다 (간다드래프트 등)
+    const endRaw = Number(b.effectValue.bgmEndSec ?? b.effectValue.endSec)
+    const endSec = Number.isFinite(endRaw) && endRaw > startSec ? Math.floor(endRaw) : null
     return {
       mode: 'overlay',
       youtubeUrl,
-      startSec: Number.isFinite(startRaw) && startRaw >= 0 ? Math.floor(startRaw) : 0,
-      endSec: null,
+      startSec,
+      endSec,
       label: b.name || '풍악을 울려라',
       source: 'party',
     }
@@ -1501,14 +1507,15 @@ function lateAnswerBuff(m: Member, roundIndex: number, room?: Room | null) {
 
 /** 차차차: 보유 중 · 선답 직후 windowMs 안 동시 입력이면 중복 정답에서 우선권 */
 function chaChaHeld(m: Member | null | undefined) {
-  if (!m || m.heldAugmentEffectType !== 'cha_cha_cha' || !m.heldAugmentName) return null
-  const value = parseEffectValue(m.heldAugmentEffectValue)
+  const card = findHeldByType(m, 'cha_cha_cha')
+  if (!card) return null
+  const value = parseEffectValue(card.effectValue)
   const chargesRaw = Number(value.charges)
   const charges = Number.isFinite(chargesRaw) && chargesRaw > 0 ? Math.floor(chargesRaw) : 0
   if (charges <= 0) return null
   const windowRaw = Number(value.windowMs)
   const windowMs = Number.isFinite(windowRaw) && windowRaw > 0 ? Math.floor(windowRaw) : 500
-  return { name: m.heldAugmentName, charges, windowMs, value }
+  return { card, name: card.name, charges, windowMs, value }
 }
 
 /** 핑/지터 완충 — 의도 창(0.5초)은 effectValue, 여기에 소량만 가산 */
@@ -1520,10 +1527,10 @@ function consumeChaChaCharge(m: Member): { name: string; chargesLeft: number } |
   if (!held) return null
   const chargesLeft = held.charges - 1
   if (chargesLeft > 0) {
-    m.heldAugmentEffectValue = JSON.stringify({ ...held.value, charges: chargesLeft, windowMs: held.windowMs })
+    held.card.effectValue = JSON.stringify({ ...held.value, charges: chargesLeft, windowMs: held.windowMs })
   } else {
     m.usedAugments.push(held.name)
-    clearHeldAugment(m)
+    removeHeldById(m, held.card.id)
   }
   return { name: held.name, chargesLeft }
 }
@@ -1591,22 +1598,23 @@ function takeReflectShield(m: Member, roundIndex: number): ActiveBuff | null {
     return buff
   }
   // 보유만 하고 아직 안 쓴 무지개 → 지목당하면 자동 사용
-  if (m.heldAugmentEffectType === 'reflect_debuff' && m.heldAugmentName) {
-    const value = parseEffectValue(m.heldAugmentEffectValue)
+  const heldReflect = findHeldByType(m, 'reflect_debuff')
+  if (heldReflect) {
+    const value = parseEffectValue(heldReflect.effectValue)
     const roundsRaw = Number(value.rounds)
     const roundsLeft = Number.isFinite(roundsRaw) && roundsRaw > 0 ? Math.floor(roundsRaw) : 1
     const buff: ActiveBuff = {
-      name: m.heldAugmentName,
-      description: m.heldAugmentDescription || '',
+      name: heldReflect.name,
+      description: heldReflect.description || '',
       effectType: 'reflect_debuff',
       effectValue: value,
-      imageUrl: m.heldAugmentImageUrl,
+      imageUrl: heldReflect.imageUrl,
       usedByNickname: m.nickname,
       startIndex: roundIndex,
       roundsLeft,
     }
-    m.usedAugments.push(m.heldAugmentName)
-    clearHeldAugment(m)
+    m.usedAugments.push(heldReflect.name)
+    removeHeldById(m, heldReflect.id)
     return buff
   }
   return null
@@ -1683,40 +1691,104 @@ function alienQwertyBuff(m: Member, roundIndex: number, room?: Room | null) {
   return activeBuffsAt(m, roundIndex, room).find((b) => b.effectType === 'alien_qwerty_answer') || null
 }
 
+/**
+ * 보유 슬롯은 최대 2칸.
+ * 증강 선택은 «빈손일 때만» 받으므로 평소엔 0~1장이고,
+ * 2칸이 차는 건 혼돈(2장 보관)과 인수인계(남이 떠넘긴 잠긴 카드)뿐이다.
+ */
+const MAX_HELD_AUGMENTS = 2
+
+type HeldSource = {
+  id: string
+  name: string
+  description: string
+  effectType?: string
+  effectValue?: string | null
+  imageUrl?: string | null
+  tier?: string | null
+}
+
+function heldList(m: Member): HeldAugment[] {
+  if (!Array.isArray(m.heldAugments)) m.heldAugments = []
+  return m.heldAugments
+}
+
+function heldCount(m: Member) {
+  return heldList(m).length
+}
+
+/** 지금 쓸 수 있는 카드 — 인수인계로 떠넘겨진 잠긴 카드는 빠진다 */
+function usableHeld(m: Member) {
+  return heldList(m).filter((h) => !h.locked)
+}
+
+function findHeldById(m: Member, id: string | null | undefined) {
+  if (!id) return null
+  return heldList(m).find((h) => h.id === id) || null
+}
+
+function findHeldByName(m: Member, name: string) {
+  return heldList(m).find((h) => h.name === name) || null
+}
+
+/** 보유 중인 해당 효과 카드 (잠긴 건 제외) — 반사·차차차처럼 «들고만 있어도» 도는 것들 */
+function findHeldByType(m: Member | null | undefined, effectType: string) {
+  if (!m) return null
+  return heldList(m).find((h) => !h.locked && h.effectType === effectType) || null
+}
+
+function hasHeldSpace(m: Member) {
+  return heldCount(m) < MAX_HELD_AUGMENTS
+}
+
+function toHeldAugment(aug: HeldSource, opts?: { locked?: boolean; lockedByNickname?: string }): HeldAugment {
+  return {
+    id: aug.id,
+    name: aug.name,
+    description: aug.description,
+    imageUrl: aug.imageUrl || null,
+    effectType: aug.effectType || null,
+    effectValue: aug.effectValue ?? null,
+    tier: aug.tier || null,
+    locked: !!opts?.locked,
+    lockedByNickname: opts?.locked ? (opts.lockedByNickname || null) : null,
+  }
+}
+
+/** 빈 칸에 한 장 넣는다. 칸이 없으면 false */
+function addHeldAugment(
+  m: Member,
+  aug: HeldSource | null | undefined,
+  opts?: { locked?: boolean; lockedByNickname?: string },
+) {
+  if (!aug || !hasHeldSpace(m)) return false
+  heldList(m).push(toHeldAugment(aug, opts))
+  return true
+}
+
+function removeHeldById(m: Member, id: string | null | undefined) {
+  if (!id) return false
+  const list = heldList(m)
+  const i = list.findIndex((h) => h.id === id)
+  if (i < 0) return false
+  list.splice(i, 1)
+  if (!list.length) m.gahoPickIds = null
+  return true
+}
+
 function clearHeldAugment(m: Member) {
-  m.heldAugmentId = null
-  m.heldAugmentName = null
-  m.heldAugmentDescription = null
-  m.heldAugmentImageUrl = null
-  m.heldAugmentEffectType = null
-  m.heldAugmentEffectValue = null
-  m.heldAugmentTier = null
+  m.heldAugments = []
   m.gahoPickIds = null
 }
 
-function setHeldAugment(
-  m: Member,
-  aug: {
-    id: string
-    name: string
-    description: string
-    effectType?: string
-    effectValue?: string | null
-    imageUrl?: string | null
-    tier?: string | null
-  } | null | undefined,
-) {
-  if (!aug) {
-    clearHeldAugment(m)
-    return
-  }
-  m.heldAugmentId = aug.id
-  m.heldAugmentName = aug.name
-  m.heldAugmentDescription = aug.description
-  m.heldAugmentImageUrl = aug.imageUrl || null
-  m.heldAugmentEffectType = aug.effectType || null
-  m.heldAugmentEffectValue = aug.effectValue ?? null
-  m.heldAugmentTier = aug.tier || null
+/**
+ * 한 장짜리 보관으로 맞춘다 (증강 선택 배정·전환·프리즘 선택 치환).
+ * 잠긴 카드는 남의 것이므로 건드리지 않는다.
+ */
+function setHeldAugment(m: Member, aug: HeldSource | null | undefined) {
+  const locked = heldList(m).filter((h) => h.locked)
+  m.heldAugments = aug ? [...locked, toHeldAugment(aug)] : locked
+  if (!m.heldAugments.length) m.gahoPickIds = null
 }
 
 function emptyMember(
@@ -1736,13 +1808,7 @@ function emptyMember(
     disconnectedAt: null,
     isSpectator: !!opts?.spectator,
     chatColor: null,
-    heldAugmentId: null,
-    heldAugmentName: null,
-    heldAugmentDescription: null,
-    heldAugmentImageUrl: null,
-    heldAugmentEffectType: null,
-    heldAugmentEffectValue: null,
-    heldAugmentTier: null,
+    heldAugments: [],
     usedAugments: [],
     offerSeenAugmentIds: [],
     lastOfferCandidateIds: [],
@@ -1788,7 +1854,7 @@ function toOfferAugment(a: {
   }
 }
 
-/** 가호선택 후보 3장 */
+/** 프리즘 선택 후보 3장 */
 function ensureGahoPickCandidates(m: Member, list: CachedAugment[], count = 3) {
   const used = new Set(m.usedAugments || [])
   const unused = list.filter((a) => a.tier === 'prism' && !used.has(a.name))
@@ -1930,10 +1996,18 @@ function filterOfferPool<T extends {
 }
 
 /**
- * 후보 3장: 해당 티어 풀에서 균등 랜덤 (이름/id 중복만 방지).
- * 계열(family) 필터 없음 — 카드마다 동일 확률.
+ * 후보 3장: 해당 등급 풀에서 균등 랜덤 (이름/id 중복 방지 · 계열 필터 없음).
+ * 여기에 더해 **방 안에서 서로 겹치지 않게** 나눠준다.
+ *
+ * 플레이어마다 유효 풀이 다르므로(엄준식 조각·이미 쓴 증강·히든 없는 방의 히든런)
+ * 덱 하나를 그대로 잘라 나눠줄 수는 없다. 대신 이번 페이즈에 이미 나간 카드를
+ * `dealt` 로 들고 다니면서, 각자 자기 풀에서 **아직 안 나간 카드부터** 채우고
+ * 모자랄 때만 이미 나간 카드로 메운다.
+ *
+ * 카드 하나를 받을 확률은 기존과 같다(풀 안에서 균등). 서로 안 겹친다는 조건만 붙는다.
+ * 8인방 브론즈처럼 필요 장수(24)가 풀(16)보다 크면 일부는 어쩔 수 없이 겹친다.
  */
-function pickOfferCandidates(
+function pickOfferCandidatesRoomUnique(
   list: Array<{
     id: string
     name: string
@@ -1943,21 +2017,26 @@ function pickOfferCandidates(
     imageUrl: string | null
   }>,
   collectedPieces: string[],
-  count = 3,
-  lockedTier?: OfferTier | null,
-  opts?: OfferPickOpts,
+  count: number,
+  lockedTier: OfferTier | null | undefined,
+  opts: OfferPickOpts | undefined,
+  dealt: Set<string>,
 ) {
-  const pool = shuffleArray(filterOfferPool(list, collectedPieces, lockedTier, opts))
+  const pool = filterOfferPool(list, collectedPieces, lockedTier, opts)
+  // 아직 아무에게도 안 나간 카드를 먼저, 그 다음 이미 나간 카드
+  const fresh = shuffleArray(pool.filter((a) => !dealt.has(a.id)))
+  const reused = shuffleArray(pool.filter((a) => dealt.has(a.id)))
   const picked: typeof pool = []
   const seenIds = new Set<string>()
   const seenNames = new Set<string>()
-  for (const a of pool) {
+  for (const a of [...fresh, ...reused]) {
     if (picked.length >= count) break
     if (seenIds.has(a.id) || seenNames.has(a.name)) continue
     seenIds.add(a.id)
     seenNames.add(a.name)
     picked.push(a)
   }
+  for (const a of picked) dealt.add(a.id)
   return shuffleArray(picked).map(toOfferAugment)
 }
 
@@ -2024,7 +2103,7 @@ function pickTierUpgradeTarget(
   return finalPool[pickRandomIndex(finalPool.length)]
 }
 
-/** 증강 선택 확정 시 전환·가호선택은 즉시 실제 카드로 치환해 보관 */
+/** 증강 선택 확정 시 전환·프리즘 선택은 즉시 실제 카드로 치환해 보관 */
 function assignHeldFromOfferPick(
   m: Member,
   list: CachedAugment[],
@@ -2271,12 +2350,17 @@ function roomState(room: Room, viewerUserId?: string) {
       disconnected: m.disconnectedAt != null,
       chatColor: m.isSpectator ? null : (m.chatColor ?? null),
       augmentBusy: !m.isSpectator && hasIncomingAugmentEffect(m, room),
-      heldAugmentId: m.isSpectator ? null : m.heldAugmentId,
-      heldAugmentName: m.isSpectator ? null : m.heldAugmentName,
-      heldAugmentDescription: m.heldAugmentDescription,
-      heldAugmentImageUrl: m.heldAugmentImageUrl,
-      heldAugmentEffectType: m.heldAugmentEffectType,
-      heldAugmentTier: m.heldAugmentTier,
+      /** 보유 슬롯 (최대 2칸) · effectValue는 내려보내지 않는다 */
+      heldAugments: m.isSpectator ? [] : heldList(m).map((h) => ({
+        id: h.id,
+        name: h.name,
+        description: h.description,
+        imageUrl: h.imageUrl,
+        effectType: h.effectType,
+        tier: h.tier,
+        locked: !!h.locked,
+        lockedByNickname: h.lockedByNickname || null,
+      })),
       usedAugments: m.usedAugments,
       chatMuted: isChatMuted(m, room.index, room),
       chatMutePending: !!(m.chatMute && room.index < m.chatMute.startIndex)
@@ -2349,6 +2433,18 @@ function roomState(room: Room, viewerUserId?: string) {
           byName: b.name,
         }
       })(),
+      audioScramble: (() => {
+        if (room.status === 'duel') return null
+        const b = activeBuffsAt(m, room.index, room).find((x) => x.effectType === 'audio_scramble')
+        if (!b) return null
+        const periodRaw = Number(b.effectValue.periodMs)
+        const seedRaw = Number(b.effectValue.seed)
+        return {
+          periodMs: Number.isFinite(periodRaw) && periodRaw >= 1000 ? Math.floor(periodRaw) : 5000,
+          seed: Number.isFinite(seedRaw) && seedRaw > 0 ? Math.floor(seedRaw) : 1,
+          byName: b.name,
+        }
+      })(),
       hintsHidden: room.status === 'duel'
         ? false
         : activeBuffsAt(m, room.index, room).some(
@@ -2386,6 +2482,7 @@ function roomState(room: Room, viewerUserId?: string) {
           id: p.id,
           youtubeUrl: p.youtubeUrl,
           startSec: p.startSec,
+          endSec: p.endSec,
           startedAt: p.startedAt,
           byName: p.byName,
           byNickname: p.byNickname,
@@ -3100,9 +3197,11 @@ const TARGET_AUGMENT_TYPES = new Set([
   'accuse_sleep',
   'gabuki_mark',
   'steal_held_augment',
+  'hand_over_augment',
   'flame_kim',
   'hide_hints',
   'audio_stutter',
+  'audio_scramble',
   'score_share',
   'destroy_held_augment',
   // 쪼아요~는 디버프 중첩 금지에서 «빠져 있다» — 이미 걸린 사람·같은 사람에게도 계속 쓸 수 있다
@@ -3138,6 +3237,7 @@ const NEXT_ROUND_PUBLIC_AUGMENT_TYPES = new Set([
   'chat_isolate',
   'hide_hints',
   'audio_stutter',
+  'audio_scramble',
   'score_share',
   'answer_block_others',
 ])
@@ -3159,6 +3259,8 @@ type ApplyAugmentResult = {
   silent?: boolean
   /** true면 held 소모·usedAugments 기록 생략 (넘어가요 잔여 충전 등) */
   keepHeld?: boolean
+  /** 사용 연출에 띄울 카드를 바꾼다 (조커뽑기 → 강탈한 카드) */
+  usedCard?: AugmentLike
   /** 지정 시 이 유저를 제외한 멤버에게만 사용 연출·채팅 전송 */
   excludeNotifyUserId?: string
 }
@@ -3515,10 +3617,10 @@ async function applyAugmentEffect(
     const chargesRaw = Number(value.charges)
     let charges = Number.isFinite(chargesRaw) && chargesRaw > 0 ? Math.floor(chargesRaw) : 1
     charges -= 1
-    // 혼돈으로 발동하면 보유 슬롯이 이미 비어 있다 — 그땐 잔여 횟수를 기록하지 않는다
-    const stillHeld = m.heldAugmentName === aug.name && !!m.heldAugmentId
-    const keepHeld = charges > 0 && stillHeld
-    if (keepHeld) m.heldAugmentEffectValue = JSON.stringify({ ...value, charges })
+    // 혼돈·자동 발동으로 들어오면 보유 슬롯에 카드가 없다 — 그땐 잔여 횟수를 기록하지 않는다
+    const heldCard = findHeldByName(m, aug.name)
+    const keepHeld = charges > 0 && !!heldCard
+    if (keepHeld && heldCard) heldCard.effectValue = JSON.stringify({ ...value, charges })
     const leftNote = keepHeld ? ` · 남은 ${charges}회` : ''
     return {
       ok: true,
@@ -3975,6 +4077,50 @@ async function applyAugmentEffect(
     }
   }
 
+  if (aug.effectType === 'audio_scramble') {
+    const intended = targetUserId ? room.members.get(targetUserId) : null
+    if (!intended || intended.userId === m.userId) return { ok: false, hint: null, chatText: null }
+    const scrambleRounds = rounds > 0 ? rounds : 3
+    const periodRaw = Number(value.periodMs)
+    const periodMs = Number.isFinite(periodRaw) && periodRaw >= 1000 ? Math.floor(periodRaw) : 5000
+    const shield = takeReflectShield(intended, room.index)
+    const victim = shield ? m : intended
+    const reflected = !!shield
+    const startIndex = room.index + 1
+    // 점프 지점은 (seed · 라운드 · 구간번호)로 클라가 계산한다 — 서버가 매번 안 알려줘도
+    // 새로고침·늦게 들어온 사람까지 같은 자리로 튄다 (스타카토와 같은 방식)
+    const seed = 1 + Math.floor(Math.random() * 0xffffff)
+    victim.activeBuffs = victim.activeBuffs.filter((b) => b.effectType !== 'audio_scramble')
+    victim.activeBuffs.push({
+      name: reflected ? shield!.name : aug.name,
+      description: aug.description,
+      effectType: 'audio_scramble',
+      effectValue: { rounds: scrambleRounds, periodMs, seed },
+      imageUrl: aug.imageUrl || null,
+      usedByNickname: reflected ? intended.nickname : user.nickname,
+      startIndex,
+      roundsLeft: scrambleRounds,
+    })
+    const everySec = Math.round(periodMs / 100) / 10
+    if (reflected) {
+      io.to(intended.socketId).emit('augment:hint', {
+        name: shield!.name,
+        hint: `[무지개 반사] ${user.nickname}님의 [${aug.name}]을(를) 되돌려보냈습니다`,
+        durationMs: 0,
+      })
+      return {
+        ok: true,
+        hint: `[무지개 반사] ${intended.nickname}님에게 튕겨 다음 ${scrambleRounds}R · ${everySec}초마다 구간 점프`,
+        chatText: `${intended.nickname}님의 [무지개 반사]! ${user.nickname}님의 [${aug.name}]이(가) 되돌아갔습니다!`,
+      }
+    }
+    return {
+      ok: true,
+      hint: `[${aug.name}] ${victim.nickname} → 다음 ${scrambleRounds}R · ${everySec}초마다 구간 점프`,
+      chatText: `${user.nickname}님이 [${aug.name}]으로 ${victim.nickname}님의 노래를 헤집었습니다! (다음 ${scrambleRounds}R · ${everySec}초마다 딴 데로 튐)`,
+    }
+  }
+
   if (aug.effectType === 'score_share') {
     const intended = targetUserId ? room.members.get(targetUserId) : null
     if (!intended || intended.userId === m.userId) return { ok: false, hint: null, chatText: null }
@@ -4163,8 +4309,13 @@ async function applyAugmentEffect(
     const youtubeUrl = String(value.youtubeUrl || '').trim() || PECK_SONG_URL
     const startRaw = Number(value.startSec)
     const startSec = Number.isFinite(startRaw) && startRaw > 0 ? Math.floor(startRaw) : 0
+    const endRaw = Number(value.endSec)
+    const endSec = Number.isFinite(endRaw) && endRaw > startSec ? Math.floor(endRaw) : null
     const maxRaw = Number(value.maxSec)
-    const maxSec = Number.isFinite(maxRaw) && maxRaw > 0 ? Math.floor(maxRaw) : 900
+    // 구간 지정 곡은 그 길이 + 여유 5초를 안전장치로 쓴다
+    const maxSec = Number.isFinite(maxRaw) && maxRaw > 0
+      ? Math.floor(maxRaw)
+      : (endSec != null ? endSec - startSec + 5 : 900)
     const songLabel = String(value.songLabel || '').trim() || aug.name
     // 무지개 반사: 되돌아오면 시전자가 대신 끝까지 듣는다
     const shield = takeReflectShield(intended, room.index)
@@ -4174,10 +4325,10 @@ async function applyAugmentEffect(
     const chargesRaw = Number(value.charges)
     let charges = Number.isFinite(chargesRaw) && chargesRaw > 0 ? Math.floor(chargesRaw) : 1
     charges -= 1
-    // 혼돈으로 발동하면 보유 슬롯이 이미 비어 있다 — 그땐 잔여 횟수를 기록하지 않는다
-    const stillHeld = m.heldAugmentName === aug.name && !!m.heldAugmentId
-    const keepHeld = charges > 0 && stillHeld
-    if (keepHeld) m.heldAugmentEffectValue = JSON.stringify({ ...value, charges })
+    // 혼돈·자동 발동으로 들어오면 보유 슬롯에 카드가 없다 — 그땐 잔여 횟수를 기록하지 않는다
+    const heldCard = findHeldByName(m, aug.name)
+    const keepHeld = charges > 0 && !!heldCard
+    if (keepHeld && heldCard) heldCard.effectValue = JSON.stringify({ ...value, charges })
     const leftNote = keepHeld ? ` · 남은 ${charges}회` : ''
 
     const now = Date.now()
@@ -4186,6 +4337,7 @@ async function applyAugmentEffect(
       id: `${now.toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
       youtubeUrl,
       startSec,
+      endSec,
       startedAt: now,
       hardEndsAt: now + maxSec * 1000,
       byName: aug.name,
@@ -4856,37 +5008,6 @@ async function applyAugmentEffect(
     }
   }
 
-  if (aug.effectType === 'extend_round') {
-    if (room.status !== 'playing' && room.status !== 'duel') {
-      return { ok: false, hint: '플레이 중에만 시간을 연장할 수 있습니다', chatText: null }
-    }
-    const secRaw = Number(value.seconds)
-    const seconds = Number.isFinite(secRaw) && secRaw > 0 ? Math.min(30, Math.floor(secRaw)) : 10
-    room.roundEndsAt += seconds * 1000
-    room.roundDuration += seconds
-    // 기존 타임아웃을 남은 시간에 맞게 다시 잡음
-    if (room.timer) {
-      clearTimeout(room.timer)
-      room.timer = null
-      const remaining = Math.max(0, room.roundEndsAt - Date.now())
-      if (room.status === 'duel') {
-        room.timer = setTimeout(() => endDuel(io, room, 'timeout'), remaining)
-      } else {
-        room.timer = setTimeout(() => endRound(io, room, 'timeout'), remaining)
-      }
-    }
-    io.to(room.id).emit('round:extend', {
-      endsAt: room.roundEndsAt,
-      duration: room.roundDuration,
-      addedSec: seconds,
-    })
-    return {
-      ok: true,
-      hint: `[${aug.name}] 라운드 +${seconds}초`,
-      chatText: `${user.nickname}님이 [${aug.name}]! 남은 시간 +${seconds}초`,
-    }
-  }
-
   if (aug.effectType === 'force_skip') {
     if (room.status !== 'playing') {
       return { ok: false, hint: '플레이 중인 문제에만 쓸 수 있습니다', chatText: null }
@@ -4899,11 +5020,11 @@ async function applyAugmentEffect(
     let charges = Number.isFinite(chargesRaw) && chargesRaw > 0 ? Math.floor(chargesRaw) : 1
     charges -= 1
     endRound(io, room, 'skip')
-    // 혼돈으로 발동하면 보유 슬롯이 이미 비어 있다 — 빈 슬롯에 잔여 횟수를 쓰면 유령 데이터가 된다
-    const stillHeld = m.heldAugmentName === aug.name && !!m.heldAugmentId
-    if (charges > 0 && stillHeld) {
+    // 혼돈·자동 발동으로 들어오면 보유 슬롯에 카드가 없다 — 없는 카드에 잔여 횟수를 쓰면 유령 데이터가 된다
+    const heldCard = findHeldByName(m, aug.name)
+    if (charges > 0 && heldCard) {
       const nextVal = { ...value, charges }
-      m.heldAugmentEffectValue = JSON.stringify(nextVal)
+      heldCard.effectValue = JSON.stringify(nextVal)
       return {
         ok: true,
         hint: `[${aug.name}] 강제 스킵 · 남은 횟수 ${charges}`,
@@ -5086,7 +5207,7 @@ async function applyAugmentEffect(
     if (!intended || intended.userId === m.userId) {
       return { ok: false, hint: '대상을 선택하세요', chatText: null }
     }
-    if (!intended.heldAugmentId || !intended.heldAugmentName) {
+    if (!usableHeld(intended).length) {
       return {
         ok: false,
         hint: `[${aug.name}] ${intended.nickname}님은 보유 증강이 없습니다`,
@@ -5095,21 +5216,18 @@ async function applyAugmentEffect(
     }
     const shield = takeReflectShield(intended, room.index)
     const victim = shield ? m : intended
-    if (!victim.heldAugmentId || !victim.heldAugmentName) {
+    // 2칸이 다 찼으면 어느 걸 부술지는 랜덤 (잠긴 카드는 이미 죽은 카드라 제외)
+    const victimCards = usableHeld(victim).filter((h) => h.name !== aug.name)
+    const lost = victimCards.length ? victimCards[pickRandomIndex(victimCards.length)] : null
+    if (!lost) {
       return {
         ok: true,
         hint: `[무지개 반사] ${intended.nickname}님이 튕겨냈지만 부술 증강이 없었습니다`,
         chatText: `${intended.nickname}님의 [무지개 반사]! ${user.nickname}님의 [${aug.name}]이(가) 되돌아갔습니다`,
       }
     }
-    const lostName = victim.heldAugmentName
-    victim.heldAugmentId = null
-    victim.heldAugmentName = null
-    victim.heldAugmentDescription = null
-    victim.heldAugmentImageUrl = null
-    victim.heldAugmentEffectType = null
-    victim.heldAugmentEffectValue = null
-    victim.heldAugmentTier = null
+    const lostName = lost.name
+    removeHeldById(victim, lost.id)
     io.to(victim.socketId).emit('augment:hint', {
       name: aug.name,
       hint: `[${aug.name}] 보유 증강 [${lostName}]이(가) 부서졌습니다`,
@@ -5341,12 +5459,68 @@ async function applyAugmentEffect(
     }
   }
 
+  // 인수인계: 내 보유 증강 한 장을 상대에게 떠넘긴다.
+  // 받은 사람은 그 카드를 «쓸 수 없고», 다음 증강 선택 때 다른 보관 증강과 같이 사라진다.
+  if (aug.effectType === 'hand_over_augment') {
+    const intended = targetUserId ? room.members.get(targetUserId) : null
+    if (!intended || intended.userId === m.userId) {
+      return { ok: false, hint: '대상을 선택하세요', chatText: null }
+    }
+    // 넘길 카드 = 인수인계를 뺀 내 카드. 그런 게 없으면 인수인계 자체를 떠넘긴다
+    const mine = usableHeld(m).filter((h) => h.name !== aug.name)
+    const card = mine.length ? mine[pickRandomIndex(mine.length)] : findHeldByName(m, aug.name)
+    if (!card) return { ok: false, hint: `[${aug.name}] 넘길 증강이 없습니다`, chatText: null }
+    const shield = takeReflectShield(intended, room.index)
+    if (shield) {
+      // 되돌아오면 넘기려던 카드가 내 손에서 그대로 잠긴다
+      card.locked = true
+      card.lockedByNickname = intended.nickname
+      io.to(intended.socketId).emit('augment:hint', {
+        name: shield.name,
+        hint: `[무지개 반사] ${user.nickname}님의 [${aug.name}]을(를) 되돌려보냈습니다`,
+        durationMs: 0,
+      })
+      return {
+        ok: true,
+        hint: `[무지개 반사] 「${card.name}」이(가) 내 손에서 잠겼습니다`,
+        chatText: `${intended.nickname}님의 [무지개 반사]! ${user.nickname}님의 [${aug.name}]이(가) 되돌아갔습니다!`,
+      }
+    }
+    if (!hasHeldSpace(intended)) {
+      return {
+        ok: false,
+        hint: `[${aug.name}] ${intended.nickname}님의 보유 칸이 가득 찼습니다`,
+        chatText: null,
+      }
+    }
+    removeHeldById(m, card.id)
+    addHeldAugment(intended, {
+      id: card.id,
+      name: card.name,
+      description: card.description,
+      effectType: card.effectType || '',
+      effectValue: card.effectValue,
+      imageUrl: card.imageUrl,
+      tier: card.tier,
+    }, { locked: true, lockedByNickname: user.nickname })
+    io.to(intended.socketId).emit('augment:hint', {
+      name: aug.name,
+      hint: `[${aug.name}] ${user.nickname}님이 「${card.name}」을(를) 떠넘겼습니다 · 사용 불가 · 다음 증강 선택 때 사라집니다`,
+      durationMs: 0,
+    })
+    return {
+      ok: true,
+      hint: `[${aug.name}] ${intended.nickname}님에게 「${card.name}」을(를) 떠넘겼습니다`,
+      chatText: `${user.nickname}님이 [${aug.name}]! ${intended.nickname}님에게 「${card.name}」을(를) 떠넘겼습니다 (받은 사람은 못 씁니다)`,
+    }
+  }
+
   if (aug.effectType === 'steal_held_augment') {
     const intended = targetUserId ? room.members.get(targetUserId) : null
     if (!intended || intended.userId === m.userId) {
       return { ok: false, hint: '대상을 선택하세요', chatText: null }
     }
-    if (!intended.heldAugmentId || !intended.heldAugmentName) {
+    if (!usableHeld(intended).length) {
       return {
         ok: false,
         hint: `[${aug.name}] ${intended.nickname}님은 보유 증강이 없습니다`,
@@ -5366,21 +5540,38 @@ async function applyAugmentEffect(
         chatText: `${intended.nickname}님의 [무지개 반사]! ${user.nickname}님의 [${aug.name}]이(가) 되돌아갔습니다!`,
       }
     }
-    const stolen = {
-      id: intended.heldAugmentId,
-      name: intended.heldAugmentName,
-      description: intended.heldAugmentDescription || '',
-      effectType: intended.heldAugmentEffectType || '',
-      effectValue: intended.heldAugmentEffectValue,
-      imageUrl: intended.heldAugmentImageUrl,
-      tier: intended.heldAugmentTier,
+    const pool = usableHeld(intended)
+    const stolen = pool[pickRandomIndex(pool.length)]
+    // 내 조커뽑기 카드는 사용 처리 «뒤»에 빠진다 — 칸이 없으면 먼저 비워야 강탈품이 들어간다
+    if (!hasHeldSpace(m)) {
+      const self = findHeldByName(m, aug.name)
+      if (self) removeHeldById(m, self.id)
     }
-    clearHeldAugment(intended)
-    setHeldAugment(m, stolen)
+    if (!hasHeldSpace(m)) {
+      return { ok: false, hint: `[${aug.name}] 보유 칸이 가득 찼습니다`, chatText: null }
+    }
+    removeHeldById(intended, stolen.id)
+    addHeldAugment(m, {
+      id: stolen.id,
+      name: stolen.name,
+      description: stolen.description,
+      effectType: stolen.effectType || '',
+      effectValue: stolen.effectValue,
+      imageUrl: stolen.imageUrl,
+      tier: stolen.tier,
+    })
     return {
       ok: true,
       hint: `[${aug.name}] ${intended.nickname}님의 「${stolen.name}」을(를) 가져왔습니다!`,
       chatText: `${user.nickname}님이 [${aug.name}]! ${intended.nickname}님의 「${stolen.name}」을(를) 가져갔습니다`,
+      usedCard: {
+        name: stolen.name,
+        description: stolen.description,
+        effectType: stolen.effectType || '',
+        effectValue: stolen.effectValue,
+        imageUrl: stolen.imageUrl,
+        tier: stolen.tier || undefined,
+      },
     }
   }
 
@@ -5762,6 +5953,7 @@ export function registerSocket(io: Server) {
         lastAugmentAt: -1,
         augmentOfferLockedTier: null,
         augmentOfferEndsAt: 0,
+        augmentOfferDealtIds: new Set(),
         riskyBustApplied: new Set(),
         wagerSettled: new Set(),
         followAnswerWindow: {},
@@ -6818,7 +7010,8 @@ export function registerSocket(io: Server) {
       const m = room.members.get(user.id)
       if (!m) return cb?.({ ok: false })
       const list = await getEnabledAugments()
-      const shuffled = pickOfferCandidates(
+      // 리롤도 남이 보고 있는 카드는 피한다 (없으면 그때만 재사용)
+      const shuffled = pickOfferCandidatesRoomUnique(
         list,
         m.collectedPieces || [],
         3,
@@ -6828,6 +7021,7 @@ export function registerSocket(io: Server) {
           excludeNames: m.usedAugments,
           excludeTypes: offerExcludedTypes(room),
         },
+        room.augmentOfferDealtIds,
       )
       rememberOfferSeen(m, shuffled)
       cb?.({ ok: true, candidates: shuffled, lockedTier: room.augmentOfferLockedTier })
@@ -6837,7 +7031,8 @@ export function registerSocket(io: Server) {
       const room = findRoomByUser(user.id)
       if (!room || room.status !== 'augment') return
       const m = room.members.get(user.id)
-      if (!m || m.heldAugmentId) return
+      // 잠긴 카드(인수인계)도 «보유»다 — 그 페이즈는 통째로 건너뛴다
+      if (!m || heldCount(m) > 0) return
       const list = await getEnabledAugments()
       const pickOpts = { excludeNames: m.usedAugments }
       const pickFromLastOffer = () => {
@@ -6883,9 +7078,9 @@ export function registerSocket(io: Server) {
       const room = findRoomByUser(user.id)
       if (!room) return cb?.({ ok: false })
       const m = room.members.get(user.id)
-      // 증강 선택 중(가호선택 카드) 또는 플레이 중 보유 가호선택
+      // 증강 선택 중(프리즘 선택 카드) 또는 플레이 중 보유 프리즘 선택
       const offerPhase = room.status === 'augment'
-      const playPhase = room.status === 'playing' && m?.heldAugmentEffectType === 'gaho_select'
+      const playPhase = room.status === 'playing' && !!findHeldByType(m, 'gaho_select')
       if (!offerPhase && !playPhase) return cb?.({ ok: false })
       if (!m) return cb?.({ ok: false })
       const list = await getEnabledAugments()
@@ -6901,6 +7096,7 @@ export function registerSocket(io: Server) {
     })
 
     const handleAugmentUse = async (payload?: {
+      augmentId?: string
       targetUserId?: string
       targetUserIds?: string[]
       gahoAugmentId?: string
@@ -6910,20 +7106,24 @@ export function registerSocket(io: Server) {
       if (!room || room.status !== 'playing') return
       const m = room.members.get(user.id)
       if (!m || m.isSpectator) return
-      if (!m?.heldAugmentId || !m.heldAugmentName || !m.heldAugmentEffectType) return
+      // 2칸이 될 수 있으므로 «어느 카드를 쓰는지»를 받는다 (안 주면 쓸 수 있는 첫 장)
+      const usable = usableHeld(m)
+      const card = (payload?.augmentId ? findHeldById(m, payload.augmentId) : null) || usable[0] || null
+      if (!card || card.locked || !card.effectType) return
+      const heldId = card.id
       // 자동 사용 / 피격 자동 발동 증강은 수동 사용 불가
       if (
-        AUTO_APPLY_AUGMENT_TYPES.has(m.heldAugmentEffectType)
-        || PASSIVE_HELD_AUGMENT_TYPES.has(m.heldAugmentEffectType)
-        || AUTO_TRIGGER_HELD_AUGMENT_TYPES.has(m.heldAugmentEffectType)
+        AUTO_APPLY_AUGMENT_TYPES.has(card.effectType)
+        || PASSIVE_HELD_AUGMENT_TYPES.has(card.effectType)
+        || AUTO_TRIGGER_HELD_AUGMENT_TYPES.has(card.effectType)
       ) return
       const aug: AugmentLike = {
-        name: m.heldAugmentName,
-        description: m.heldAugmentDescription || '',
-        effectType: m.heldAugmentEffectType,
-        effectValue: m.heldAugmentEffectValue,
-        imageUrl: m.heldAugmentImageUrl,
-        tier: m.heldAugmentTier || undefined,
+        name: card.name,
+        description: card.description || '',
+        effectType: card.effectType,
+        effectValue: card.effectValue,
+        imageUrl: card.imageUrl,
+        tier: card.tier || undefined,
       }
 
       let hint: string | null = null
@@ -6933,135 +7133,42 @@ export function registerSocket(io: Server) {
       let excludeNotifyUserId: string | null = null
 
       if (aug.effectType === 'chaos_cast') {
-        m.usedAugments.push(aug.name)
-        clearHeldAugment(m)
+        // 보관형 혼돈: 즉시 2발이 아니라 «랜덤 2장을 뽑아 들고 있다가 원할 때» 쓴다.
+        // 즉시 발동이던 시절엔 의미가 없어 빼놨던 카드(무지개 반사·차차차)도 이제 정상으로 뽑는다.
         const all = await getEnabledAugments()
-        // 이 방에서 의미 없는 것(히든 없는 방의 히든런)도 뽑지 않는다
         const chaosExcludedTypes = new Set(offerExcludedTypes(room))
-        // 모든 일반 등급에서 추첨. 가호와 가호를 고르는/등급을 바꾸는 래퍼만 제외.
-        // 즉시 발동이 아닌 것(보유 중에만 의미 있는 반사·차차차)과 래퍼는 제외.
-        // 남겨두면 매번 「적용 실패」로 한 장이 통째로 날아간다.
+        const heldNames = new Set(heldList(m).map((h) => h.name))
         const pool = all.filter(
           (a) =>
             a.effectType !== 'chaos_cast'
             && a.effectType !== 'gaho_select'
             && a.effectType !== 'tier_upgrade'
-            && !PASSIVE_HELD_AUGMENT_TYPES.has(a.effectType)
-            && !AUTO_TRIGGER_HELD_AUGMENT_TYPES.has(a.effectType)
+            // 자동 적용형(물귀신·콤보)은 증강 페이즈 끝에만 발동한다 — 지금 받아도 못 쓴다
+            && !AUTO_APPLY_AUGMENT_TYPES.has(a.effectType)
             && !chaosExcludedTypes.has(a.effectType)
-            && a.tier !== 'prism',
+            && a.tier !== 'prism'
+            && !m.usedAugments.includes(a.name)
+            && !heldNames.has(a.name),
         )
-        // 강제 스킵·한입만이 먼저 걸리면 라운드가 끝나 두 번째 효과가 통째로 날아간다 → 뒤로 민다
-        const picks = pickChaosAugments(pool, 2).sort((a, b) => (
-          Number(ROUND_ENDING_AUGMENT_TYPES.has(a.effectType))
-          - Number(ROUND_ENDING_AUGMENT_TYPES.has(b.effectType))
-        ))
-        const hintLines: string[] = []
-        const publicChatLines: string[] = []
-        const reservedChatLines: string[] = []
-        // 트루먼쇼·범인은 당신이야처럼 「누구에게 뭘 걸었는지 숨기는」 증강은
-        // 혼돈 요약에서도 이름을 밝히면 안 된다 (숨기는 게 효과의 핵심)
-        const publicNames: string[] = []
-        for (const pick of picks) {
-          let targetId: string | undefined
-          let genrePick: string | undefined
-          if (TARGET_AUGMENT_TYPES.has(pick.effectType)) {
-            const needDebuffFree = DEBUFF_AUGMENT_TYPES.has(pick.effectType)
-            const eligible = [...room.members.values()].filter((other) => (
-              other.userId !== m.userId
-              && isPlayingMember(other)
-              && (!needDebuffFree || canReceiveTargetAugment(other, room))
-              && (pick.effectType !== 'steal_held_augment' || !!other.heldAugmentId)
-            ))
-            const other = eligible.length
-              ? eligible[pickRandomIndex(eligible.length)]
-              : null
-            if (!other) {
-              hintLines.push(`[${pick.name}] 대상 없음 · 스킵`)
-              continue
-            }
-            targetId = other.userId
-          }
-          if (GENRE_AUGMENT_TYPES.has(pick.effectType)) {
-            const counts: Record<string, number> = {}
-            for (const q of room.queue.slice(room.index + 1)) {
-              counts[q.genre] = (counts[q.genre] || 0) + 1
-            }
-            const options = Object.entries(counts).filter(([, c]) => c > 0).map(([g]) => g)
-            if (!options.length) {
-              hintLines.push(`[${pick.name}] 밴할 장르 없음 · 스킵`)
-              continue
-            }
-            genrePick = options[pickRandomIndex(options.length)]
-          }
-          const result = await applyAugmentEffect(io, room, m, user, pick, targetId, genrePick).catch((err) => {
-            console.error('[chaos_cast] apply failed', pick.effectType, err)
-            return { ok: false as const, hint: null, chatText: null, silent: false }
+        // 혼돈 카드가 빠지며 한 칸이 비므로 보통 2장이 다 들어간다.
+        // 인수인계로 떠넘겨진 잠긴 카드가 껴 있으면 들어가는 만큼만 받는다.
+        const space = Math.max(0, MAX_HELD_AUGMENTS - (heldCount(m) - 1))
+        const picks = shuffleArray(pool).slice(0, space)
+        if (!picks.length) {
+          io.to(m.socketId).emit('augment:hint', {
+            name: aug.name,
+            hint: `[${aug.name}] 지금 뽑을 수 있는 증강이 없습니다`,
+            durationMs: 0,
           })
-          if (!result.ok) {
-            hintLines.push(`[${pick.name}] 적용 실패`)
-            continue
-          }
-          if (result.hint) hintLines.push(result.hint)
-          // 다음 R 발동 예약형은 그때 따로 공개된다 — 지금 이름을 부르면 예약 의미가 없다
-          const deferred = !!(result.chatText && NEXT_ROUND_PUBLIC_AUGMENT_TYPES.has(pick.effectType))
-          if (!result.silent && !result.excludeNotifyUserId && !deferred) publicNames.push(pick.name)
-          if (result.silent) {
-            // 트루먼쇼 등: 전원 채팅 생략
-          } else if (result.chatText && NEXT_ROUND_PUBLIC_AUGMENT_TYPES.has(pick.effectType)) {
-            room.pendingAugmentNotices.push({
-              startIndex: room.index + 1,
-              userId: user.id,
-              nickname: user.nickname,
-              name: pick.name,
-              effectType: pick.effectType,
-              description: pick.description,
-              imageUrl: pick.imageUrl || null,
-              tier: pick.tier,
-              message: result.chatText,
-            })
-            reservedChatLines.push(result.chatText)
-          } else if (result.chatText && result.excludeNotifyUserId) {
-            for (const other of room.members.values()) {
-              if (other.userId === result.excludeNotifyUserId) continue
-              io.to(other.socketId).emit('chat:message', {
-                id: Date.now() + 18,
-                userId: '',
-                nickname: '시스템',
-                text: result.chatText,
-                system: true,
-                at: Date.now(),
-              })
-            }
-          } else if (result.chatText) {
-            publicChatLines.push(result.chatText)
-          }
-          // 혹시 상태 전이가 있으면 추가 효과 중단
-          if (room.status !== 'playing') break
+          return
         }
-        // 시전자에게는 뽑힌 2장을 그대로 보여준다
-        hint = `[혼돈] ${picks.map((p) => p.name).join(' · ')}\n${hintLines.join('\n')}`
-        const publicTail = publicChatLines.length ? `\n${publicChatLines.join(' / ')}` : ''
-        chatText = publicNames.length
-          ? `${user.nickname}님의 [혼돈]! → ${publicNames.join(' · ')}${publicTail}`
-          : `${user.nickname}님의 [혼돈]! → 무슨 일이 일어났을까요…${publicTail}`
-        // 예약형은 시전자에게만 별도 안내 (전원 채팅은 발동 시)
-        if (reservedChatLines.length) {
-          io.to(m.socketId).emit('chat:message', {
-            id: Date.now() + 17,
-            userId: '',
-            nickname: '시스템',
-            text: `예약 완료 · 다음 라운드에 발동합니다 (본인만 표시) — ${reservedChatLines.join(' / ')}`,
-            system: true,
-            at: Date.now(),
-            augmentCard: {
-              name: aug.name,
-              description: aug.description,
-              imageUrl: aug.imageUrl || null,
-              tier: aug.tier,
-            },
-          })
-        }
+        m.usedAugments.push(aug.name)
+        removeHeldById(m, heldId)
+        for (const pick of picks) addHeldAugment(m, pick)
+        hint = `[${aug.name}] ${picks.map((x) => x.name).join(' · ')}\n원할 때 쓰세요`
+        chatText = picks.length > 1
+          ? `${user.nickname}님의 [${aug.name}]! 증강 ${picks.length}장을 뽑아 보관했습니다`
+          : `${user.nickname}님의 [${aug.name}]! 증강 한 장을 뽑아 보관했습니다`
       } else if (aug.effectType === 'gaho_select') {
         const gahoId = payload?.gahoAugmentId
         if (!gahoId) return
@@ -7078,18 +7185,19 @@ export function registerSocket(io: Server) {
           imageUrl: pick.imageUrl,
           tier: pick.tier,
         }
-        // 대상/장르 선택이 더 필요하면 가호선택만 소모하고 실제 카드로 보관한 뒤 UI에서 이어서
+        // 대상/장르 선택이 더 필요하면 프리즘 선택만 소모하고 실제 카드로 보관한 뒤 UI에서 이어서
         const needsMorePick = TARGET_AUGMENT_TYPES.has(pick.effectType)
           || GENRE_AUGMENT_TYPES.has(pick.effectType)
         if (needsMorePick) {
           m.usedAugments.push(aug.name)
-          setHeldAugment(m, pick)
+          removeHeldById(m, heldId)
+          addHeldAugment(m, pick)
           m.gahoPickIds = null
           io.to(m.socketId).emit('augment:hint', {
             name: pick.name,
             hint: TARGET_AUGMENT_TYPES.has(pick.effectType)
-              ? `[가호선택] ${pick.name} · 대상을 선택해 사용하세요`
-              : `[가호선택] ${pick.name} · 장르를 선택해 사용하세요`,
+              ? `[프리즘 선택] ${pick.name} · 대상을 선택해 사용하세요`
+              : `[프리즘 선택] ${pick.name} · 장르를 선택해 사용하세요`,
             durationMs: 0,
           })
           emitRoomState(io, room)
@@ -7111,10 +7219,10 @@ export function registerSocket(io: Server) {
         clearHeldAugment(m)
         usedCard = pickAug
         hint = result.hint
-          ? `[가호선택] ${pick.name}\n${result.hint}`
-          : `[가호선택] ${pick.name}`
+          ? `[프리즘 선택] ${pick.name}\n${result.hint}`
+          : `[프리즘 선택] ${pick.name}`
         chatText = result.chatText
-          || `${user.nickname}님이 [가호선택]으로 [${pick.name}]을(를) 골랐습니다`
+          || `${user.nickname}님이 [프리즘 선택]으로 [${pick.name}]을(를) 골랐습니다`
       } else if (aug.effectType === 'tier_upgrade') {
         // 선택 시점에 이미 치환됨 — 혹시 남아 있으면 즉시 보관만 교체 (컷신·채팅 없이)
         const all = await getEnabledAugments()
@@ -7124,7 +7232,8 @@ export function registerSocket(io: Server) {
           tier: aug.tier || 'bronze',
         }, m.usedAugments)
         if (!pick) return
-        setHeldAugment(m, pick)
+        removeHeldById(m, heldId)
+        addHeldAugment(m, pick)
         emitRoomState(io, room)
         return
       } else {
@@ -7172,25 +7281,15 @@ export function registerSocket(io: Server) {
           return
         }
         m.usedAugments.push(aug.name)
-        // 조커뽑기 성공 시 이미 강탈한 증강으로 held가 교체됨 — clear하면 날아감
-        const stoleHeld = aug.effectType === 'steal_held_augment'
-          && !!m.heldAugmentId
-          && m.heldAugmentName !== aug.name
-        if (!stoleHeld && !result.keepHeld) clearHeldAugment(m)
         if (result.keepHeld) {
           // 넘어가요 등: usedAugments에 아직 넣지 않음 — 위에서 push한 것 되돌림
           m.usedAugments.pop()
+        } else {
+          // 쓴 카드만 뺀다 — 옆 칸(혼돈으로 받은 다른 카드·강탈품)은 그대로 둔다
+          removeHeldById(m, heldId)
         }
-        if (stoleHeld) {
-          usedCard = {
-            name: m.heldAugmentName || aug.name,
-            description: m.heldAugmentDescription || aug.description,
-            effectType: m.heldAugmentEffectType || aug.effectType,
-            effectValue: m.heldAugmentEffectValue,
-            imageUrl: m.heldAugmentImageUrl,
-            tier: m.heldAugmentTier || undefined,
-          }
-        }
+        // 조커뽑기: 사용 연출은 강탈해 온 카드로 보여준다
+        if (result.usedCard) usedCard = result.usedCard
         hint = result.hint
         if (result.chatText) chatText = result.chatText
         if (result.silent) silentUse = true
@@ -7714,19 +7813,24 @@ function startRound(io: Server, room: Room) {
       const lockedTier = pickRandomOfferTier(list)
       room.augmentOfferLockedTier = lockedTier
       room.augmentOfferEndsAt = Date.now() + 20_000
+      room.augmentOfferDealtIds = new Set()
       for (const m of room.members.values()) {
         // 미사용 보관 증강 소멸(임시 규칙)
         clearHeldAugment(m)
+      }
+      // 풀이 모자라 뒤쪽이 중복을 떠안는 일이 없게, 받는 순서를 매 페이즈 새로 섞는다
+      for (const m of shuffleArray([...room.members.values()])) {
         if (m.isSpectator) continue
         // 새 증강 페이즈 → 리롤 시야 초기화 (이전에 뜬 카드는 다시 가능, 사용 증강은 계속 제외)
         m.offerSeenAugmentIds = []
         m.lastOfferCandidateIds = []
-        const shuffled = pickOfferCandidates(
+        const shuffled = pickOfferCandidatesRoomUnique(
           list,
           m.collectedPieces,
           3,
           lockedTier,
           { excludeNames: m.usedAugments, excludeTypes: offerExcludedTypes(room) },
+          room.augmentOfferDealtIds,
         )
         rememberOfferSeen(m, shuffled)
         io.to(m.socketId).emit('augment:offer', {
@@ -7747,7 +7851,7 @@ function startRound(io: Server, room: Room) {
           const byId = new Map(all.map((a) => [a.id, a]))
           for (const m of room.members.values()) {
             if (m.isSpectator) continue
-            if (m.heldAugmentId) continue
+            if (heldCount(m) > 0) continue
             const fromOffer = (m.lastOfferCandidateIds || [])
               .map((id) => byId.get(id))
               .filter((a): a is CachedAugment => !!a)
@@ -8093,7 +8197,7 @@ function beginRoundCountdown(io: Server, room: Room) {
 async function finishAugmentIfReady(io: Server, room: Room) {
   // 중복 호출 방지 (전원 선택 동시 / 타임아웃 레이스)
   if (room.status !== 'augment') return
-  const allPicked = playerMembers(room).every((x) => x.heldAugmentId)
+  const allPicked = playerMembers(room).every((x) => heldCount(x) > 0)
   if (!allPicked) {
     emitRoomState(io, room)
     return
@@ -8107,19 +8211,20 @@ async function finishAugmentIfReady(io: Server, room: Room) {
 
   try {
     for (const m of room.members.values()) {
-      if (!m.heldAugmentEffectType || !AUTO_APPLY_AUGMENT_TYPES.has(m.heldAugmentEffectType) || !m.heldAugmentName) continue
+      const autoCard = heldList(m).find((h) => h.effectType && AUTO_APPLY_AUGMENT_TYPES.has(h.effectType))
+      if (!autoCard || !autoCard.effectType) continue
       const aug: AugmentLike = {
-        name: m.heldAugmentName,
-        description: m.heldAugmentDescription || '',
-        effectType: m.heldAugmentEffectType,
-        effectValue: m.heldAugmentEffectValue,
-        imageUrl: m.heldAugmentImageUrl,
-        tier: m.heldAugmentTier || undefined,
+        name: autoCard.name,
+        description: autoCard.description || '',
+        effectType: autoCard.effectType,
+        effectValue: autoCard.effectValue,
+        imageUrl: autoCard.imageUrl,
+        tier: autoCard.tier || undefined,
       }
       const result = await applyAugmentEffect(io, room, m, { id: m.userId, nickname: m.nickname }, aug)
       if (!result.ok) continue
       m.usedAugments.push(aug.name)
-      clearHeldAugment(m)
+      removeHeldById(m, autoCard.id)
       if (result.hint) {
         io.to(m.socketId).emit('augment:hint', {
           name: aug.name,

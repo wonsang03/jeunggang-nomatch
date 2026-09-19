@@ -20,7 +20,7 @@ function sk(accent?: string) {
 }
 
 export function ytId(url: string) {
-  const m = url.match(/(?:v=|youtu\.be\/|embed\/)([\w-]{11})/)
+  const m = url.match(/(?:v=|youtu\.be\/|embed\/|shorts\/)([\w-]{11})/)
   return m?.[1] || ''
 }
 
@@ -105,6 +105,20 @@ export function loadYtApi() {
   return ytApiPromise
 }
 
+/**
+ * 야랄: (seed · 구간번호)만으로 같은 지점을 뽑는 결정적 난수 [0,1).
+ * 서버가 점프 지점을 매번 내려주지 않아도 새로고침·재접속이 같은 자리로 맞춰진다.
+ */
+function scrambleFrac(seed: number, bucket: number) {
+  let x = (Math.imul(seed >>> 0, 2654435761) + Math.imul(bucket + 1, 40503)) >>> 0
+  x ^= x << 13
+  x >>>= 0
+  x ^= x >>> 17
+  x ^= x << 5
+  x >>>= 0
+  return x / 4294967296
+}
+
 export function HiddenYouTube({
   url,
   startSec,
@@ -124,6 +138,7 @@ export function HiddenYouTube({
   oneshot = false,
   /** 값이 바뀔 때마다 강제 재킥 (라운드 시작 등) */
   playEpoch = 0,
+  scramble = null,
   onUnplayable,
 }: {
   url: string
@@ -153,6 +168,8 @@ export function HiddenYouTube({
   /** true면 한 번만 재생 — 끝나면 복구/볼륨 로직이 다시 틀지 않음 */
   oneshot?: boolean
   playEpoch?: number | string
+  /** 야랄: periodMs마다 (seed·구간번호)로 정해진 지점으로 점프 */
+  scramble?: { periodMs: number; seed: number } | null
   /**
    * 이 영상은 아무리 다시 틀어도 안 나온다 (임베드 차단·삭제·비공개·지역차단).
    * 영상 하나당 한 번만 호출된다. 무한 재시도 대신 위로 알려서 처리하라고 있는 콜백.
@@ -166,6 +183,8 @@ export function HiddenYouTube({
   pausedRef.current = paused
   const rateRef = useRef(playbackRate)
   rateRef.current = playbackRate
+  const scrambleRef = useRef(scramble)
+  scrambleRef.current = scramble
   const volumeRef = useRef(volume)
   volumeRef.current = volume
   const unlockAtRef = useRef(audioUnlockAt)
@@ -271,12 +290,30 @@ export function HiddenYouTube({
     return null
   }
 
+  /** 지금이 몇 번째 점프 구간인지 (야랄이 없거나 라운드 싱크가 없으면 null) */
+  const scrambleNow = () => {
+    const sc = scrambleRef.current
+    const endsAt = endsAtRef.current
+    const dur = roundDurRef.current
+    if (!sc || !(sc.periodMs >= 1000) || !endsAt || !dur || dur <= 0) return null
+    const elapsedMs = Math.max(0, serverNow() - (endsAt - dur * 1000))
+    return { sc, elapsedMs, bucket: Math.floor(elapsedMs / sc.periodMs) }
+  }
+
   const clipSeekTarget = () => {
     const s = startRef.current
     const clipEnd = endRef.current
     const clipLen = resolveClipLen()
     const endsAt = endsAtRef.current
     const dur = roundDurRef.current
+    // 야랄: periodMs마다 정해진 지점으로 튀고, 튄 자리에서 계속 흐른다.
+    // 목표 지점 자체를 옮겨놔야 드리프트 보정이 원래 자리로 되돌리지 않는다.
+    const jump = scrambleNow()
+    if (jump && clipLen && clipLen > 0 && jump.bucket > 0) {
+      const base = scrambleFrac(jump.sc.seed, jump.bucket) * clipLen
+      const intoSec = ((jump.elapsedMs - jump.bucket * jump.sc.periodMs) / 1000) * rateRef.current
+      return s + ((base + intoSec) % clipLen)
+    }
     let target = s
     if (endsAt && dur && dur > 0) {
       const roundStart = endsAt - dur * 1000
@@ -374,6 +411,14 @@ export function HiddenYouTube({
     const remainMs = (remainVideo / rate) * 1000
     stopTimerRef.current = setTimeout(() => {
       if (pausedRef.current || audioLockedRef.current) return
+      // oneshot(쪼아요~ 계열)은 클립 끝에서 루프하지 않고 종료 처리한다
+      if (oneshotRef.current) {
+        if (endedRef.current) return
+        endedRef.current = true
+        try { p.pauseVideo() } catch { /* ignore */ }
+        onEndedRef.current?.()
+        return
+      }
       restartClipFromStart(p)
       scheduleClipLoop(p)
     }, remainMs)
@@ -741,6 +786,28 @@ export function HiddenYouTube({
     syncPlayback(p)
   }, [paused, ready])
 
+  // 야랄: 구간이 바뀌는 순간 실제로 점프시킨다 (지점 계산은 clipSeekTarget)
+  useEffect(() => {
+    if (!ready || !scramble || !(scramble.periodMs >= 1000)) return
+    let lastBucket = -1
+    const timer = setInterval(() => {
+      const p = playerRef.current
+      if (!p || pausedRef.current || audioLockedRef.current || endedRef.current) return
+      const jump = scrambleNow()
+      if (!jump || jump.bucket === lastBucket) return
+      const first = lastBucket < 0
+      lastBucket = jump.bucket
+      // 첫 구간(0)은 정상 시작 — 튀는 건 한 주기 지난 뒤부터
+      if (first || jump.bucket <= 0) return
+      try {
+        p.seekTo(clipSeekTarget(), true)
+        lastSeekAtRef.current = Date.now()
+      } catch { /* ignore */ }
+    }, 150)
+    return () => clearInterval(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, scramble?.periodMs, scramble?.seed])
+
   useEffect(() => {
     const p = playerRef.current
     if (!p || !ready) return
@@ -1051,6 +1118,10 @@ export function RoomSongPersistentBgm() {
   const songPlaybackRate = (!inDuel && me?.playbackRate && me.playbackRate > 0 && me.playbackRate !== 1)
     ? me.playbackRate
     : 1
+  const sc = !inDuel && audibleRound ? me?.audioScramble : null
+  const songScramble = sc && sc.periodMs >= 1000 && sc.seed > 0
+    ? { periodMs: sc.periodMs, seed: sc.seed }
+    : null
 
   // ── 증강 선택 화면: 같은 플레이어로 선택 BGM ─────────────────
   // durationSec/루프 재시작·라운드 싱크 넣지 않음 → 처음부터 반복 되감기 방지
@@ -1123,6 +1194,7 @@ export function RoomSongPersistentBgm() {
       roundEndsAt={audibleRound ? session.endsAt : null}
       roundDurationSec={session.roundDuration}
       playEpoch={playEpoch}
+      scramble={songScramble}
       onUnplayable={(code) => {
         // 나 혼자 못 듣는 건지, 모두가 못 듣는 건지는 서버가 센다.
         // 과반이 못 들으면 서버가 라운드를 넘긴다 — 40초 무음을 견디지 않아도 된다.
@@ -1139,7 +1211,12 @@ export function RoomSongPersistentBgm() {
 export function FlameKimOverlayBgm() {
   const { user, room, musicVolume, gahoCutscene } = useGame()
   const me = room?.members.find((m) => m.userId === user?.id)
-  const [session, setSession] = useState<{ url: string; startSec: number; source: string } | null>(null)
+  const [session, setSession] = useState<{
+    url: string
+    startSec: number
+    endSec: number | null
+    source: string
+  } | null>(null)
   const [now, setNow] = useState(() => serverNow())
 
   useEffect(() => {
@@ -1174,10 +1251,14 @@ export function FlameKimOverlayBgm() {
 
     const url = (overlayActive ? trick!.youtubeUrl : '') || FLAME_KIM_FALLBACK_URL
     const startSec = overlayActive ? (trick!.startSec ?? 0) : 10
+    // 구간이 지정된 오버레이는 그 구간만 반복한다 (간다드래프트 등)
+    const endSec = overlayActive && trick!.endSec != null && trick!.endSec > startSec
+      ? trick!.endSec
+      : null
     const source = overlayActive ? trick!.source : 'flame'
     setSession((prev) => {
-      if (prev && prev.url === url && prev.source === source) return prev
-      return { url, startSec, source }
+      if (prev && prev.url === url && prev.source === source && prev.endSec === endSec) return prev
+      return { url, startSec, endSec, source }
     })
   }, [
     me,
@@ -1208,6 +1289,7 @@ export function FlameKimOverlayBgm() {
       key={`yt-trick-overlay-${session.source}`}
       url={session.url}
       startSec={session.startSec}
+      endSec={session.endSec}
       volume={vol}
       paused={false}
       playbackRate={1}
@@ -1236,6 +1318,7 @@ export function PeckSongBgm() {
     id: string
     url: string
     startSec: number
+    endSec: number | null
     byName: string
   } | null>(null)
   /** 같은 세션을 두 번 보고하지 않게 */
@@ -1255,10 +1338,16 @@ export function PeckSongBgm() {
       if (prev && prev.id === peck.id) return prev
       // 새로고침·재접속: 사용 시점부터 흐른 만큼 건너뛰고 이어 듣는다
       const elapsed = Math.max(0, Math.floor((serverNow() - peck.startedAt) / 1000))
+      const start = Math.max(0, Math.floor(peck.startSec || 0))
+      // 구간이 지정된 벌칙곡은 그 구간까지만 듣고 끝난다 (이어 듣기도 구간 안에서만)
+      const end = peck.endSec != null && peck.endSec > start ? Math.floor(peck.endSec) : null
+      // 새로고침 사이에 구간이 이미 지났으면 다시 틀지 않는다
+      if (end != null && start + elapsed >= end) return prev && prev.id === peck.id ? prev : null
       return {
         id: peck.id,
         url: peck.youtubeUrl,
-        startSec: Math.max(0, Math.floor(peck.startSec || 0)) + elapsed,
+        startSec: start + elapsed,
+        endSec: end,
         byName: peck.byName || '쪼아요~',
       }
     })
@@ -1274,6 +1363,7 @@ export function PeckSongBgm() {
         key={`yt-peck-${user.id}-${session.id}`}
         url={session.url}
         startSec={session.startSec}
+        endSec={session.endSec}
         volume={vol}
         paused={false}
         playbackRate={1}
