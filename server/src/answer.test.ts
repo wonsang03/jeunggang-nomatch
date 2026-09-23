@@ -6,6 +6,9 @@ import {
   extractYoutubeId,
   splitDuoArtists,
   expandArtistAccepts,
+  expandTitleAccepts,
+  isJointArtistCredit,
+  stripSequelTail,
   stripParenSections,
   chosung,
   hintChosung,
@@ -150,5 +153,61 @@ describe('hangulToQwertyMistype', () => {
 
   it('한글이 아닌 글자는 그대로 둔다', () => {
     expect(hangulToQwertyMistype('IU 3집')).toBe('IU 3wlq')
+  })
+})
+
+describe('가운뎃점으로 적은 듀오', () => {
+  it('· 도 공동 표기로 본다 (버튜버 유닛곡 표기)', () => {
+    expect(isJointArtistCredit('시라유키 히나 · 네네코 마시로')).toBe(true)
+    expect(splitDuoArtists('시라유키 히나 · 네네코 마시로')).toEqual(['시라유키 히나', '네네코 마시로'])
+  })
+
+  it('한 사람 이름은 쪼개지 않는다', () => {
+    expect(isJointArtistCredit('시라유키 히나')).toBe(false)
+    expect(isJointArtistCredit('HUNTR/X')).toBe(false)
+  })
+
+  it('한 칸에 상대 이름이 인정답으로 남지 않는다', () => {
+    const accepts = expandArtistAccepts('시라유키 히나', [
+      '시라유키 히나 · 네네코 마시로',
+      '시라유키히나',
+    ])
+    expect(accepts).toContain('시라유키 히나')
+    expect(accepts).toContain('시라유키히나')
+    expect(accepts).not.toContain('시라유키 히나 · 네네코 마시로')
+  })
+})
+
+describe('뒤에 붙는 속편·부제', () => {
+  const norms = (xs: string[]) => xs.map(normalizeAnswer)
+
+  it('정답에 번호가 없어도 번호를 붙여 친 답을 받아준다', () => {
+    const accepts = norms(expandTitleAccepts('나 혼자만 레벨업'))
+    expect(isAcceptedAnswer('나 혼자만 레벨업', accepts)).toBe(true)
+    expect(isAcceptedAnswer('나 혼자만 레벨업 2', accepts)).toBe(true)
+    expect(isAcceptedAnswer('나 혼자만 레벨업 시즌2', accepts)).toBe(true)
+  })
+
+  it('정답에 번호가 있으면 번호 없이 쳐도 받아준다', () => {
+    const accepts = norms(expandTitleAccepts('나 혼자만 레벨업 2'))
+    expect(isAcceptedAnswer('나 혼자만 레벨업', accepts)).toBe(true)
+    expect(isAcceptedAnswer('나 혼자만 레벨업 2', accepts)).toBe(true)
+  })
+
+  it('부제는 떼고 쳐도 인정', () => {
+    const accepts = norms(expandTitleAccepts('용과 같이 5: 꿈을 이루는 자'))
+    expect(isAcceptedAnswer('용과 같이 5', accepts)).toBe(true)
+    expect(isAcceptedAnswer('용과 같이', accepts)).toBe(true)
+  })
+
+  it('제목이 숫자 자체면 건드리지 않는다', () => {
+    expect(stripSequelTail('24')).toBe('24')
+    expect(isAcceptedAnswer('24', norms(expandTitleAccepts('24')))).toBe(true)
+  })
+
+  it('다른 곡까지 맞는 답이 되지는 않는다', () => {
+    const accepts = norms(expandTitleAccepts('나 혼자만 레벨업'))
+    expect(isAcceptedAnswer('나 혼자', accepts)).toBe(false)
+    expect(isAcceptedAnswer('레벨업', accepts)).toBe(false)
   })
 })

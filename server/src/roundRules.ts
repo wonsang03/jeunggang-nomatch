@@ -1,4 +1,5 @@
 import type { ActiveBuff } from './gameTypes.js'
+import { isJointArtistCredit, splitDuoArtists, normalizeAnswer } from './answer.js'
 
 /**
  * 방 상태를 건드리지 않는 순수 규칙 함수들.
@@ -46,4 +47,49 @@ export function josaUlReul(word: string) {
   const code = ch.charCodeAt(0) - 0xac00
   if (code < 0 || code > 11171) return '를'
   return code % 28 === 0 ? '를' : '을'
+}
+
+export type SlotRow = {
+  id: string
+  label: string
+  answer: string
+  accepts: string[]
+  hidden: boolean
+}
+
+/**
+ * 한 칸에 두 사람이 적힌 가수 슬롯("시라유키 히나 · 네네코 마시로")을 사람별 칸으로 쪼갠다.
+ *
+ * 한 칸으로 두면 인정답에 두 이름이 다 들어가 있어 «둘 중 한 명만» 쳐도 가수 칸이
+ * 통째로 끝나 버린다. 쪼개 두면 각각 맞혀야 한다.
+ * 문제은행에 이미 들어간 문제도 다시 넣지 않고 고쳐지도록 게임 시작 시점에 나눈다.
+ */
+export function toSlotRows(s: {
+  id: string
+  label: string
+  answer: string
+  acceptAnswers: string
+  hidden: boolean
+}): SlotRow[] {
+  let accepts: string[] = []
+  try {
+    const parsed = JSON.parse(s.acceptAnswers || '[]')
+    if (Array.isArray(parsed)) accepts = parsed.map((x) => String(x))
+  } catch { /* 깨진 JSON 이면 인정답 없이 간다 */ }
+  const base: SlotRow = { id: s.id, label: s.label, answer: s.answer, accepts, hidden: s.hidden }
+  if (s.hidden || !isArtistLikeLabel(s.label) || !isJointArtistCredit(s.answer)) return [base]
+  const parts = splitDuoArtists(s.answer)
+  if (parts.length < 2) return [base]
+  return parts.map((part, i) => ({
+    id: `${s.id}::${i + 1}`,
+    label: s.label,
+    answer: part,
+    // 상대방 이름·공동 표기는 이 칸의 인정답에서 뺀다 (한 명만 쳐서 끝나지 않게)
+    accepts: accepts.filter((a) => {
+      const t = a.trim()
+      if (!t || isJointArtistCredit(t)) return false
+      return normalizeAnswer(t) === normalizeAnswer(part) || t.includes(part) || part.includes(t)
+    }),
+    hidden: false,
+  }))
 }

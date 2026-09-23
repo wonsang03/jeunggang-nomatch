@@ -5,7 +5,16 @@ import { prisma } from '../config.js'
 import { adminMiddleware, authMiddleware, type AuthUser } from '../auth.js'
 import { BANK_GENRES } from '../genres.js'
 import { invalidateBankCache } from '../bankCache.js'
-import { extractYoutubeId, normalizeAnswer, parseAcceptList, expandArtistAccepts, splitDuoArtists } from '../answer.js'
+import {
+  extractYoutubeId,
+  normalizeAnswer,
+  parseAcceptList,
+  expandArtistAccepts,
+  expandTitleAccepts,
+  isJointArtistCredit,
+  splitDuoArtists,
+} from '../answer.js'
+import { isTitleLikeLabel } from '../roundRules.js'
 import { normalizeSongTags, parseTagsJson, tagsToJson, SONG_TAGS } from '../tags.js'
 
 export const questionRouter = Router()
@@ -185,12 +194,13 @@ function buildSlots(data: z.infer<typeof createSchema>) {
   for (const s of slotsRaw) {
     if (!s.hidden && s.label.includes('가수')) {
       const parts = splitDuoArtists(s.answer)
-      const isDuo = parts.length >= 2 && /[,，&＆×]| 와 | 과 |\band\b/i.test(s.answer)
+      // 구분자 판정은 answer.ts 한 곳에서만 한다 (가운뎃점 · 포함)
+      const isDuo = parts.length >= 2 && isJointArtistCredit(s.answer)
       if (isDuo) {
         for (const part of parts) {
           const partAccepts = s.acceptAnswers.filter((a) => {
             const t = a.trim()
-            if (!t || /[,，&＆]| 와 | 과 /i.test(t)) return false
+            if (!t || isJointArtistCredit(t)) return false
             return normalizeAnswer(t) === normalizeAnswer(part) || t.includes(part) || part.includes(t)
           })
           slotsExpanded.push({
@@ -210,7 +220,9 @@ function buildSlots(data: z.infer<typeof createSchema>) {
     }
     slotsExpanded.push({
       ...s,
-      acceptAnswers: [...new Set([s.answer, ...s.acceptAnswers].map((x) => x.trim()).filter(Boolean))],
+      acceptAnswers: isTitleLikeLabel(s.label)
+        ? expandTitleAccepts(s.answer, s.acceptAnswers)
+        : [...new Set([s.answer, ...s.acceptAnswers].map((x) => x.trim()).filter(Boolean))],
     })
   }
 

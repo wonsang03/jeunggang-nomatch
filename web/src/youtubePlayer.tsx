@@ -106,6 +106,48 @@ export function loadYtApi() {
 }
 
 /**
+ * 크롬·엣지의 미디어 허브(툴바 ▶ 버튼·OS 잠금화면)는 재생 중인 YouTube 영상의
+ * «제목»을 그대로 띄운다. 그게 곧 정답이라 상위 문서에서 게임 이름으로 덮어쓰고,
+ * 유튜브가 되돌려 놓으면 다시 덮는다.
+ */
+const MEDIA_TITLE = '증강노맞'
+const MEDIA_ARTIST = '노래 맞히는 중'
+let mediaGuardTimer: number | null = null
+let mediaGuardUsers = 0
+
+function maskMediaMetadata() {
+  const ms = navigator.mediaSession
+  const MM = window.MediaMetadata
+  if (!ms || !MM) return
+  try {
+    const cur = ms.metadata
+    if (cur && cur.title === MEDIA_TITLE && cur.artist === MEDIA_ARTIST) return
+    ms.metadata = new MM({ title: MEDIA_TITLE, artist: MEDIA_ARTIST, album: '', artwork: [] })
+  } catch { /* 지원 안 하면 무시 */ }
+}
+
+function acquireMediaGuard() {
+  mediaGuardUsers += 1
+  maskMediaMetadata()
+  if (mediaGuardTimer == null) {
+    mediaGuardTimer = window.setInterval(maskMediaMetadata, 1000)
+  }
+}
+
+function releaseMediaGuard() {
+  mediaGuardUsers = Math.max(0, mediaGuardUsers - 1)
+  if (mediaGuardUsers > 0 || mediaGuardTimer == null) return
+  window.clearInterval(mediaGuardTimer)
+  mediaGuardTimer = null
+  try {
+    if (navigator.mediaSession) navigator.mediaSession.metadata = null
+  } catch { /* ignore */ }
+}
+
+/** 탭 한 번으로 막힌 플레이어를 전부 같이 깨운다 */
+const UNBLOCK_EVENT = 'hidden-youtube:unblock'
+
+/**
  * 야랄: (seed · 구간번호)만으로 같은 지점을 뽑는 결정적 난수 [0,1).
  * 서버가 점프 지점을 매번 내려주지 않아도 새로고침·재접속이 같은 자리로 맞춰진다.
  */
@@ -213,6 +255,12 @@ export function HiddenYouTube({
   idRef.current = id
   const audioLockedRef = useRef(!!(audioUnlockAt && audioUnlockAt > serverNow()))
   const [blocked, setBlocked] = useState(false)
+
+  // 이 플레이어가 떠 있는 동안 미디어 허브에 곡 제목이 뜨지 않게 막는다
+  useEffect(() => {
+    acquireMediaGuard()
+    return releaseMediaGuard
+  }, [])
   /** 되살릴 방법이 없는 영상 — 재시도 루프를 돌리지 않고 사실대로 표시한다 */
   const [unplayable, setUnplayable] = useState(false)
   const onUnplayableRef = useRef(onUnplayable)
@@ -300,6 +348,15 @@ export function HiddenYouTube({
     return { sc, elapsedMs, bucket: Math.floor(elapsedMs / sc.periodMs) }
   }
 
+  /**
+   * 클립이 끝나면 처음으로 되감을 것인가.
+   *
+   * 알레그로(2~3배속)가 걸리면 40초 클립을 20초 만에 다 듣는다. 그대로 두면
+   * 남은 라운드 동안 같은 구간을 처음부터 다시 듣게 된다("20초 듣고 되감기").
+   * 빨리 들은 만큼 뒤를 계속 듣도록 두는 쪽이 자연스럽다.
+   */
+  const clipLoops = () => !(rateRef.current > 1)
+
   const clipSeekTarget = () => {
     const s = startRef.current
     const clipEnd = endRef.current
@@ -318,9 +375,10 @@ export function HiddenYouTube({
     if (endsAt && dur && dur > 0) {
       const roundStart = endsAt - dur * 1000
       const elapsedSec = Math.max(0, (serverNow() - roundStart) / 1000) * rateRef.current
-      if (clipLen && clipLen > 0) {
+      if (clipLen && clipLen > 0 && clipLoops()) {
         target = s + (elapsedSec % clipLen)
       } else {
+        // 배속 중엔 되감지 않으므로 나머지 연산도 하면 안 된다 (드리프트 보정이 앞으로 끌어당김)
         target = s + elapsedSec
       }
     }
@@ -399,6 +457,8 @@ export function HiddenYouTube({
     const clipLen = resolveClipLen()
     // 클립 구간이 있으면 끝나면 start로 루프. loop만 있는 앰비언트는 recover(ENDED)로 재시작.
     if (!(clipLen && clipLen > 0)) return
+    // 배속으로 일찍 끝난 클립은 되감지 않고 뒤를 계속 듣는다
+    if (!clipLoops()) return
     const len = clipLen
     let cur = startRef.current
     try {
@@ -635,10 +695,9 @@ export function HiddenYouTube({
               const iframe = hostRef.current?.querySelector('iframe')
               if (iframe) {
                 iframe.setAttribute('referrerpolicy', 'strict-origin-when-cross-origin')
-                iframe.setAttribute(
-                  'allow',
-                  'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share',
-                )
+                // picture-in-picture 를 주면 숨겨 둔 영상을 창 밖으로 꺼내 제목·썸네일을 볼 수 있다.
+                // 재생에 필요한 것만 남긴다.
+                iframe.setAttribute('allow', 'autoplay; encrypted-media')
               }
             }, 0)
             setReady(true)
@@ -761,6 +820,9 @@ export function HiddenYouTube({
     if (!ready) return
     const p = playerRef.current
     if (!p || !id) return
+    // playEpoch가 바뀐 건 "다시 틀어라"는 신호다 — 끝난 oneshot도 여기서만 되살린다
+    // (간다드래프트 2회차처럼 같은 구간을 다시 틀어야 하는 경우)
+    endedRef.current = false
     if (Date.now() - lastKickAtRef.current < 400) return
     const t = setTimeout(() => {
       lastKickAtRef.current = Date.now()
@@ -924,22 +986,50 @@ export function HiddenYouTube({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [blocked, ready, id, unplayable])
 
+  /**
+   * 탭해서 재생 — 브라우저 자동재생 잠금만 푼다.
+   * 음소거 규칙(가호 컷신·전원을 꺼봤습니다·슬로우 스타터)은 그대로 지켜서,
+   * 이 버튼 한 번에 들리면 안 되는 곡이 새어 나가지 않게 한다.
+   */
   const forcePlay = () => {
     const p = playerRef.current
     if (!p || !id) return
-    audioLockedRef.current = false
     try {
-      p.loadVideoById(loadOpts(id))
-      p.seekTo(start, true)
-      applyRate(p, rateRef.current)
-      const vol = Math.max(0, Math.min(100, volume))
-      p.setVolume(vol)
-      if (vol <= 0) p.mute()
-      else p.unMute()
-      p.playVideo()
+      let st = -1
+      try {
+        st = typeof p.getPlayerState === 'function' ? p.getPlayerState() : -1
+      } catch { /* ignore */ }
+      // 아직 한 번도 로드되지 않았을 때만 다시 태운다 (로드 자동재생이 소리부터 내지 않게 mute 먼저)
+      if (st === -1) {
+        p.mute()
+        p.loadVideoById(loadOpts(id))
+      }
+      const s = startRef.current
+      const hasRoundSync = !!(endsAtRef.current && roundDurRef.current && roundDurRef.current > 0)
+      const hasClipEnd = endRef.current != null && endRef.current > s
+      let cur = NaN
+      try { cur = p.getCurrentTime() } catch { /* ignore */ }
+      // 앰비언트(증강 BGM 등)가 이미 흐르고 있으면 처음으로 되감지 않는다
+      const keepPosition = !hasRoundSync && !hasClipEnd && Number.isFinite(cur) && cur >= s - 0.25
+      syncPlayback(p, { seek: !keepPosition, forceSeek: !keepPosition })
       setBlocked(false)
     } catch { /* ignore */ }
   }
+
+  const forcePlayRef = useRef(forcePlay)
+  forcePlayRef.current = forcePlay
+  const blockedRef = useRef(blocked)
+  blockedRef.current = blocked
+
+  // 버튼은 플레이어마다 같은 자리에 겹쳐 뜬다. 어느 걸 눌렀든 막힌 플레이어를 전부 같이 깨운다.
+  // (동기 dispatch라 사용자 제스처 안에서 실행된다 — 자동재생 정책 통과)
+  useEffect(() => {
+    const onUnblock = () => {
+      if (blockedRef.current) forcePlayRef.current()
+    }
+    window.addEventListener(UNBLOCK_EVENT, onUnblock)
+    return () => window.removeEventListener(UNBLOCK_EVENT, onUnblock)
+  }, [])
 
   if (!id) return null
 
@@ -987,7 +1077,7 @@ export function HiddenYouTube({
       {blocked && !unplayable && (
         <button
           type="button"
-          onClick={forcePlay}
+          onClick={() => window.dispatchEvent(new Event(UNBLOCK_EVENT))}
           style={{
             position: 'fixed',
             left: '50%',
@@ -1114,7 +1204,9 @@ export function RoomSongPersistentBgm() {
     const elapsed = Math.max(0, now - started)
     return (elapsed % cycle) >= onMs
   })()
-  const baseVol = (songPowerOff || stutterOff || round?.readingMuted || readingPreSolveMute || !!me?.peckSong) ? 0 : musicVolume
+  // 야차룰 중에는 벌칙 곡이 방 곡을 덮지 않는다 (대결 곡을 다 같이 들어야 함)
+  const peckMutesRoomSong = !inDuel && !!me?.peckSong
+  const baseVol = (songPowerOff || stutterOff || round?.readingMuted || readingPreSolveMute || peckMutesRoomSong) ? 0 : musicVolume
   const songPlaybackRate = (!inDuel && me?.playbackRate && me.playbackRate > 0 && me.playbackRate !== 1)
     ? me.playbackRate
     : 1
@@ -1216,6 +1308,8 @@ export function FlameKimOverlayBgm() {
     startSec: number
     endSec: number | null
     source: string
+    /** 같은 구간을 다시 틀어야 할 때 바뀌는 값 (간다드래프트 2회차) */
+    epoch: number
   } | null>(null)
   const [now, setNow] = useState(() => serverNow())
 
@@ -1251,14 +1345,15 @@ export function FlameKimOverlayBgm() {
 
     const url = (overlayActive ? trick!.youtubeUrl : '') || FLAME_KIM_FALLBACK_URL
     const startSec = overlayActive ? (trick!.startSec ?? 0) : 10
-    // 구간이 지정된 오버레이는 그 구간만 반복한다 (간다드래프트 등)
+    // 구간이 지정된 오버레이는 그 구간을 «1회만» 재생한다 (간다드래프트 등)
     const endSec = overlayActive && trick!.endSec != null && trick!.endSec > startSec
       ? trick!.endSec
       : null
     const source = overlayActive ? trick!.source : 'flame'
+    const epoch = (overlayActive ? trick!.epoch : null) ?? 0
     setSession((prev) => {
-      if (prev && prev.url === url && prev.source === source && prev.endSec === endSec) return prev
-      return { url, startSec, endSec, source }
+      if (prev && prev.url === url && prev.source === source && prev.endSec === endSec && prev.epoch === epoch) return prev
+      return { url, startSec, endSec, source, epoch }
     })
   }, [
     me,
@@ -1296,10 +1391,10 @@ export function FlameKimOverlayBgm() {
       playLabel={`🎵 탭해서 ${label} 재생`}
       audioUnlockAt={null}
       cutMute={songPowerOff || !!gahoCutscene}
-      loop
+      {...(session.endSec != null ? { oneshot: true } : { loop: true })}
       roundEndsAt={null}
       roundDurationSec={null}
-      playEpoch={`overlay-${session.source}-${ytId(session.url)}`}
+      playEpoch={`overlay-${session.source}-${ytId(session.url)}-${session.epoch}`}
     />
   )
 }
@@ -1355,7 +1450,9 @@ export function PeckSongBgm() {
 
   if (!user?.id || !session || !room || room.status === 'lobby' || room.status === 'ended') return null
 
-  const vol = Math.min(100, Math.round(musicVolume * 2))
+  // 야차룰 중에는 방 전체가 같은 곡을 들어야 한다. 플레이어는 살려 두고 소리만 끈다
+  // (벌칙 곡 경과 시간은 계속 흐르고, 대결이 끝나면 이어서 다시 들린다)
+  const vol = room.status === 'duel' ? 0 : Math.min(100, Math.round(musicVolume * 2))
 
   return (
     <>

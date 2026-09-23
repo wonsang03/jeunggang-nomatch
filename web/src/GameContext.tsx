@@ -73,6 +73,8 @@ export type AudioTrick = {
   youtubeUrl: string
   startSec: number
   endSec?: number | null
+  /** 같은 구간을 다시 틀어야 할 때 바뀌는 값 (간다드래프트 2회차) */
+  epoch?: number
   label: string
   source: 'mud' | 'sakura' | 'flame' | 'party'
 }
@@ -355,7 +357,6 @@ export type GameResult = { nickname: string; score: number; userId: string }
 type GameCtx = {
   user: AuthUser | null
   connected: boolean
-  pingMs: number | null
   musicVolume: number
   sfxVolume: number
   setMusicVolume: (n: number) => void
@@ -376,8 +377,6 @@ type GameCtx = {
   results: GameResult[] | null
   /** 추정 서버 시각 (핑 오프셋 반영) */
   serverNow: () => number
-  /** 시계 샘플 횟수 (증강 중 싱크 표시용) */
-  clockSamples: number
   /** 트루먼쇼 폭로 연출 */
   trumanReveal: { name: string; fakeScore: number; realScore: number } | null
   clearTrumanReveal: () => void
@@ -451,6 +450,17 @@ type GameCtx = {
 }
 
 const Ctx = createContext<GameCtx | null>(null)
+
+/**
+ * 핑·시계 샘플은 1.2초(증강 중 0.4초)마다 바뀐다.
+ * 본 컨텍스트에 섞으면 그때마다 채팅·라운드 로그까지 전부 다시 그려지므로 따로 뺀다.
+ */
+type PingCtxValue = { pingMs: number | null; clockSamples: number }
+const PingCtx = createContext<PingCtxValue>({ pingMs: null, clockSamples: 0 })
+
+export function usePing() {
+  return useContext(PingCtx)
+}
 
 export function GameProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(() => getStoredUser())
@@ -926,6 +936,9 @@ export function GameProvider({ children }: { children: ReactNode }) {
     return bindSocket()
   }, [user?.id, bindSocket])
 
+  /** 객체 자체가 아니라 유무만 보게 해서, 새 제안이 올 때마다 핑 타이머가 다시 잡히지 않게 한다 */
+  const hasAugmentOffer = !!augmentOffer
+
   useEffect(() => {
     if (!connected) {
       setPingMs(null)
@@ -984,14 +997,14 @@ export function GameProvider({ children }: { children: ReactNode }) {
     // connected가 false→true로 바뀌며 이 이펙트가 다시 도는 것 자체가 재접속 신호다
     resync()
 
-    const period = augmentOffer ? 400 : 1200
+    const period = hasAugmentOffer ? 400 : 1200
     const id = window.setInterval(() => measure(true), period)
     return () => {
       window.clearInterval(id)
       document.removeEventListener('visibilitychange', onVisible)
       window.removeEventListener('focus', onVisible)
     }
-  }, [connected, augmentOffer])
+  }, [connected, hasAugmentOffer])
 
   // 서버 endsAt 기준 카운트다운 (사람마다 로컬 틱 어긋남 완화)
   useEffect(() => {
@@ -1245,7 +1258,6 @@ export function GameProvider({ children }: { children: ReactNode }) {
     () => ({
       user,
       connected,
-      pingMs,
       musicVolume,
       sfxVolume,
       setMusicVolume,
@@ -1269,7 +1281,6 @@ export function GameProvider({ children }: { children: ReactNode }) {
       augmentNotice,
       clearAugmentNotice,
       serverNow,
-      clockSamples,
       login,
       register,
       logout,
@@ -1301,7 +1312,6 @@ export function GameProvider({ children }: { children: ReactNode }) {
     [
       user,
       connected,
-      pingMs,
       musicVolume,
       sfxVolume,
       setMusicVolume,
@@ -1321,11 +1331,16 @@ export function GameProvider({ children }: { children: ReactNode }) {
       trumanReveal,
       gahoCutscene,
       augmentNotice,
-      clockSamples,
     ],
   )
 
-  return <Ctx.Provider value={value}>{children}</Ctx.Provider>
+  const pingValue = useMemo(() => ({ pingMs, clockSamples }), [pingMs, clockSamples])
+
+  return (
+    <Ctx.Provider value={value}>
+      <PingCtx.Provider value={pingValue}>{children}</PingCtx.Provider>
+    </Ctx.Provider>
+  )
 }
 
 export function useGame() {

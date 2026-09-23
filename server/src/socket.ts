@@ -2,7 +2,15 @@
 import { randomInt } from 'node:crypto'
 import { prisma } from './config.js'
 import { verifyToken, type AuthUser } from './auth.js'
-import { extractYoutubeId, normalizeAnswer, hintChosung, expandArtistAccepts, hangulToQwertyMistype, isAcceptedAnswer } from './answer.js'
+import {
+  extractYoutubeId,
+  normalizeAnswer,
+  hintChosung,
+  expandArtistAccepts,
+  expandTitleAccepts,
+  hangulToQwertyMistype,
+  isAcceptedAnswer,
+} from './answer.js'
 import { parseTagsJson } from './tags.js'
 import { PLAYABLE_GENRES, YACHA_GENRE, isPlayableGenre } from './genres.js'
 import { loadGenreBankCounts, loadGenreQuestions } from './bankCache.js'
@@ -22,6 +30,7 @@ import {
   buffApplies,
   isArtistLikeLabel,
   isTitleLikeLabel,
+  toSlotRows,
   josaUlReul,
   parseEffectValue,
   skipVotesNeeded,
@@ -1167,6 +1176,8 @@ type AudioTrick = {
   youtubeUrl: string
   startSec: number
   endSec: number | null
+  /** 같은 구간을 다시 틀어야 할 때 바뀌는 값 (간다드래프트 2회차) */
+  epoch?: number
   label: string
   source: 'mud' | 'sakura' | 'flame' | 'party'
 }
@@ -1229,14 +1240,16 @@ function resolveOverlayTrick(m: Member, room: Room): AudioTrick | null {
     if (!youtubeUrl) continue
     const startRaw = Number(b.effectValue.bgmStartSec ?? b.effectValue.startSec)
     const startSec = Number.isFinite(startRaw) && startRaw >= 0 ? Math.floor(startRaw) : 0
-    // 구간(endSec)이 지정된 풍악은 그 구간만 반복 재생한다 (간다드래프트 등)
+    // 구간(endSec)이 지정돼 있으면 그 구간을 «1회만» 재생한다 (간다드래프트 등)
     const endRaw = Number(b.effectValue.bgmEndSec ?? b.effectValue.endSec)
     const endSec = Number.isFinite(endRaw) && endRaw > startSec ? Math.floor(endRaw) : null
+    const epochRaw = Number(b.effectValue.epoch)
     return {
       mode: 'overlay',
       youtubeUrl,
       startSec,
       endSec,
+      epoch: Number.isFinite(epochRaw) ? epochRaw : b.startIndex,
       label: b.name || '풍악을 울려라',
       source: 'party',
     }
@@ -2242,7 +2255,7 @@ function cleanText(value: unknown, maxLength: number) {
 /** 방에서 고를 수 있는 채팅 색 개수 (실제 색상값은 클라이언트 팔레트) */
 const CHAT_COLOR_COUNT = 10
 
-/** 아직 아무도 안 쓴 색을 준다. 다 찼으면 앞에서부터 돌려 쓴다. */
+/** 아직 아무도 안 쓴 색을 준다. 다 찼으면 null — 색을 겹쳐 주지 않는다. */
 function pickFreeChatColor(room: Room, exceptUserId?: string) {
   const used = new Set<number>()
   for (const other of room.members.values()) {
@@ -2252,7 +2265,7 @@ function pickFreeChatColor(room: Room, exceptUserId?: string) {
   for (let i = 0; i < CHAT_COLOR_COUNT; i += 1) {
     if (!used.has(i)) return i
   }
-  return room.members.size % CHAT_COLOR_COUNT
+  return null
 }
 
 function attachMember(room: Room, m: Member) {
@@ -2731,16 +2744,16 @@ type DbQuestionWithSlots = {
 }
 
 function toQuestionRuntime(q: DbQuestionWithSlots): QuestionRuntime {
-  const titleSlot = q.slots.find((s) => !s.hidden && isTitleLikeLabel(s.label))
-    || q.slots.find((s) => !s.hidden && !isArtistLikeLabel(s.label))
-    || q.slots.find((s) => !s.hidden)
-  const artistSlots = q.slots.filter((s) => !s.hidden && isArtistLikeLabel(s.label))
+  const rows = q.slots.flatMap(toSlotRows)
+  const titleSlot = rows.find((s) => !s.hidden && isTitleLikeLabel(s.label))
+    || rows.find((s) => !s.hidden && !isArtistLikeLabel(s.label))
+    || rows.find((s) => !s.hidden)
+  const artistSlots = rows.filter((s) => !s.hidden && isArtistLikeLabel(s.label))
   const title = titleSlot?.answer || ''
-  const titleAccepts = titleSlot ? (JSON.parse(titleSlot.acceptAnswers || '[]') as string[]) : []
-  const artistChosungParts = artistSlots.map((s) => {
-    const accepts = JSON.parse(s.acceptAnswers || '[]') as string[]
-    return hintChosung(s.answer, expandArtistAccepts(s.answer, accepts))
-  }).filter(Boolean)
+  const titleAccepts = titleSlot ? expandTitleAccepts(titleSlot.answer, titleSlot.accepts) : []
+  const artistChosungParts = artistSlots
+    .map((s) => hintChosung(s.answer, expandArtistAccepts(s.answer, s.accepts)))
+    .filter(Boolean)
 
   return {
     id: q.id,
@@ -2751,10 +2764,13 @@ function toQuestionRuntime(q: DbQuestionWithSlots): QuestionRuntime {
     tags: parseTagsJson(q.tags),
     titleChosung: title ? hintChosung(title, titleAccepts) : '',
     artistChosung: artistChosungParts.join(' / '),
-    slots: q.slots.map((s) => {
-      const accepts = JSON.parse(s.acceptAnswers || '[]') as string[]
+    slots: rows.map((s) => {
       const isArtist = isArtistLikeLabel(s.label)
-      const expanded = isArtist ? expandArtistAccepts(s.answer, accepts) : accepts
+      const expanded = isArtist
+        ? expandArtistAccepts(s.answer, s.accepts)
+        : isTitleLikeLabel(s.label)
+          ? expandTitleAccepts(s.answer, s.accepts)
+          : s.accepts
       const acceptNorms = [...new Set([s.answer, ...expanded].map(normalizeAnswer))]
       return {
         id: s.id,
@@ -3596,6 +3612,11 @@ async function applyAugmentEffect(
     if (!youtubeUrl) return { ok: false, hint: '재생할 영상 주소가 없습니다', chatText: null }
     const startRaw = Number(value.startSec)
     const startSec = Number.isFinite(startRaw) && startRaw >= 0 ? Math.floor(startRaw) : 0
+    // 지정 구간이 있으면 그 구간만 1회 재생한다 — 여기서 빠뜨리면 클라가 끝까지 틀어버린다
+    const endRaw = Number(value.endSec)
+    const endSec = Number.isFinite(endRaw) && endRaw > startSec ? Math.floor(endRaw) : null
+    // 같은 라운드에 2회차를 써도 구간이 다시 돌도록 매번 새 값을 준다
+    const epoch = Date.now()
     // 즉시 — room:state의 audioOverlay로 바로 내려가 이번 라운드부터 겹쳐 재생된다
     const startIndex = room.index
     for (const other of room.members.values()) {
@@ -3607,7 +3628,7 @@ async function applyAugmentEffect(
         name: aug.name,
         description: aug.description,
         effectType: aug.effectType,
-        effectValue: { rounds: partyRounds, youtubeUrl, startSec },
+        effectValue: { rounds: partyRounds, youtubeUrl, startSec, endSec, epoch },
         imageUrl: aug.imageUrl || null,
         usedByNickname: user.nickname,
         startIndex,
@@ -6108,6 +6129,11 @@ export function registerSocket(io: Server) {
         if (!Number.isFinite(n) || n < 0 || n >= CHAT_COLOR_COUNT) {
           return cb?.({ ok: false, error: '없는 색입니다' })
         }
+        // 색은 방 안에서 겹치지 않는다 (관전자는 색이 없으므로 제외)
+        const taken = [...room.members.values()].some(
+          (other) => other.userId !== user.id && !other.isSpectator && other.chatColor === n,
+        )
+        if (taken) return cb?.({ ok: false, error: '이미 다른 사람이 쓰는 색입니다' })
         m.chatColor = n
       }
       const state = roomState(room)

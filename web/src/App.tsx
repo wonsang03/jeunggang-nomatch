@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo, memo } from 'react'
-import { useGame, type ChatMsg, type RoomMember } from './GameContext'
+import { useGame, usePing, type ChatMsg, type RoomMember } from './GameContext'
 import { PLAYABLE_GENRES, emptyGenreCounts, type GenreName } from './genres'
 import { playSfx } from './sfx'
 import { serverNow } from './clockSync'
@@ -41,10 +41,41 @@ import {
 } from './ui'
 
 
+/**
+ * 핑 표시 — 1.2초마다 갱신된다.
+ * 화면 컴포넌트가 직접 pingMs를 읽으면 그때마다 채팅·로그까지 다시 그려지므로 여기서만 읽는다.
+ */
+function PingText({ connected }: { connected: boolean }) {
+  const { pingMs } = usePing()
+  const color = !connected ? C.red : pingMs == null ? C.muted : pingMs < 80 ? C.green : pingMs < 160 ? C.blue : C.red
+  return (
+    <span style={{ color, fontVariantNumeric: 'tabular-nums' }}>
+      {connected ? (pingMs == null ? '…ms' : `${pingMs}ms`) : '끊김'}
+    </span>
+  )
+}
+
+/** 증강 선택 화면의 싱크 표시 — 같은 이유로 분리 */
+function SyncStatus() {
+  const { pingMs, clockSamples } = usePing()
+  return (
+    <div style={{
+      fontFamily: F.ui,
+      fontSize: 13,
+      color: clockSamples >= 4 ? C.green : C.muted,
+      marginBottom: 10,
+    }}>
+      {clockSamples >= 4
+        ? `재생 싱크 맞춤 · ${pingMs == null ? '…' : `${pingMs}ms`}`
+        : `재생 싱크 맞추는 중… (${clockSamples}/4)`}
+    </div>
+  )
+}
+
 // ── Lobby ──────────────────────────────────────────────────────
 
 function LobbyScreen({ nav }: { nav: (s: Screen) => void }) {
-  const { user, rooms, connected, pingMs, musicVolume, sfxVolume, setMusicVolume, setSfxVolume, createRoom, joinRoom, logout } = useGame()
+  const { user, rooms, connected, musicVolume, sfxVolume, setMusicVolume, setSfxVolume, createRoom, joinRoom, logout } = useGame()
   const [search, setSearch] = useState('')
   const [code, setCode] = useState('')
   const [err, setErr] = useState('')
@@ -89,8 +120,6 @@ function LobbyScreen({ nav }: { nav: (s: Screen) => void }) {
     finally { setBusy(false) }
   }
 
-  const pingColor = !connected ? C.red : pingMs == null ? C.muted : pingMs < 80 ? C.green : pingMs < 160 ? C.blue : C.red
-
   return (
     <div style={{ minHeight: '100vh', ...notebookLines, position: 'relative' }}>
       <MarginLine />
@@ -109,9 +138,7 @@ function LobbyScreen({ nav }: { nav: (s: Screen) => void }) {
         <div style={{ fontFamily: F.ui, fontSize: 14, fontWeight: 700, color: connected ? C.green : C.red, display: 'flex', alignItems: 'center', gap: 8 }}>
           <span>{connected ? '● 연결됨' : '○ 연결 중…'}</span>
           {connected && (
-            <span style={{ color: pingColor, fontVariantNumeric: 'tabular-nums' }}>
-              {pingMs == null ? '…ms' : `${pingMs}ms`}
-            </span>
+            <PingText connected />
           )}
         </div>
         <div style={{ fontFamily: F.ui, fontSize: 15, fontWeight: 700, color: C.muted }}>
@@ -353,8 +380,11 @@ function useStickyChatScroll(dep: unknown) {
     const el = scrollRef.current
     if (!el) return
     if (el.scrollHeight - el.clientHeight <= CHAT_BOTTOM_EPS) return
+    // 맨 아래에 붙어 있을 때의 미세한 위쪽 휠·관성까지 «올렸다»로 치면
+    // 가만히 있어도 자동 스크롤이 풀린다. 실제로 올라간 뒤에 끊는다.
+    if (isNearBottom(el) && -e.deltaY < CHAT_BOTTOM_EPS) return
     setStickBoth(false)
-  }, [setStickBoth])
+  }, [isNearBottom, setStickBoth])
 
   const jumpToLatest = useCallback(() => {
     stickRef.current = true
@@ -772,9 +802,10 @@ function WaitingScreen({ nav }: { nav: (s: Screen) => void }) {
                         key={c.name}
                         type="button"
                         title={takenBy ? `${c.name} · ${takenBy.nickname}` : c.name}
+                        disabled={!!takenBy && !picked}
                         onClick={() => onPickChatColor(i)}
                         style={{
-                          width: 34, height: 34, cursor: 'pointer', padding: 0,
+                          width: 34, height: 34, cursor: takenBy && !picked ? 'not-allowed' : 'pointer', padding: 0,
                           ...sk(picked ? C.graphite : c.line, true),
                           backgroundColor: c.fill,
                           borderWidth: picked ? 3.5 : 2.5,
@@ -788,7 +819,7 @@ function WaitingScreen({ nav }: { nav: (s: Screen) => void }) {
                   })}
                 </div>
                 <div style={{ fontFamily: F.ui, fontSize: 12, color: C.muted, marginTop: 8 }}>
-                  10개 중 하나 · 흐린 건 다른 사람이 쓰는 색
+                  10개 중 하나 · 흐린 건 다른 사람이 쓰는 색 (고를 수 없음)
                 </div>
               </>
             )}
@@ -1337,7 +1368,7 @@ const GameChatList = memo(function GameChatList({
 })
 
 function GameScreen({ nav }: { nav: (s: Screen) => void }) {
-  const { user, room, chats, round, skip, skipVoted, augmentHint, startCountdown, musicVolume, setMusicVolume, sfxVolume, setSfxVolume, submitAnswer, sendChat, voteSkip, useAugment, fetchGahoCandidates, leaveRoom, connected, pingMs, readingAccept, readingPass, readingClaim, readingVote } = useGame()
+  const { user, room, chats, round, skip, skipVoted, augmentHint, startCountdown, musicVolume, setMusicVolume, sfxVolume, setSfxVolume, submitAnswer, sendChat, voteSkip, useAugment, fetchGahoCandidates, leaveRoom, connected, readingAccept, readingPass, readingClaim, readingVote } = useGame()
   const [input, setInput] = useState('')
   const [showUsedList, setShowUsedList] = useState(false)
   /** 2칸일 때 어느 카드를 쓸지 */
@@ -2021,13 +2052,11 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
         </div>
         <div style={{
           fontFamily: F.ui, fontSize: 13, fontWeight: 700,
-          color: !connected ? C.red : pingMs == null ? C.muted : pingMs < 80 ? C.green : pingMs < 160 ? C.blue : C.red,
-          fontVariantNumeric: 'tabular-nums',
           padding: '4px 8px',
           minWidth: 52,
           textAlign: 'right',
         }} title="서버 왕복 지연">
-          {connected ? (pingMs == null ? '…ms' : `${pingMs}ms`) : '끊김'}
+          <PingText connected={connected} />
         </div>
         <Btn size="sm" onClick={() => setLeaveOpen(true)}>나가기</Btn>
       </div>
@@ -2062,6 +2091,10 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
                 overflowX: 'hidden',
                 minHeight: 0,
                 minWidth: 0,
+                // 크롬 스크롤 앵커링 끄기 — 아바타·줄바꿈으로 위쪽 높이가 변하면
+                // 크롬이 scrollTop을 몰래 올리는데, 그걸 «사용자가 위로 올렸다»로 오인해
+                // 자동 스크롤 고정이 저절로 풀렸다.
+                overflowAnchor: 'none',
                 padding: '4px 8px 8px 4px',
                 scrollBehavior: 'auto',
               }}
@@ -2230,6 +2263,10 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
                 overflowX: 'hidden',
                 minHeight: 0,
                 minWidth: 0,
+                // 크롬 스크롤 앵커링 끄기 — 아바타·줄바꿈으로 위쪽 높이가 변하면
+                // 크롬이 scrollTop을 몰래 올리는데, 그걸 «사용자가 위로 올렸다»로 오인해
+                // 자동 스크롤 고정이 저절로 풀렸다.
+                overflowAnchor: 'none',
                 // 스케치 그림자·우측 말풍선이 잘리지 않게
                 padding: '6px 12px 10px 6px',
                 scrollBehavior: 'auto',
@@ -2636,14 +2673,72 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
                     description: '정답 시 −1 · 못 맞히면 −2 · 시전자에게 전달',
                   })
                 }
-                if (me?.flameKimActive) {
+                if (me?.flameKimActive || me?.flameKimPending) {
                   chips.push({
                     key: 'flame',
                     name: me.flameKimBy || '불꽃남자김상원',
                     imageUrl: null,
                     hostile: false,
-                    meta: `${me.flameKimRoundsLeft ?? '?'}R · ${me.flameKimTarget || '대상'}`,
+                    meta: me.flameKimPending
+                      ? '다음부터'
+                      : `${me.flameKimRoundsLeft ?? '?'}R · ${me.flameKimTarget || '대상'}`,
                     description: '방 노래+불꽃남자 동시 · 본인 득점 시 대상 −1',
+                  })
+                }
+                // 아래는 activeBuffs 가 아니라 멤버 전용 필드로 저장되는 효과들이다.
+                // 칩을 안 만들어 두면 적용 중인데도 이 칸에 아무 표시가 안 뜬다.
+                // (버프 목록에 실리는 효과는 여기에 또 넣으면 두 번 뜬다)
+                if (me?.chatMuted || me?.chatMutePending) {
+                  chips.push({
+                    key: 'chat-mute',
+                    name: me.chatMuteBy || '입 막기',
+                    imageUrl: null,
+                    hostile: true,
+                    meta: me.chatMutePending ? '다음부터' : '채팅 금지',
+                    description: '이 효과가 끝날 때까지 채팅을 보낼 수 없습니다.',
+                  })
+                }
+                if (me?.politeActive || me?.politePending) {
+                  chips.push({
+                    key: 'polite',
+                    name: me.politeBy || '예의바른청년',
+                    imageUrl: null,
+                    hostile: !!(me.politeBy && me.politeBy !== user.nickname),
+                    meta: [
+                      me.politePending ? '다음부터' : `${me.politeRoundsLeft ?? '?'}R`,
+                      me.politeBonus ? `+${me.politeBonus}` : '',
+                    ].filter(Boolean).join(' · '),
+                    description: '정답 끝에 정해진 말을 붙여야 인정됩니다.',
+                  })
+                }
+                if (me?.audioDelayUntil && now < me.audioDelayUntil) {
+                  chips.push({
+                    key: 'audio-delay',
+                    name: '노래 지연',
+                    imageUrl: null,
+                    hostile: true,
+                    meta: `${me.audioDelaySec ?? '?'}초`,
+                    description: '남들보다 늦게 노래가 들립니다.',
+                  })
+                }
+                if (me?.songMuteUntil && now < me.songMuteUntil) {
+                  chips.push({
+                    key: 'power-off',
+                    name: '전원을 꺼봤습니다',
+                    imageUrl: null,
+                    hostile: true,
+                    meta: `${Math.max(0, Math.ceil((me.songMuteUntil - now) / 1000))}초`,
+                    description: '노래가 들리지 않습니다.',
+                  })
+                }
+                if (me?.peckSong) {
+                  chips.push({
+                    key: 'peck-song',
+                    name: me.peckSong.byName || '쪼아요~',
+                    imageUrl: null,
+                    hostile: true,
+                    meta: '벌칙 곡',
+                    description: '이 곡이 끝날 때까지 방 노래 대신 벌칙 곡만 들립니다.',
                   })
                 }
                 if (chips.length === 0 && !augmentHint) {
@@ -3216,7 +3311,7 @@ function GameScreen({ nav }: { nav: (s: Screen) => void }) {
 // ── Augment ────────────────────────────────────────────────────
 
 function AugmentScreen({ nav }: { nav: (s: Screen) => void }) {
-  const { user, room, augmentOffer, pickAugment, rerollAugment, fetchGahoCandidates, pingMs, clockSamples } = useGame()
+  const { user, room, augmentOffer, pickAugment, rerollAugment, fetchGahoCandidates } = useGame()
   const [timer, setTimer] = useState(20)
   const [selected, setSelected] = useState<string | null>(null)
   const [rerollsLeft, setRerollsLeft] = useState(1)
@@ -3351,16 +3446,7 @@ function AugmentScreen({ nav }: { nav: (s: Screen) => void }) {
       <div style={{ ...sk(), backgroundColor: C.card, padding: '36px 32px', maxWidth: 720, width: '100%', textAlign: 'center' }}>
         <div style={{ fontFamily: F.brand, fontSize: 42, fontWeight: 700, marginBottom: 8 }}>증강 선택</div>
         <div style={{ fontFamily: F.ui, fontSize: 18, color: C.muted, marginBottom: 8 }}>남은 시간 {timer}초 · 1개 보관</div>
-        <div style={{
-          fontFamily: F.ui,
-          fontSize: 13,
-          color: clockSamples >= 4 ? C.green : C.muted,
-          marginBottom: 10,
-        }}>
-          {clockSamples >= 4
-            ? `재생 싱크 맞춤 · ${pingMs == null ? '…' : `${pingMs}ms`}`
-            : `재생 싱크 맞추는 중… (${clockSamples}/4)`}
-        </div>
+        <SyncStatus />
         {augmentOffer?.lockedTier && (
           <div style={{
             display: 'inline-block',

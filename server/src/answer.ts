@@ -8,12 +8,61 @@ export function normalizeAnswer(s: string) {
 }
 
 /**
- * 정답 인정: 정규화(공백·문장부호·대소문자 무시) 후 **완전 일치**만
+ * 정답 인정: 정규화(공백·문장부호·대소문자 무시) 후 완전 일치.
+ *
+ * 한 가지만 봐준다 — 뒤에 덧붙인 속편·시즌 번호. 정답이 「나 혼자만 레벨업」인데
+ * 2기를 떠올려 「나 혼자만 레벨업 2」라고 쳐도 곡은 맞힌 것이므로 인정한다.
+ * 반대 방향(정답에 번호가 있는데 안 친 경우)은 expandTitleAccepts 가 처리한다.
  */
 export function isAcceptedAnswer(raw: string, acceptNorms: string[]): boolean {
   const norm = normalizeAnswer(raw)
   if (!norm) return false
-  return acceptNorms.some((a) => !!a && a === norm)
+  if (acceptNorms.some((a) => !!a && a === norm)) return true
+  const noTail = normalizeAnswer(stripSequelTail(raw))
+  if (!noTail || noTail === norm) return false
+  return acceptNorms.some((a) => !!a && a === noTail)
+}
+
+/**
+ * 뒤에 붙는 속편·시즌 표기 (「2」「Ⅱ」「시즌2」「2기」「Season 2」「Part 2」).
+ * 떼고 2글자도 안 남으면 제목 자체가 숫자인 것이므로 건드리지 않는다.
+ */
+const SEQUEL_TAIL_RE = /[\s:：\-–—·~]*(?:시즌\s*\d{1,2}|\d{1,2}\s*(?:기|부|期)|season\s*\d{1,2}|part\s*\d{1,2}|pt\.?\s*\d{1,2}|[ⅡⅢⅣⅤ]|\b(?:ii|iii|iv|v)\b|\d{1,2})\s*$/i
+
+export function stripSequelTail(s: string): string {
+  const cut = s.replace(SEQUEL_TAIL_RE, '').trim()
+  return cut.length >= 2 ? cut : s.trim()
+}
+
+/** 「제목: 부제」 「제목 - 부제」 에서 본제목만 */
+export function stripSubtitle(s: string): string {
+  const m = s.match(/^(.{2,}?)\s*[:：]\s*\S/) || s.match(/^(.{2,}?)\s+[-–—~]\s+\S/)
+  const head = m?.[1]?.trim()
+  return head && head.length >= 2 ? head : s.trim()
+}
+
+/**
+ * 제목 슬롯 인정답 확장 — 정답에 속편 번호나 부제가 붙어 있으면 그걸 뺀 형태도 인정한다.
+ * 예: 「용과 같이 5: 꿈을 이루는 자」 → 「용과 같이 5」·「용과 같이」
+ */
+export function expandTitleAccepts(answer: string, accepts: string[] = []): string[] {
+  const out = new Set<string>()
+  const add = (x: string | undefined) => {
+    const t = x?.trim()
+    if (t) out.add(t)
+  }
+  for (const raw of [answer, ...accepts]) {
+    const t = raw?.trim()
+    if (!t) continue
+    add(t)
+    add(stripSequelTail(t))
+    const noSub = stripSubtitle(t)
+    if (noSub !== t) {
+      add(noSub)
+      add(stripSequelTail(noSub))
+    }
+  }
+  return [...out]
 }
 
 /** 인정답안: 쉼표/슬래시/파이프 구분 → 배열 */
@@ -71,6 +120,21 @@ export function splitDuoArtists(s: string): string[] {
   return splitArtistList(raw)
 }
 
+/**
+ * 「A, B」「A & B」「A · B」 처럼 두 사람을 한 칸에 적은 표기인가.
+ * 가운뎃점(·)은 문제은행이 듀오 구분자로 쓰고 있어 포함한다. 카타카나 중점(・)은
+ * 한 사람 이름 안에 들어가는 일이 있어 일부러 뺐다.
+ */
+export function isJointArtistCredit(s: string): boolean {
+  if (isFeaturingCredit(s)) return false
+  // 괄호가 있으면 유닛명+멤버 표기("Universe (히나 · 마시로 · 리제 · 타비)")다.
+  // 쪼개면 "Universe (히나" 같은 쓰레기 칸이 생기므로 한 칸으로 둔다.
+  if (/[(\[（［]/.test(s)) return false
+  // and 는 일부러 뺐다 — "Tones and I" 처럼 한 팀 이름에 들어가는 일이 잦아
+  // 멀쩡한 가수를 둘로 쪼개 문제를 못 맞히게 만든다.
+  return splitDuoArtists(s).length >= 2 && /[,，&＆×·]| 와 | 과 /.test(s)
+}
+
 /** 가수 슬롯 인정답(별칭). 공동 가수는 슬롯 분리로 처리하며, 한 슬롯에 상대 이름을 넣지 않음. */
 export function expandArtistAccepts(answer: string, accepts: string[] = []): string[] {
   const set = new Set<string>()
@@ -78,10 +142,7 @@ export function expandArtistAccepts(answer: string, accepts: string[] = []): str
     const t = x.trim()
     if (t) set.add(t)
   }
-  const isJointCredit = (s: string) => {
-    if (isFeaturingCredit(s)) return false
-    return splitDuoArtists(s).length >= 2 && /[,，&＆×]| 와 | 과 |\band\b/i.test(s)
-  }
+  const isJointCredit = isJointArtistCredit
   add(answer)
   for (const a of accepts) {
     if (isJointCredit(a)) continue
