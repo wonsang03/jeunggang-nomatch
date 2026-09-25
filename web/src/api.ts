@@ -1,11 +1,6 @@
 const rawApi = import.meta.env.VITE_API_URL as string | undefined
-/** 배포(프로덕션)는 같은 출처, 로컬 개발은 :4000 */
-const API_BASE =
-  rawApi !== undefined && rawApi !== ''
-    ? rawApi
-    : import.meta.env.DEV
-      ? 'http://localhost:4000'
-      : ''
+/** 같은 출처. 로컬은 Vite가 /api·소켓을 :4000으로 넘긴다. 원격 기기가 localhost:4000을 치지 않게. */
+const API_BASE = rawApi !== undefined && rawApi !== '' ? rawApi : ''
 
 export type AuthUser = {
   id: string

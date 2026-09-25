@@ -13,7 +13,7 @@ export function connectSocket() {
   if (socket?.connected) return socket
 
   socket?.disconnect()
-  socket = io(API_BASE, {
+  socket = io(API_BASE || undefined, {
     auth: { token },
     // polling 먼저 타면 RTT가 커지고 불안정 — websocket만 사용
     transports: ['websocket'],
