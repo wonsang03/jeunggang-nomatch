@@ -47,6 +47,13 @@
 - 슬롯마다 다른 사람이 맞춰도 됨 / **한 사람이 여러 슬롯을 연속으로 맞춰도 됨**
 - 정답 제출은 **횟수 제한 없음** (틀려도 계속 제출 가능)
 
+### 정답 판정
+
+- 대소문자·띄어쓰기·일부 문장부호 차이는 자동 인정 · 슬롯별 **인정 답안** 추가 가능
+- 한 칸에 두 명 이상 적힌 가수(`A & B`, `A · B` 등)는 **사람별로** 나눠 한 명만 맞혀도 인정
+  - 괄호 속 유닛명·이름 안의 `and` 는 나누지 않음
+- 제목 뒤에 붙는 **속편 번호·부제**는 붙여도, 빼도 인정
+
 ### 라운드 진행 (문제당)
 
 | 항목 | 규칙 |
@@ -104,6 +111,7 @@
 | 관전 | 플레이어 정원과 **별도**로 최대 **4명** · 대기실에서 플레이어↔관전 전환 · 관전은 **채팅만** |
 | 게임 시작 | **방장만** 가능 |
 | 게임 모드 | **노래맞추기**(기본) / **리딩방** — 대기실에서 선택 |
+| 채팅 색 | 방 안에서 **겹치지 않게** 서버가 막음 · 이미 쓰인 색은 고를 수 없음 |
 
 ### UI / 재생
 
@@ -296,6 +304,8 @@
 | `room:create` / `room:join` / `room:leave` | C→S | 방 생성 · 입장(비공개는 초대 코드) · 퇴장 |
 | `room:list` | C→S | 로비 방 목록 요청 (응답 `lobby:rooms`) |
 | `room:ready` / `room:settings` / `room:set_spectator` | C→S | 준비 · 방장 설정 · 플레이어↔관전 전환 |
+| `room:chat_color` | C→S | 채팅 색 변경 (방 안 중복 불가) |
+| `profile:sync` | C→S | 프로필(닉네임·아바타) 변경을 방에 반영 |
 | `room:state` | S→C | 방·게임 상태 전체 동기화 (보는 사람마다 가릴 건 가려서 보냄) |
 | `room:resync` | C→S | 재접속·탭 복귀 시 현재 라운드 다시 받기 |
 | `game:start` | C→S | 게임 시작 요청 (방장만) |
@@ -324,34 +334,38 @@
 
 ---
 
-## 도메인 모델 (초안)
+## 도메인 모델
+
+DB에 저장되는 것 (`server/prisma/schema.prisma`):
 
 ```
-User             계정
-Room             게임 방
-RoomMember       방 참가자
-Question         문제 (유튜브 링크, 구간, 장르, 정답 모드)
-AnswerSlot       문제별 맞춰야 할 항목 (제목/가수/커스텀 N개)
+User             계정 (관리자 여부 · 프로필)
 Genre            장르
-Augment          증강 (이름, 효과, 티어 등)
-GameSession      한 판의 진행 상태
-Round            라운드별 출제·결과
-PlayerAugment    플레이어가 이번 판에 선택한 증강
-Score            점수 기록
+Question         문제 (유튜브 링크 · 구간 · 장르 · 태그)
+AnswerSlot       문제별 맞춰야 할 항목 (제목/가수/커스텀 N개 · 히든 여부)
+Augment          증강 (이름 · 등급 · effectType/effectValue · 사진)
+GameRecord       한 판의 결과
+GameRecordEntry  그 판의 플레이어별 점수·순위 (전적/프로필 통계)
 ```
+
+방·라운드·보유 증강·버프는 DB가 아니라 **서버 메모리**(`src/gameTypes.ts` 의 `Room` / `Member` / `ActiveBuff`)에만 있습니다.
 
 ---
 
-## 구현 순서 (추천)
+## 문제은행 현황 (2026-09-25)
 
-1. 프로젝트 세팅 + 기본 페이지 (홈/로그인/로비)
-2. 인증 (회원가입/로그인)
-3. Socket으로 방 생성·입장·채팅/준비
-4. 관리자용 문제 CRUD (유튜브 링크 + 구간 + 장르 은행)
-5. 방장 설정 기반 랜덤 출제 → 40초 라운드 → 슬롯당 +1 → 스킵/3초 확인
-6. 증강: 20문제마다 선택·리롤·보관·사용 (효과는 이후)
-7. 개별 볼륨 UI
-8. DB 연동 고도화 + 배포
+| 장르 | 곡 수 |
+|------|------|
+| 한국노래 | 311 |
+| 일본노래 | 147 |
+| 해외노래 | 155 |
+| 애니 | 147 |
+| 버튜버 | 108 |
+| 게임 | 97 |
+| 기타 (야차룰 전용) | 14 |
+| **합계** | **979** |
+
+배치 파일·스크립트는 [data/README.md](data/README.md) 참고.
 
 ---
 
@@ -368,8 +382,9 @@ Score            점수 기록
 - [x] 카톡형 채팅 UI + 노래만 자동 재생(영상 숨김) + 개인 볼륨
 - [x] 배포된 URL로 접속 플레이
 
-이후 붙은 것: 증강 **80종**([증강.md](증강.md)) · 관전석 · **리딩방** 모드 · 전적/프로필 ·
-재접속 유예 · 재생 불가 곡 자동 스킵 · 서버 시각 동기화.
+이후 붙은 것: 증강 **81종**([증강.md](증강.md)) · 관전석 · **리딩방** 모드 · 전적/프로필 ·
+재접속 유예 · 재생 불가 곡 자동 스킵 · 서버 시각 동기화 · 최근곡 가중치 뽑기 ·
+비공개 방 초대 코드 · 채팅 색 중복 방지.
 
 ---
 
@@ -384,7 +399,7 @@ Score            점수 기록
 
 ## 한 줄 요약
 
-**Next.js(또는 React) + Node.js + Socket.IO + PostgreSQL + YouTube 구간 재생 + 방장 설정 랜덤 출제 + 슬롯당 +1/스킵/증강(선택·사용) + WebSocket 호스팅 배포**
+**Vite·React + Express·Socket.IO + Prisma·SQLite + YouTube 숨김 구간 재생 + 방장 설정 랜덤 출제 + 슬롯당 +1/스킵/증강(선택·사용) + Lightsail 배포**
 
 ---
 
@@ -392,12 +407,21 @@ Score            점수 기록
 
 터미널 2개:
 
+처음 한 번 `server/.env` 를 만듭니다 (`server/.env.example` 복사).
+**`JWT_SECRET` 이 비어 있거나 32자 미만이면 서버가 뜨지 않습니다.**
+
+```bash
+cd server
+cp .env.example .env
+node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"   # → .env 의 JWT_SECRET 에 붙여넣기
+```
+
 ```bash
 # 1) API + Socket.IO (포트 4000)
 cd server
 npm install
 npx prisma db push
-npm run db:seed
+SEED_DEFAULT_ACCOUNTS=1 npm run db:seed   # 로컬 전용 기본 계정까지 만들기
 npm run dev
 
 # 2) 프론트
@@ -407,7 +431,9 @@ npm run dev
 ```
 
 - 프론트: Vite가 띄운 주소 (예: `http://localhost:5173` ~ `5175`)
-- 테스트 계정: `test` / `test1234` (관리자: `admin` / `admin1234`)
+- 시드는 기본적으로 **계정을 만들지 않습니다**
+  - `SEED_DEFAULT_ACCOUNTS=1` → 로컬 전용 `test` / `test1234`, `admin` / `admin1234`
+  - `SEED_ADMIN_PASSWORD=...` → 그 비밀번호로 `admin` 만 생성 (운영은 이쪽)
 - 로그인 → 방 만들기 → 게임 시작 → 채팅에 정답 제출 (`밤편지`, `아이유` 등)
 - 관리자(`admin`)로 로그인하면 로비 **문제 은행**에서 노래를 등록할 수 있습니다
   - 장르(일반 출제): **한국노래, 일본노래, 해외노래, 애니, 버튜버, 게임**
@@ -442,7 +468,18 @@ npm run build       # typecheck 를 먼저 돌린 뒤 vite build
 | 파일 | 역할 |
 |------|------|
 | `src/index.ts` | Express + Socket.IO 부팅 · 전역 예외 훅 |
-| `src/socket.ts` | 방·라운드·증강 진행 (가장 큼) |
+| `src/socket.ts` | 소켓 핸들러 등록 · 방/라운드 진행 (`endRound` 등) |
+| `src/augmentEffects.ts` | 증강 사용 시 효과 적용 (`applyAugmentEffect`) · 사용 알림 |
+| `src/roundSettlement.ts` | 라운드 종료·정답 시 증강 정산 (왕관 내기·대리·가불기·물귀신·콤보·트루먼·불꽃남자) · 점수 공유/이체 |
+| `src/memberBuffs.ts` | 플레이어별 버프/디버프 판정 · 점수 배율·보너스 · 오디오 트릭 · 반사/차차차 충전 |
+| `src/augmentOffer.ts` | 증강 카탈로그 캐시 · 페이즈별 후보 배분 · 전환/프리즘 선택 |
+| `src/heldAugments.ts` | 보유 증강 슬롯 (최대 2칸 · 잠긴 카드) |
+| `src/questionQueue.ts` | 은행에서 곡 뽑기 · DB 행 → 런타임 문제 · 반전 술식/셔플/밴픽 큐 재배분 |
+| `src/decoyTracks.ts` | 강제곡·환상 곡 선택 (트루먼·세노 등) · 야차룰 문제 |
+| `src/answerFormat.ts` | 제목/가수 슬롯 찾기 · 제목만 모드 · 스포일러용 답 문자열 · 영타/타이핑 공개 |
+| `src/roomBroadcast.ts` | `room:state` 조립(보는 사람별 가리기) · 시스템/플레이어/관전 채팅 |
+| `src/roomMembers.ts` | 플레이어/관전 구분 · 정원 확인 · `emptyMember` |
+| `src/random.ts` | crypto 기반 `shuffleArray` / `pickRandomIndex` |
 | `src/gameTypes.ts` | `Room` / `Member` / `ActiveBuff` 등 런타임 상태 타입 |
 | `src/roundRules.ts` | 방 상태를 건드리지 않는 순수 규칙 (스킵 정족수·조사·라벨 분류) |
 | `src/songPick.ts` | 곡 뽑기 가중치 (최근곡 중복 방지) — 순수 함수 |
@@ -460,12 +497,16 @@ npm run build       # typecheck 를 먼저 돌린 뒤 vite build
 
 | 파일 | 역할 |
 |------|------|
-| `src/App.tsx` | 라우팅 · 로비/대기실/게임 화면 |
+| `src/App.tsx` | 화면 전환만 (로그인 → 로비 → 대기실 → 게임 → 결과) |
 | `src/GameContext.tsx` | 소켓 연결 · 방 상태 · 공용 타입 |
 | `src/youtubePlayer.tsx` | 숨김 유튜브 재생 (방 곡 · 강제곡 · 오버레이 · 벌칙 곡) |
-| `src/screens/` | `AuthScreens` · `BankScreen`(문제은행) · `ProfileScreen` |
+| `src/screens/` | `AuthScreens` · `LobbyScreen` · `WaitingScreen` · `GameScreen` · `AugmentScreen` · `ResultScreen` · `BankScreen`(문제은행) · `ProfileScreen` |
+| `src/components/` | `GameLists`(점수판·라운드 로그·채팅) · `GahoCutscene` · `AugmentUseNotice` · `PingStatus` · `useStickyChatScroll` |
 | `src/clockSync.ts` | 서버 시각 동기화 (`serverNow()`) |
 | `src/ui.tsx` · `src/sfx.ts` | 공용 UI 조각 · 효과음 |
+
+증강 효과를 고칠 때는 사용 시점은 `augmentEffects.ts`, 라운드 끝 정산은 `roundSettlement.ts`,
+진행 중 판정(배율·차단 등)은 `memberBuffs.ts` 를 보면 됩니다.
 
 **소켓 이벤트를 추가할 때는** `socketSchemas.ts` 에 스키마를 먼저 만들고
 `on(event, schema, RATE.xxx, handler)` 로 등록하세요. `socket.on` 을 직접 쓰면
@@ -496,7 +537,11 @@ node scripts/sync-augment-meta.mjs   # seed의 증강을 DB에 upsert · seed에
 
 ---
 
-## 다음 단계
+## 할 일
 
-관리자 **증강** CRUD UI(지금은 `seed.ts` + `scripts/sync-augment-meta.mjs`), 증강 밸런스 조정,
-보관 증강 소멸 규칙(임시) 재검토.
+- [ ] 후보곡 초안에서 빠진 곡 채우기 — 애니 8 · 게임 13 · 버튜버 8
+      (초안 162곡 중 133곡만 `clean-*.json` 으로 은행에 들어감 · [검수표](data/draft/resolve-report.md) 참고)
+- [ ] 관리자 **증강** CRUD UI (지금은 `seed.ts` + `scripts/sync-augment-meta.mjs`)
+- [ ] 증강 밸런스 조정 · 보관 증강 소멸 규칙(임시) 재검토
+- [ ] `기타`(야차룰 전용) 풀 늘리기 — 지금 14곡
+- [ ] `scripts/report-song-bank.mjs` 가 `node` 로 바로 안 돌아감 (`src/answer.js` import) → `npx tsx` 로 실행 중
